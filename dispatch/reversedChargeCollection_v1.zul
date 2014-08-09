@@ -1,0 +1,817 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="revchrgcol_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
+<zscript>
+<![CDATA[
+MOD_TITLE = "Reversed Charge Collection Tracker";
+MYVERSION = "v0.3";
+/*
+Title		: To manage Reversed-Charge-collection thing for courier companies
+Written by	: Victor Wong
+Dated		: 10/04/2012
+
+**NOTES**
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.awt.Color;
+import java.io.FileOutputStream;
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.pdf.PdfWriter;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+
+/*
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+*/
+
+import org.apache.poi.ss.*;
+import org.apache.poi.ss.usermodel.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+glob_selected_status = "";
+glob_selected_origid = "";
+glob_selected_courier = "";
+glob_selected_dated = "";
+last_show_type = 0;
+
+//--- to be used in searchSelectCustomer_v1.zs
+class CallMeObject
+{
+	public Object companyrec;
+	public Object callme;
+
+	void doSomething()
+	{
+		if(companyrec == null) return;
+
+		// get what's in companyrec and populate fields -- can be customized for other mods
+		drc_arcode.setValue(companyrec.get("ar_code"));
+		drc_customer_name.setValue(companyrec.get("customer_name"));
+		drc_address1.setValue(companyrec.get("address1"));
+		drc_address2.setValue(companyrec.get("address2") + " " + companyrec.get("address3"));
+		drc_contactperson.setValue(companyrec.get("contact_person1"));
+		drc_email.setValue(companyrec.get("E_mail"));
+		drc_phone.setValue(companyrec.get("telephone_no"));
+		drc_fax.setValue(companyrec.get("fax_no"));
+
+		selectcustomer_popup.close();
+	}
+}
+
+local_callme = new CallMeObject();
+//---
+
+Object[] colldesti_lb_headers = {
+	new listboxHeaderWidthObj("Req",true,"30px"),
+	new listboxHeaderWidthObj("Dated",true,"70px"),
+	new listboxHeaderWidthObj("Client",true,"100px"),
+	new listboxHeaderWidthObj("Contact",true,"100px"),
+	new listboxHeaderWidthObj("Tel",true,"70px"),
+	new listboxHeaderWidthObj("ReasonNotes",true,"150px"),
+	new listboxHeaderWidthObj("Status",true,"60px"),
+	new listboxHeaderWidthObj("Courier",true,"70px"),
+	new listboxHeaderWidthObj("SchDate",true,"70px"),
+	new listboxHeaderWidthObj("CompDate",true,"70px"),
+};
+
+void excelInsertString(Sheet isheet, int irow, int icol, String iwhat)
+{
+	Row row = isheet.getRow(irow);
+	Cell cell = row.getCell(icol);
+	if(cell == null) cell = row.createCell(icol);
+	cell.setCellType(Cell.CELL_TYPE_STRING);
+	cell.setCellValue(iwhat);
+}
+
+// DBFunc: get rec from dispatch_revrcharge by origid
+Object getDRC_Rec(String iorigid)
+{
+	retval = null;
+	sqlstm = "select * from dispatch_revrcharge where origid=" + iorigid;
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return retval;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+void disableFields(boolean iwhat)
+{
+	drc_scheduledate.setDisabled(iwhat);
+	drc_customer_name.setDisabled(iwhat);
+	drc_address1.setDisabled(iwhat);
+	drc_address2.setDisabled(iwhat);
+	drc_city.setDisabled(iwhat);
+	drc_zipcode.setDisabled(iwhat);
+	drc_state.setDisabled(iwhat);
+	drc_country.setDisabled(iwhat);
+	drc_contactperson.setDisabled(iwhat);
+	drc_email.setDisabled(iwhat);
+	drc_phone.setDisabled(iwhat);
+	drc_fax.setDisabled(iwhat);
+	drc_reasonnotes.setDisabled(iwhat);
+}
+
+void showDestinationMetadata(String iorigid)
+{
+	trec = getDRC_Rec(iorigid);
+	if(trec == null) return;
+
+	if(trec.get("scheduledate") != null) drc_scheduledate.setValue(trec.get("scheduledate"));
+
+	drc_origid.setValue(trec.get("origid").toString());
+	drc_arcode.setValue(trec.get("ar_code"));
+	drc_customer_name.setValue(trec.get("customer_name"));
+	drc_address1.setValue(trec.get("address1"));
+	drc_address2.setValue(trec.get("address2"));
+	drc_city.setValue(trec.get("city"));
+	drc_zipcode.setValue(trec.get("zipcode"));
+	drc_state.setValue(trec.get("state"));
+	drc_country.setValue(trec.get("country"));
+	drc_contactperson.setValue(trec.get("contactperson"));
+	drc_email.setValue(trec.get("email"));
+	drc_phone.setValue(trec.get("phone"));
+	drc_fax.setValue(trec.get("fax"));
+	drc_reasonnotes.setValue(trec.get("reasonnotes"));
+	if(trec.get("couriercompany") != null) lbhand.matchListboxItems(drc_couriercompany,trec.get("couriercompany"));
+}
+
+class colldestiOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = colldests_lb.getSelectedItem();
+		glob_selected_origid = lbhand.getListcellItemLabel(selitem,0);
+		glob_selected_status = lbhand.getListcellItemLabel(selitem,6);
+		glob_selected_courier = lbhand.getListcellItemLabel(selitem,7);
+		glob_selected_dated = lbhand.getListcellItemLabel(selitem,1); // get datecreated, hmmm -- for cancellation, might use schedule-date
+
+		showDestinationMetadata(glob_selected_origid);
+
+		update_btn.setDisabled((!glob_selected_status.equals("NEW")) ? true : false);
+		disableFields((!glob_selected_status.equals("NEW")) ? true : false);
+
+		workarea.setVisible(true);
+	}
+}
+
+// itype: to be used later..
+void listCollectionDestinations(int itype)
+{
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+
+	// set vars
+    last_show_type = itype;
+	glob_selected_status = "";
+	glob_selected_origid = "";
+	glob_selected_courier = "";
+	workarea.setVisible(false);
+
+	newlb = lbhand.makeVWListbox_Width(dispdests_holder,colldesti_lb_headers,"colldests_lb",10);
+
+	sqlstm = "select top 200 origid,datecreated,customer_name,contactperson,couriercompany,reasonnotes," + 
+	"status,scheduledate,completedate,phone from dispatch_revrcharge " +
+	"where datecreated between '" + sdate + "' and '" + edate + "' order by origid";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	tlist = sql.rows(sqlstm);
+	sql.close();
+	
+	if(tlist.size() == 0) return;
+	if(tlist.size() > 10) newlb.setRows(20);
+
+	newlb.addEventListener("onSelect", new colldestiOnSelect());
+
+	for(dpi : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(dpi.get("contactperson"));
+		kabom.add(kiboo.checkNullString(dpi.get("phone")));
+		kabom.add(dpi.get("reasonnotes"));
+		kabom.add(dpi.get("status"));
+		kabom.add(kiboo.checkNullString(dpi.get("couriercompany")));
+
+		kabom.add(kiboo.checkNullDate(dpi.get("scheduledate"),""));
+		kabom.add(kiboo.checkNullDate(dpi.get("completedate"),""));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"","");
+	}
+}
+
+void newRequest()
+{
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into dispatch_revrcharge (datecreated,ar_code,customer_name,address1,address2,city," + 
+	"zipcode,state,country,phone,fax,email,contactperson,reasonnotes,status,scheduledate) values " +
+	"('" + todate + "','','','','',''," +
+	"'','','','','','','','','NEW','" + todate + "')";
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+void deleteRequest()
+{
+	if(glob_selected_origid.equals("")) return;
+	if(!glob_selected_status.equals("NEW"))
+	{
+		guihand.showMessageBox("COMMITTED or DONE request, cannot be DELETED!!");
+		return;
+	}
+
+	if(Messagebox.show("Delete request", "Are you sure?", Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "delete from dispatch_revrcharge where origid=" + glob_selected_origid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+void updateRequest()
+{
+	if(glob_selected_origid.equals("")) return;
+	if(!glob_selected_status.equals("NEW")) return;
+
+	schdate = kiboo.getDateFromDatebox(drc_scheduledate);
+	arcode = kiboo.replaceSingleQuotes(drc_arcode.getValue());
+	cname = kiboo.replaceSingleQuotes(drc_customer_name.getValue());
+	add1 = kiboo.replaceSingleQuotes(drc_address1.getValue());
+	add2 = kiboo.replaceSingleQuotes(drc_address2.getValue());
+	city = kiboo.replaceSingleQuotes(drc_city.getValue());
+	zipcode = kiboo.replaceSingleQuotes(drc_zipcode.getValue());
+	state = kiboo.replaceSingleQuotes(drc_state.getValue());
+	country = kiboo.replaceSingleQuotes(drc_country.getValue());
+	cperson = kiboo.replaceSingleQuotes(drc_contactperson.getValue());
+	email = kiboo.replaceSingleQuotes(drc_email.getValue());
+	phone = kiboo.replaceSingleQuotes(drc_phone.getValue());
+	fax = kiboo.replaceSingleQuotes(drc_fax.getValue());
+	reasonnotes = kiboo.replaceSingleQuotes(drc_reasonnotes.getValue());
+	courier = drc_couriercompany.getSelectedItem().getLabel();
+
+	sqlstm = "update dispatch_revrcharge set ar_code='" + arcode + "',customer_name='" + cname + "'," +
+	"address1='" + add1 + "',address2='" + add2 + "',city='" + city + "',zipcode='" + zipcode + "',state='" + state + "'," +
+	"country='" + country + "',contactperson='" + cperson + "',email='" + email + "',phone='" + phone + "',fax='" + fax + "'," +
+	"reasonnotes='" + reasonnotes + "',couriercompany='" + courier + "', scheduledate='" + schdate + "' where origid=" + glob_selected_origid;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+// Gen request PDF from dispatch_revrcharge by origid
+boolean genRequestPdf(String iorigid)
+{
+	if(iorigid.equals("")) return;
+	trec = getDRC_Rec(iorigid);
+	if(trec == null)
+	{
+		guihand.showMessageBox("ERROR: Cannot access REVRCHARGE table!!");
+		return false;
+	}
+
+	global_pdf_fname = session.getWebApp().getRealPath("tmp/" + iorigid + "_RCC.pdf");
+
+	Document document = new Document(PageSize.A4, 20, 20, 20, 20);
+	PdfWriter writer = PdfWriter.getInstance(document,new FileOutputStream(global_pdf_fname));
+
+	document.open();
+
+	// page-header table with logo and shit
+	PdfPTable pageheader_table = new PdfPTable(2);
+	pageheader_table.setWidthPercentage(100);
+
+	float[] colwidths = {15,100};
+	pageheader_table.setWidths(colwidths);
+
+	PdfPCell defaultCell = pageheader_table.getDefaultCell();
+	defaultCell.setBorder(PdfPCell.NO_BORDER);
+
+	com.lowagie.text.Image logoimg = com.lowagie.text.Image.getInstance(session.getWebApp().getRealPath("img/alssmalllogo.jpg"));
+	PdfPCell cell1 = new PdfPCell(logoimg, false);
+	cell1.setBorder(PdfPCell.NO_BORDER);
+
+	pageheader_table.addCell(cell1);
+
+	// Address sub-tab
+	PdfPTable addr_tab = new PdfPTable(1);
+	PdfPCell dCell = addr_tab.getDefaultCell();
+	dCell.setBorder(PdfPCell.NO_BORDER);
+
+	addr_tab.addCell(new Paragraph("ALS Technichem (M) Sdn Bhd (117964-P)"));
+	addr_tab.addCell(new Paragraph("9 Jalan Astaka U8/84, Bukit Jelutong, 40150 Shah Alam, Selangor"));
+	addr_tab.addCell(new Paragraph("Phone: 03 7845 8257 Fax: 03 7845 8258"));
+
+	pageheader_table.addCell(addr_tab);
+
+	document.add(pageheader_table);
+
+	// title tab
+	PdfPTable title_tab = new PdfPTable(1);
+	title_tab.setSpacingBefore(15);
+	title_tab.setWidthPercentage(100);
+
+	PdfPCell titcell = new PdfPCell(new Paragraph("REVERSE-CHARGE PICKUP REQUEST"));
+	//	FontFactory.getFont(FontFactory.HELVETICA,16,Font.BOLD,new Color(0,0,0))));
+
+	titcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	titcell.setPadding(5);
+	title_tab.addCell(titcell);
+
+	document.add(title_tab);
+
+	// do request tab
+	PdfPTable req_tab = new PdfPTable(2);
+	req_tab.setWidthPercentage(100);
+	req_tab.setSpacingBefore(20);
+	float[] colwidths = {25,75};
+	req_tab.setWidths(colwidths);
+
+	req_tab.addCell(new Paragraph("ALS REQUEST NO."));
+	req_tab.addCell(new Paragraph(trec.get("origid").toString()));
+
+	ccomp = trec.get("couriercompany");	
+	req_tab.addCell(new Paragraph("COURIER COMPANY"));
+	req_tab.addCell(new Paragraph(ccomp));
+
+	req_tab.addCell(new Paragraph("ACCOUNT NO.(R/C)"));
+	ccompact = (ccomp.equals("NATIONWIDE")) ? "104333" : "00091331";
+	req_tab.addCell(new Paragraph(ccompact));
+
+	req_tab.addCell(new Paragraph("PICK-UP PLACE (CO NAME & ADDRESS)"));
+	addrstring = trec.get("customer_name") + "\n" + trec.get("address1") + "\n" + trec.get("address2") + "\n" +
+	trec.get("zipcode") + " " + trec.get("city") + "," + trec.get("state") + "\n" + trec.get("country");
+	req_tab.addCell(new Paragraph(addrstring));
+
+	req_tab.addCell(new Paragraph("CONTACT PERSON"));
+	req_tab.addCell(new Paragraph(trec.get("contactperson")));
+
+	req_tab.addCell(new Paragraph("TELEPHONE NO"));
+	req_tab.addCell(new Paragraph(trec.get("phone")));
+	
+	document.add(req_tab);
+	
+	PdfPTable req_tab2 = new PdfPTable(2);
+	req_tab2.setWidthPercentage(100);
+	req_tab2.setSpacingBefore(20);
+	float[] colwidths = {25,75};
+	req_tab2.setWidths(colwidths);
+
+	req_tab2.addCell(new Paragraph("DELIVERY PLACE"));
+	req_tab2.addCell(new Paragraph("9 Jalan Astaka U8/84, Bukit Jelutong,\n40150 Shah Alam, Selangor"));
+
+	req_tab2.addCell(new Paragraph("ATTENTION TO"));
+	req_tab2.addCell(new Paragraph(useraccessobj.username));
+
+	req_tab2.addCell(new Paragraph("TELEPHONE NO"));
+	req_tab2.addCell(new Paragraph("03 7845 8257"));
+
+	req_tab2.addCell(new Paragraph("REMARKS"));
+	req_tab2.addCell(new Paragraph(trec.get("reasonnotes")));
+
+	req_tab2.addCell(new Paragraph("PACKAGE TYPE(DOC/PARCEL)"));
+	req_tab2.addCell(new Paragraph("DOC"));
+
+	req_tab2.addCell(new Paragraph("DATE TO PERFORM PICKUP"));
+	req_tab2.addCell(new Paragraph(trec.get("scheduledate").toString().substring(0,10)));
+
+	req_tab2.addCell(new Paragraph("REQUESTED BY"));
+	req_tab2.addCell(new Paragraph(useraccessobj.username));
+
+	req_tab2.addCell(new Paragraph("DATE REQUESTED"));
+	req_tab2.addCell(new Paragraph(trec.get("datecreated").toString().substring(0,10)));
+
+	document.add(req_tab2);
+
+	// end tab
+	PdfPTable mt_tab = new PdfPTable(1);
+	mt_tab.setWidthPercentage(100);
+	mt_tab.setSpacingBefore(30);
+	PdfPCell defaultCell = mt_tab.getDefaultCell();
+	defaultCell.setBorder(PdfPCell.NO_BORDER);
+	mt_tab.addCell(new Paragraph("*Note: This is computer generated form. Have a question, please call 03 7845 8257"));
+
+	document.add(mt_tab);
+	document.close();
+	return true;
+}
+
+// for nationwide msexcel worksheet generating ONLY!!
+boolean genNationwideExcel(String iorigid)
+{
+	if(iorigid.equals("")) return;
+	trec = getDRC_Rec(iorigid);
+	if(trec == null)
+	{
+		guihand.showMessageBox("ERROR: Cannot access REVRCHARGE table!!");
+		return false;
+	}
+
+	inpfn = session.getWebApp().getRealPath("alsimg/RCPupform.xls");
+	InputStream inp = new FileInputStream(inpfn);
+
+	Workbook wb = WorkbookFactory.create(inp);
+	Sheet sheet = wb.getSheetAt(0);
+	excelInsertString(sheet,4,3,"104333"); // act number
+	
+	excelInsertString(sheet,0,3,"ALS REF NO: " + trec.get("origid").toString()); // ALS ref num..
+	
+	//req_tab.addCell(new Paragraph(trec.get("origid").toString()));
+	
+	excelInsertString(sheet,7,3,trec.get("customer_name"));
+	excelInsertString(sheet,8,3,trec.get("address1"));
+	excelInsertString(sheet,9,3,trec.get("address2"));
+	excelInsertString(sheet,10,3,trec.get("zipcode") + " " + trec.get("city") + ", " + trec.get("state") );
+
+	excelInsertString(sheet,14,3,trec.get("contactperson"));
+	excelInsertString(sheet,16,3,trec.get("phone"));
+
+	//excelInsertString(sheet,19,3,"ALS Technichem(M) Sdn Bhd");
+	//excelInsertString(sheet,20,3,"9 Jalan Astaka U8/84");
+	//excelInsertString(sheet,21,3,"Bukit Jelutong, Shah Alam");
+
+	excelInsertString(sheet,26,3,useraccessobj.username);
+	excelInsertString(sheet,28,3,"03 7845 8257");
+
+	excelInsertString(sheet,36,3,trec.get("reasonnotes"));
+	excelInsertString(sheet,39,3,"DOC");
+	excelInsertString(sheet,41,3,trec.get("scheduledate").toString().substring(0,10));
+	
+	excelInsertString(sheet,44,3,useraccessobj.username);
+	excelInsertString(sheet,46,3,trec.get("datecreated").toString().substring(0,10));
+	
+	// Write the output to a file
+	outfn = session.getWebApp().getRealPath("tmp/" + trec.get("origid").toString() + "_RCPupform.xls");
+	FileOutputStream fileOut = new FileOutputStream(outfn);
+	wb.write(fileOut);
+	fileOut.close();
+
+	return true;
+}
+
+boolean emailoutRequest(String iorigid)
+{
+	if(iorigid.equals("")) return;
+
+	if(glob_selected_courier.equals("")) return;
+	lu_myparent = (glob_selected_courier.equals("NATIONWIDE")) ? "NATIONWIDE_EMAILS" : "CITYLINK_EMAILS";
+	topeople22 = luhand.getLookupChildItems_StringArray(lu_myparent,2);
+	topeople = kiboo.convertStringArrayToString(topeople22);
+
+	jfname = (glob_selected_courier.equals("NATIONWIDE")) ? (iorigid + "_RCPupform.xls") : (iorigid + "_RCC.pdf");
+	global_pdf_fname = session.getWebApp().getRealPath("tmp/" + jfname);
+	String[] tfna = { global_pdf_fname };
+
+	subjstr = "Re: Reversed-Charge Collection Request";
+	msgtxt = "With reference to the above matter, we would like to request a Reversed-Charge pickup. Please find the attached request form.";
+	retv = sendEmailWithAttachment(SMTP_SERVER,"admin@alsglobal.com.my",topeople,subjstr,msgtxt,tfna);
+	//retv = sendEmailWithAttachment(SMTP_SERVER,"info@alsglobal.com.my","it@alsglobal.com.my",subjstr,msgtxt,tfna);
+	//retv = 0;
+	if(retv == 1) guihand.showMessageBox("ERROR EMAILOUT: Cannot send request email..");
+	return (retv == 0)  ? true : false;
+}
+
+void commitSendEmail()
+{
+	if(glob_selected_origid.equals("")) return;
+	//if(glob_selected_status.equals("COMMIT")) return;
+	if(glob_selected_status.equals("DONE")) // if it's DONE, don't update status no more
+	{
+		guihand.showMessageBox("Collection request already done..");
+		return;
+	}
+
+	if(glob_selected_courier.equals(""))
+	{
+		guihand.showMessageBox("Please select a courier company..");
+		return;
+	}
+	
+	if(glob_selected_status.equals("CANCEL")) // if it's CANCEL, confirm want to re-commit
+	{
+		if(Messagebox.show("Request is already CANCEL, do you want to RE-COMMIT ?", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;		
+	}
+	else
+	if(glob_selected_status.equals("COMMIT")) // if it's already committed, confirm to resend..
+	{
+		if(Messagebox.show("Request already commited, do you want to RESEND ?", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+	}
+	else
+	if(Messagebox.show("Once committed, courier company will proceed per your request. No RETRACTION", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	// make sure PDF or nationwide(excel worksheet) is generated and emailed-out..
+	genok = false;
+	
+	genok = (glob_selected_courier.equals("NATIONWIDE")) ? genNationwideExcel(glob_selected_origid) : genRequestPdf(glob_selected_origid);
+	if(!genok)
+	{
+		guihand.showMessageBox("ERR: Cannot generate request-form.. request cannot be completed!!");
+		return;	
+	}
+
+	if(!emailoutRequest(glob_selected_origid)) return;
+
+	sqlstm = "update dispatch_revrcharge set status='COMMIT' where origid=" + glob_selected_origid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+
+	guihand.showMessageBox("Reversed-charge collection request sent..");
+}
+
+void completeTheRequest()
+{
+	if(glob_selected_origid.equals("")) return;
+	if(glob_selected_status.equals("DONE")) return;
+	if(!glob_selected_status.equals("COMMIT")) // status must be COMMIT before can be DONE
+	{
+		guihand.showMessageBox("Request is not yet being processed by courier company, how to complete?");
+		return;
+	}
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "update dispatch_revrcharge set status='DONE', completedate='" + todate + "' where origid=" + glob_selected_origid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+// let user cancel pickup request -- TODO: if within the same day of commit
+void cancelRequest()
+{
+	if(glob_selected_origid.equals("")) return;
+	if(!glob_selected_status.equals("COMMIT"))
+	{
+		guihand.showMessageBox("DONE and CANCEL request cannot be cancelled.. or you can delete NEW request");
+		return;
+	}
+
+	// check request-date, must be same as today..
+	//todate = kiboo.getDateFromDatebox(hiddendatebox);
+	//glob_selected_dated
+	
+	if(Messagebox.show("Cancelling request.. notification email will be sent to " + glob_selected_courier , "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+		
+	// TODO: gen-n-email cancel email to courier company
+
+	sqlstm = "update dispatch_revrcharge set status='CANCEL' where origid=" + glob_selected_origid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+void adminUncommit()
+{
+	if(glob_selected_origid.equals("")) return;
+	sqlstm = "update dispatch_revrcharge set status='NEW' where origid=" + glob_selected_origid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listCollectionDestinations(last_show_type); // refresh
+}
+
+void exportRChecklist()
+{
+	uniqwindowid = kiboo.makeRandomId("ccl");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","reporting/birtReportViewerLookup_v1.zul", uniqwindowid, "bid=CPBR_3",useraccessobj);
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers(local_callme)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<div width="1200px">
+<panel id="revchrgcoll_panel" title="${MOD_TITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+	<vbox>
+		<groupbox mold="3d" width="500px">
+			<grid>
+				<rows>
+					<row>
+						<hbox>
+							<label value="Start date" style="font-size:9px" />
+							<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+						</hbox>
+						<hbox>
+							<label value="End date" style="font-size:9px" />
+							<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+						</hbox>
+						<button label="Load by date" style="font-size:9px" onClick="listCollectionDestinations(1)" />
+					</row>
+					<row spans="3">
+						<hbox>
+							<button label="New request" style="font-size:9px" onClick="newRequest()" />
+							<!-- <button label="Cancel request" style="font-size:9px" onClick="cancelRequest()" /> -->
+							<button label="Delete" style="font-size:9px" onClick="deleteRequest()" />
+							<button label="Commit + Send order email" style="font-size:9px" onClick="commitSendEmail()" />
+							<button label="Collection done" style="font-size:9px" onClick="completeTheRequest()" />
+							<button label="Export checklist" style="font-size:9px" onClick="exportRChecklist()" />
+						</hbox>
+					</row>
+				</rows>
+			</grid>
+		</groupbox>
+
+		<div id="adminstuff" style="background:#a52a2a;padding:2px" visible="false">
+			<button label="Uncommit" style="font-size:9px" onClick="adminUncommit()" />
+		</div>
+
+		<div id="dispdests_holder" width="740px" />
+	</vbox>
+	
+	<div id="workarea" width="450px" visible="true">
+		<groupbox mold="3d">
+		<grid>
+			<rows>
+				<row style="background:#ffa500;padding:2px" spans="4">
+					<label value="Request metadata" />
+				</row>
+				<row>
+					<label value="Schedule.Date" style="font-size:9px" />
+					<datebox id="drc_scheduledate" format="yyyy-MM-dd" style="font-size:9px" />
+					<label value="Req Order" style="font-size:9px" />
+					<label id="drc_origid" />
+				</row>
+				<row>
+					<label value="AR_Code" style="font-size:9px" />
+					<hbox>
+						<textbox id="drc_arcode" style="font-size:9px" width="100px" disabled="true" />
+						<button label="Get client" style="font-size:9px" onClick="selectcustomer_popup.open(self)" />
+					</hbox>
+					<label value="Courier" style="font-size:9px" />
+					<listbox id="drc_couriercompany" mold="select" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Client" style="font-size:9px" />
+					<textbox id="drc_customer_name" style="font-size:9px" width="99%" />
+				</row>
+				<row spans=",3">
+					<label value="Address1" style="font-size:9px" />
+					<textbox id="drc_address1" style="font-size:9px" width="99%" />
+				</row>
+				<row spans=",3">
+					<label value="Address2" style="font-size:9px" />
+					<textbox id="drc_address2" style="font-size:9px" width="99%" />
+				</row>
+				<row>
+					<label value="City" style="font-size:9px" />
+					<textbox id="drc_city" style="font-size:9px" width="99%" />
+					<label value="Postcode" style="font-size:9px" />
+					<textbox id="drc_zipcode" style="font-size:9px" width="99%" />
+				</row>
+				<row>
+					<label value="State" style="font-size:9px" />
+					<textbox id="drc_state" style="font-size:9px" width="99%" />
+					<label value="Country" style="font-size:9px" />
+					<textbox id="drc_country" style="font-size:9px" width="99%" />
+				</row>
+				<row>
+					<label value="Contact person" style="font-size:9px" />
+					<textbox id="drc_contactperson" style="font-size:9px" width="99%" />
+					<label value="Email" style="font-size:9px" />
+					<textbox id="drc_email" style="font-size:9px" width="99%" />
+				</row>
+				<row>
+					<label value="Phone" style="font-size:9px" />
+					<textbox id="drc_phone" style="font-size:9px" width="99%" />
+					<label value="Fax" style="font-size:9px" />
+					<textbox id="drc_fax" style="font-size:9px" width="99%" />
+				</row>
+				<row spans=",3">
+					<label value="ReasonNotes" style="font-size:9px" />
+					<textbox id="drc_reasonnotes" multiline="true" style="font-size:9px" height="80px" width="99%" />
+				</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<hbox>
+			<button id="update_btn" label="Update" style="font-size:9px" onClick="updateRequest()" />
+		</hbox>
+
+		</groupbox>
+
+	</div>
+	
+</hbox>
+<separator height="3px" />
+
+<zscript>
+<![CDATA[
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+kiboo.setTodayDatebox(drc_scheduledate);
+
+listCollectionDestinations(1);
+luhand.populateListbox_ByLookup(drc_couriercompany,"REVERSED_CHARGE_COURIERS",2);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

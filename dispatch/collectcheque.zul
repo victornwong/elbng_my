@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="collectcheq_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.3";
+/*
+Title: Collect cheque tracking module
+Written by: Victor Wong
+
+**NOTES**
+03/04/2012: optimize and port byte-compl
+14/09/2011: start development - simple tracker for cheque collection, hardcoded to send notification email to ISIS for now
+
+*/
+
+/*
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+String[] todoTypes = {"Collect cheque","Collect document","Collect cheque and document" };
+String[] collectchequeEmails = { "it@alsglobal.com.my" };
+
+selected_requestid = "";
+selected_emaildate = "";
+
+last_listtype = 0;
+
+ARCODE_POS = 1;
+EMAILDATE_POS = 7;
+
+// DBfunc: get rec from collectChequeTrack by origid
+Object getCollectChequeTrack_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from collectchequetrack where origid=" + iorigid;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+// ---- Customer search popup stuff ---- can be used in other modules
+
+void showCustomerInfo(String iarcode)
+{
+	comprec = sqlhand.getCompanyRecord(iarcode);
+	if(comprec == null) return;
+
+	cfind_company_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("customer_name"),"---UNDEFINED---"));
+	cfind_address1_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("address1"),"------"));
+	cfind_address2_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("address2"),"------"));
+	cfind_address3_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("address3"),"------"));
+	//cfind_address4_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("Address4"),"------"));
+	cfind_tel_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("telephone_no"),"-----"));
+	cfind_fax_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("fax_no"),"-----"));
+	cfind_contact_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("contact_person1"),"-----"));
+	cfind_email_lbl.setValue(kiboo.kiboo.checkNullString_RetWat(comprec.get("E_mail"),"-----"));
+
+	// if(iarcode.equals("BLACKLIST")) custinfo_gb.setStyle("background:#FF3333");
+}
+
+class searchcustomersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		tarcode = lbhand.getListcellItemLabel(selitem,0);
+		showCustomerInfo(tarcode);
+	}
+}
+
+// onDoubleClick listener for searchCustomers()
+class searchcustLBDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = customers_lb.getSelectedItem();
+		sarcode = lbhand.getListcellItemLabel(selitem,0);
+		if(sarcode.equals("BLACKLIST")) return;
+
+		comprec = sqlhand.getCompanyRecord(sarcode);
+		if(comprec != null)
+		{
+			// customize this part if need to use in other module - where to show the selected client info
+			ar_code.setValue(comprec.get("ar_code"));
+			customer_name.setValue(comprec.get("customer_name"));
+		}
+		selectcustomer_popup.close();
+	}
+}
+
+void searchCustomers()
+{
+Object[] clients_lb_headers = {
+	new listboxHeaderObj("AR_CODE",true),
+	new listboxHeaderObj("Company",true),
+	};
+
+	schtext = kiboo.replaceSingleQuotes(cust_search_tb.getValue());
+	if(schtext.equals("")) return;
+
+	Listbox newlb = lbhand.makeVWListbox(foundcustomer_holder, clients_lb_headers, "customers_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select top 50 ar_code,customer_name,credit_period from customer where " +
+	"ar_code like '%" + schtext + "%' or " +
+	"customer_name like '%" + schtext + "%' or " +
+	"address1 like '%" + schtext + "%' or " +
+	"address2 like '%" + schtext + "%' or " +
+	"address3 like '%" + schtext + "%' or " +
+	"address4 like '%" + schtext + "%' or " +
+	"contact_person1 like '%" + schtext + "%' " +
+	"order by customer_name";
+
+	custrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(custrecs.size() == 0) return;
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new searchcustomersLB_Listener());
+
+	for(dpi : custrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		credp = dpi.get("credit_period");
+		arcode = dpi.get("ar_code");
+		if(credp.equals("BLACKLIST")) arcode = "BLACKLIST";
+		kabom.add(arcode);
+		kabom.add(dpi.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	dc_obj = new searchcustLBDoubleClick_Listener();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+// ---- ENDOF Customer search popup stuff ----
+
+void clearInputBoxes()
+{
+	customer_name.setValue("");
+	ar_code.setValue("");
+	extranotes.setValue("");
+}
+
+Object[] requests_lb_headers = {
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("arcode",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("To Do",true),
+	new listboxHeaderObj("Finishby",true),
+	new listboxHeaderObj("Username",true),
+	new listboxHeaderObj("Emailed",true),
+	new listboxHeaderObj("Tickedby",true),
+	new listboxHeaderObj("Completed",true),
+};
+
+class requestslb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = requests_lb.getSelectedItem();
+		selected_requestid = lbhand.getListcellItemLabel(selitem,0);
+		selected_emaildate = lbhand.getListcellItemLabel(selitem,EMAILDATE_POS);
+		//newupdate_btn.setLabel("Update request");
+		//showRequestMetadata(selected_request);
+	}
+}
+
+// itype: 1=by date, 2=by date and searchstring
+void showRequests(int itype)
+{
+	srchtext = kiboo.replaceSingleQuotes(searchtext.getValue());
+	if(itype == 2 && srchtext.equals("")) return;
+
+	last_listtype = itype;
+	reqs_div.setVisible(true);
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+
+	Listbox newlb = lbhand.makeVWListbox(requests_holder, requests_lb_headers, "requests_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select origid,ar_code,customer_name,todotype,requestdate,finishby,username,emaildate,donedate,tickedby from collectchequetrack " +
+	"where requestdate between '" + sdate + "' and '" + edate + "' ";
+
+	if(itype == 2) sqlstm = sqlstm + " and customer_name like '%" + srchtext + "%' ";
+
+	sqlstm = sqlstm + " order by origid";
+	therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(30);
+	newlb.invalidate();
+	newlb.setMultiple(true);
+	newlb.addEventListener("onSelect", new requestslb_onSelect());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+		kabom.add(dpi.get("requestdate").toString().substring(0,10));
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(dpi.get("todotype"));
+		kabom.add(dpi.get("finishby").toString().substring(0,10));
+		kabom.add(dpi.get("username"));
+		kabom.add(kiboo.checkNullDate(dpi.get("emaildate"),"---"));
+		kabom.add(kiboo.checkNullString(dpi.get("tickedby")));
+		kabom.add(kiboo.checkNullDate(dpi.get("donedate"),"---"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");	
+	}
+}
+
+void newupdateRequest()
+{
+	icustomer_name = kiboo.replaceSingleQuotes(customer_name.getValue());
+
+	if(icustomer_name.equals(""))
+	{
+		guihand.showMessageBox("Customer name required for record-keeping..");
+		return;
+	}
+
+	iar_code = ar_code.getValue();
+	iextranotes = kiboo.replaceSingleQuotes(extranotes.getValue());
+	itodotype = todotype.getSelectedItem().getLabel();
+	ifinishby = kiboo.getDateFromDatebox(finishby);
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "insert into collectchequetrack (ar_code,customer_name,todotype,requestdate,finishby,extranotes,username) values " +
+	"('" + iar_code + "','" + icustomer_name + "','" + itodotype + "','" + todate + "','" + ifinishby + "','" + 
+	iextranotes + "','" + useraccessobj.username + "')";
+	sql.execute(sqlstm);
+	sql.close();
+
+	showRequests(last_listtype); // refresh
+	clearInputBoxes(); // done insert, just clear input boxes - so no dups
+}
+
+// email out the requests to ISIS
+void emailRequestsList()
+{
+	selcount = requests_lb.getSelectedCount();
+	if(selcount == 0) return;
+
+	selitems = requests_lb.getSelectedItems().toArray();
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	msgtext = "";
+	subjstr = "ALS COLLECTION REQUEST";
+	topeople = kiboo.convertStringArrayToString(collectchequeEmails);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	for(i=0;i<selcount;i++)
+	{
+		sitem = selitems[i];
+		torigid = lbhand.getListcellItemLabel(sitem,0);
+		tarcode = lbhand.getListcellItemLabel(sitem,ARCODE_POS);
+		temail = lbhand.getListcellItemLabel(sitem,EMAILDATE_POS);
+
+		if(!temail.equals("---")) continue; // if already emailed, continue next..
+
+		reqrec = getCollectChequeTrack_Rec(torigid);
+		if(reqrec == null) break; // exit loop if cannot get any rec
+
+		// put request header
+		msgtext +=   "Request #" + reqrec.get("origid").toString();
+		msgtext += "\nRequested by: " + reqrec.get("username");
+		msgtext += "\nComplete by: " + reqrec.get("finishby").toString().substring(0,10);
+		msgtext += "\n\nCustomer: " + reqrec.get("customer_name");
+
+		// put customer address by ar_code
+		if(!tarcode.equals(""))
+		{
+			comprec = getCompanyRecord(tarcode);
+			if(comprec != null)
+			{
+				msgtext += "\nAddress: " + kiboo.kiboo.checkNullString_RetWat(comprec.get("address1"),"");
+				msgtext += "\n" + kiboo.kiboo.checkNullString_RetWat(comprec.get("address2"),"");
+				msgtext += "\n" + kiboo.kiboo.checkNullString_RetWat(comprec.get("address3"),"");
+				msgtext += "\nTel: " + kiboo.kiboo.checkNullString_RetWat(comprec.get("telephone_no"),"");
+				msgtext += "\nPerson: " + kiboo.kiboo.checkNullString_RetWat(comprec.get("contact_person1"),"");
+			}
+		}
+
+		msgtext += "\nNotes:\n " + reqrec.get("extranotes");
+		msgtext += "\n\n----------\n\n";
+		// update emailed date
+		sqlstm = "update collectchequetrack set emaildate='" + todate + "' where origid=" + torigid; 
+		sql.execute(sqlstm);
+	}
+
+	sql.close();
+	showRequests(last_listtype); // refresh
+
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+	guihand.showMessageBox("Request notification-email sent..");
+}
+
+// Update done-date, request must be emailed first
+void updateDone()
+{
+	selcount = requests_lb.getSelectedCount();
+	if(selcount == 0) return;
+
+	selitems = requests_lb.getSelectedItems().toArray();
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	for(i=0;i<selcount;i++)
+	{
+		sitem = selitems[i];
+		torigid = lbhand.getListcellItemLabel(sitem,0);
+		temail = lbhand.getListcellItemLabel(sitem,EMAILDATE_POS);
+		if(!temail.equals("---"))
+		{
+			sqlstm = "update collectchequetrack set donedate='" + todate + "', tickedby='" + useraccessobj.username + "' where origid=" + torigid;
+			sql.execute(sqlstm);
+		}
+	}
+	sql.close();
+	showRequests(last_listtype); // refresh
+}
+
+// delete collect chq request, if request already emailed, cannot delete - mixup shit afterwards
+void deleteRequest()
+{
+	if(selected_requestid.equals("")) return;
+	selitem = requests_lb.getSelectedItem();
+	temail = lbhand.getListcellItemLabel(selitem,EMAILDATE_POS);
+	if(!temail.equals("---"))
+	{
+		guihand.showMessageBox("Request already emailed to ISIS, cannot delete..");
+		return;
+	}
+
+	if (Messagebox.show("Delete this request..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "delete from collectchequetrack where origid=" + selected_requestid;
+	sql.execute(sqlstm);
+	sql.close();
+	showRequests(last_listtype); // refresh
+}
+
+// itype: 1=ticked,2=email,3=done
+void adminFunc(int itype)
+{
+	if(selected_requestid.equals("")) return;
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update collectchequetrack ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "set tickedby=null ";
+			break;
+		case 2:
+			sqlstm += "set emaildate=null ";
+			break;
+		case 3:
+			sqlstm += "set donedate=null ";
+			break;
+	}
+
+	sqlstm += "where origid=" + selected_requestid;
+	sql.execute(sqlstm);
+	sql.close();
+	showRequests(last_listtype); // refresh
+}
+
+void kasiExport_clicker()
+{
+	exportListboxExcel(requests_holder,"requests_lb","isiscollect.xls",requests_lb_headers,"collection",kasiexport_holder,65);
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<div width="1200px">
+<panel id="collectcheq_panel" title="Collect Cheque Tracker ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<vbox>
+<groupbox mold="3d" width="400px">
+<grid>
+	<rows>
+		<row>
+			<label value="Start" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load requests" style="font-size:9px" onClick="showRequests(1)" />
+		</row>
+		<row spans=",3,">
+			<label value="Search" style="font-size:9px" />
+			<textbox id="searchtext" style="font-size:9px" width="98%" />
+			<button label="Dig" style="font-size:9px" onClick="showRequests(2)" />
+		</row>
+	</rows>
+</grid>
+</groupbox>
+<groupbox mold="3d">
+<grid>
+	<rows>
+		<row spans=",3">
+			<label value="Customer" style="font-size:9px" />
+			<textbox id="customer_name" width="98%" style="font-size:9px" />
+		</row>
+		<row spans=",,2">
+			<label value="AR Code" style="font-size:9px" />
+			<textbox id="ar_code" disabled="true" />
+			<button id="selcust_btn" label="Select customer" style="font-size:9px" onClick="selectcustomer_popup.open(selcust_btn)" />
+		</row>
+		<row>
+			<label value="What to do?" style="font-size:9px" />
+			<listbox id="todotype" mold="select" style="font-size:9px" />
+			<label value="Finish by" style="font-size:9px" />
+			<datebox id="finishby" format="yyyy-MM-dd" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address+Notes" style="font-size:9px" />
+			<textbox id="extranotes" multiline="true" width="98%" height="150px" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+	<button id="newupdate_btn" label="New request" style="font-size:9px" onClick="newupdateRequest()" />
+	<button label="Clear" style="font-size:9px" onClick="clearInputBoxes()" />
+</hbox>
+</groupbox>
+
+</vbox>
+
+<div id="reqs_div" visible="false">
+<hbox>
+	<button label="Set done/collected" style="font-size:9px" onClick="updateDone()" />
+	<button label="Delete request" style="font-size:9px" onClick="deleteRequest()" />
+	<button id="notification_btn" label="Email requests to ISIS" style="font-size:9px" onClick="emailRequestsList()" />
+	<button label="Export check-list" style="font-size:9px" onClick="kasiExport_clicker()" />
+	<label value="(Requests emailed to ISIS cannot be deleted)" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+
+
+<div id="requests_holder" />
+
+<groupbox id="adminstuff" visible="false" style="background:#ff1111;padding:2px">
+<button label="Clear tickedby" style="font-size:9px" onClick="adminFunc(1)" />
+<button label="Clear emailed" style="font-size:9px" onClick="adminFunc(2)" />
+<button label="Clear done" style="font-size:9px" onClick="adminFunc(3)" />
+</groupbox>
+
+</div>
+
+</hbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+kiboo.setTodayDatebox(finishby);
+
+lbhand.populateDropdownListbox(todotype, todoTypes);
+//populateDropdownListbox(requesttype, requestTypes);
+//populateDropdownListbox(requestpriority, requestPriority);
+
+if(useraccessobj.accesslevel == 9) adminstuff.setVisible(true);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

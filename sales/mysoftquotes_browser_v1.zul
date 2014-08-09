@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="mysoftquote_browser"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+VERSION: 1.0
+
+Title: MySoft old quotations browser
+Written by: Victor Wong
+
+**NOTES**
+24/03/2011: start development - take un-related people off MySoft
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+/*boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// onSelect event for listQuotationsByClient()
+class quotationslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		//selected_folderno = getListcellItemLabel(selitem,3);
+	}
+}
+
+void listClientsWithQuotations()
+{
+Object[] clients_headers = {
+	new listboxHeaderObj("AR Code",true),
+	new listboxHeaderObj("Qts",true),
+	new listboxHeaderObj("Client name",true),
+	};
+
+	sdate = getDateFromDatebox(startdate);
+	edate = getDateFromDatebox(enddate);
+	cnm = replaceSingleQuotes(clientsearch_tb.getValue());
+
+	// list by client but no input, return lor
+	if(itype == 2 && cnm.equals("")) return;
+
+	byclientname = "";
+	if(itype == 2) byclientname = " and customer.customer_name like '%" + cnm + "%'";
+
+	sqlstm = "select distinct sopheader.account_ref, sopheader.name from sopheader " +
+	"where sopheader.order_date between '" + sdate + "' and '" + edate + "'";
+
+	Listbox newlb = makeVWListbox(clients_holder, clients_headers, "clients_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+
+	newlb.setRows(20);
+	//newlb.addEventListener("onSelect", new clientfolderslb_Listener());
+
+    for(dpi : therows)
+    {
+	    ArrayList kabom = new ArrayList();
+	    kabom.add(dpi.get("account_ref"));
+	    kabom.add("---");
+   	    kabom.add(dpi.get("name"));
+	    strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"");
+    }
+}
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="oldmysoftquotebrowswer" title="Old MySoft Quotations Browser v.1" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<groupbox mold="3d">
+<caption label="Clients" />
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Start" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="listClientsWithQuotations()" />
+		</row>
+		<row spans=",3">
+			<label value="Client" style="font-size:9px" />
+			<textbox id="clientsearch_tb" width="190px" style="font-size:9px" />
+			<button label="Find" style="font-size:9px" onClick="listClientsWithQuotations()" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<div id="clients_holder" />
+</groupbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+if(useraccessobj.accesslevel == 9)
+{
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

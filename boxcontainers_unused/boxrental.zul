@@ -1,0 +1,736 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="boxrental_manager"?>
+<!--
+
+Version				:
+Coding began date	:
+Developers			: Victor
+
+Chiller Box Management - will be some major stuff in this module and supporting modules
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+MODULE_DBNAME = "BoxRentalForm";
+
+RENTALFORM_PREFIX = "TESTING";
+
+// to count open invoice-details window
+windcounter = 1;
+
+String[] formcomplete_ddi = { "ALL", "Partial" , "Completed" };
+
+Object whathuh;
+
+class rentalInputBox
+{
+	public Textbox origid;
+	public Textbox ar_code;
+	public Datebox rentout_date;
+	public Textbox returnall_date;
+	public Textbox status;
+	public Textbox address_1;
+	public Textbox address_2;
+	public Textbox city;
+	public Textbox zip;
+	public Textbox state;
+	public Textbox country;
+	public Textbox primaryphone;
+	public Textbox primaryfax;
+	public Textbox contactperson;
+	public Checkbox completed;
+	
+	
+	public rentalInputBox(Textbox iorigid, Textbox iar_code, Datebox irentout_date, Datebox ireturnall_date,
+		Textbox istatus, Textbox iaddress_1, Textbox iaddress_2, Textbox icity, Textbox izip, Textbox istate, 
+		Textbox icountry, Textbox iprimaryphone, Textbox iprimaryfax, Textbox icontactperson)
+	{
+		origid = iorigid;
+		ar_code = iar_code;
+		rentout_date = irentout_date;
+		returnall_date = ireturnall_date;
+		status = istatus;
+		address_1 = iaddress_1;
+		address_2 = iaddress_2;
+		city = icity;
+		zip = izip;
+		state = istate;
+		country = icountry;
+		primaryphone = iprimaryphone;
+		primaryfax = iprimaryfax;
+		contactperson = icontactperson;
+		completed = icompleted;
+	}
+	
+	void clearDetails()
+	{
+		origid.setValue("");
+		ar_code.setValue("");
+		status.setValues("");
+		address_1.setValue("");
+		address_2.setValue("");
+		city.setValue("");
+		zip.setValue("");
+		state.setValue("");
+		country.setValue("");
+		primaryphone.setValue("");
+		primaryfax.setValue("");
+		contactperson.setValue("");
+
+		completed.setChecked(false);
+		
+	}
+	
+	void completedLock()
+	{
+		origid.setDisabled(true);
+		address_1.setDisabled(true);
+		address_2.setDisabled(true);
+		city.setDisabled(true);
+		zip.setDisabled(true);
+		state.setDisabled(true);
+		country.setDisabled(true);
+		primaryphone.setDisabled(true);
+		primaryfax.setDisabled(true);
+		contactperson.setDisabled(true);
+		
+		ar_code.setDisabled(true);
+		rentout_date.setDisabled(true);
+	}
+	
+	void partialUnlock()
+	{
+		origid.setDisabled(false);
+		address_1.setDisabled(false);
+		address_2.setDisabled(false);
+		city.setDisabled(false);
+		zip.setDisabled(false);
+		state.setDisabled(false);
+		country.setDisabled(false);
+		primaryphone.setDisabled(false);
+		primaryfax.setDisabled(false);
+		contactperson.setDisabled(false);
+		
+		ar_code.setDisabled(false);
+		rentout_date.setDisabled(false);
+	}
+	
+	void showDetails()
+	{
+		// get origid from the ALSFORM code in the textbox
+		meid = origid.getValue();
+		iorigid = strip_PrefixID(meid);
+	
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		sqlstatem = "select * from BoxRentalForm where origid=" + iorigid;
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+		
+		if(therec == null)
+		{
+			showMessage("ERROR! Cannot retrieve schedule record");
+			return;
+		}
+
+	if(therec.get("origid") == 0)
+		codecust = "";
+	else
+		codecust = RENTALFORM_PREFIX + therec.get("origid").toString();
+		
+	origid.setValue(codecust);
+	
+	address_1.setValue(therec.get("address_1"));
+	address_2.setValue(therec.get("address_2"));
+	city.setValue(therec.get("city"));
+	zip.setValue(therec.get("zip"));
+	state.setValue(therec.get("state"));
+	
+	country.setValue(therec.get("country"));
+	primaryphone.setValue(therec.get("primaryphone"));
+	primaryfax.setValue(therec.get("primaryfax"));
+	contactperson.setValue(therec.get("contactperson"));
+	
+	rentout_date.setValue(therec.get("rentout_date"));
+	
+	compchk = therec.get("completed");
+	
+	completed.setChecked( (therec.get("completed") == 1) ? true : false );
+	
+	// 28/1/2010: if completed, don't allow user to change anything anymore
+	if(compchk == 1)
+		completedLock();
+	else
+		partialUnlock();
+		
+	origid.setValue(therec.get("origid"));
+	
+	}
+	
+	// save whatever in the inputbox back to database
+	void updateDetails()
+	{
+		// nothing to update, return
+		if(origid.getValue().equals("")) return;
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		iorigid = strip_PrefixID(origid.getValue());
+
+		// origid uses the same 6 char prefix, use the same func to strip
+		origid = strip_PrefixID(origid.getValue());
+		
+		if(iorigid.equals("")) iorigid="0";
+		
+		iaddress_1 = replaceSingleQuotes(address_1.getValue());
+		iaddress_2 = replaceSingleQuotes(address_2.getValue());
+		icity = replaceSingleQuotes(city.getValue());
+		izip = replaceSingleQuotes(zip.getValue());
+		istate = replaceSingleQuotes(state.getValue());
+		icountry = replaceSingleQuotes(country.getValue());
+		iprimaryphone = replaceSingleQuotes(primaryphone.getValue());
+		iprimaryfax = replaceSingleQuotes(primaryfax.getValue());
+		icontactperson = replaceSingleQuotes(contactperson.getValue());
+		
+		irentout_date = getDateFromDatebox(rentout_date);
+		
+		icompleted = ((completed.isChecked()) ? 1 : 0);
+		
+		iorigid = replaceSingleQuotes(origid.getValue());
+		ibox_id = box_id.getValue();
+		
+		sqlstatem = "update BoxRentalForm set origid=" + origid + ", " +
+			"address_1='" + iaddress_1 + "', " +
+			"address_2='" + iaddress_2 + "', " +
+			"city='" + icity + "', " +
+			"zip='" + izip + "', " +
+			"state='" + istate + "', " +
+			"country='" + icountry + "', " +
+			"primaryphone='" + iprimaryphone + "', " +
+			"primaryfax='" + iprimaryfax + "', " +
+			"contactperson='" + icontactperson + "', " +
+			"ar_code='" + iar_code + "', " +
+			"box_id='" + ibox_id + "', " +
+			"completed=" + icompleted + ", " +
+			"rentout_date='" + irentout_date + "', " +
+			" where origid=" + iorigid;
+		
+		sql.execute(sqlstatem);
+		sql.close();
+		
+	}
+
+} // end of object rentalInputBox
+		
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 28/1/2010: save previous rec if available before showing the new one
+		// whathuh.updateDetails();
+	
+		irecno = testsdrillbit2.getSelectedItem().getLabel();
+		whathuh.origid.setValue(irecno);
+		whathuh.showDetails();
+		
+		// startBoxRentalFormSearch(startdate,enddate);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeBoxRentalFormListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testsdrillbit2");
+    //newlb.setContext("boxRentalFormContext");
+    newlb.setVflex(true);
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new MyListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("FormId");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Customer");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Rent Out");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+
+    Listheader hd4 = new Listheader();
+    hd4.setLabel("Completed");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+	
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    newlb.setRows(5);
+
+    return newlb;
+
+} // end of makeBoxRentalFormListbox()
+
+// Do the search and populate listbox
+void startBoxRentalFormSearch(Datebox startdate, Datebox enddate)
+{
+	startdate = getDateFromDatebox(startdate);
+    enddate = getDateFromDatebox(enddate);
+	
+	if(startdate == null || enddate == null)
+    {
+        showMessageBox("Please specify startdate date and enddate date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	// 9/2/2010: chillerbox status , all/partial/completed
+	chllrbxstat = chillerboxstatus.getSelectedItem().getLabel();
+
+	ichllrbxstat = "";
+	
+	if(chllrbxstat.equals("Partial")) ideststat = "and completed=0";
+	if(chllrbxstat.equals("Completed")) ideststat = "and completed=1";
+
+	sqlstatem = "select top 510 * from BoxRentalForm where rentout_date between '" + sdate + "' and '" + edate + "'" + 
+	ideststat +
+	" order by rentout_date desc";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+	
+	 // if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = searchdiv.getFellowIfAny("testsdrillbit2");
+	if(oldlb != null)
+		oldlb.setParent(null);
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeBoxRentalFormListbox(searchdiv);
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[4];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+            strarray[0] = RENTALFORM_PREFIX + ilist.get("origid").toString();
+            strarray[1] = ilist.get("rentout_date").toString().substring(0,10);
+			
+			// get customer name from origid- will be slow if alot, scan 1 by 1
+			
+			iar_code = ilist.get("origid");
+
+			icompanyname = "Undefined";
+			
+			if(!iar_code.equals(""))
+				icompanyname = getCompanyName(iar_code);
+			
+			strarray[2] = icompanyname;
+			
+			icompleted = ilist.get("completed");
+			icompstr = (icompleted == 1) ? "Completed" : "Partial";
+			strarray[3] = icompstr;
+
+            insertListItems(newlb,strarray,RENTALFORM_PREFIX);
+		}
+	}
+	
+	//whathuh.clearDetails();
+
+} // end of startBoxRentalFormSearch()
+
+// Create an entry in the boxrentalform table
+void createNewBoxRentalForm(Datebox ihiddendatebox)
+{
+	todaysdate = getDateFromDatebox(ihiddendatebox);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "insert into BoxRentalForm values ('', '', '', '', '', '', '', '', '', '" + todaysdate + "',0, '', '',0)";
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh the box rental form search-box.. set today's date for both rentout/return search date
+	setTodayDatebox(startdate);
+	setTodayDatebox(enddate);
+	startBoxRentalFormSearch(startdate,enddate);
+
+} // end of createNewBoxRentalForm()
+
+// save the rental box metadata
+void saveBoxRentalForm()
+{
+	whathuh.updateDetails();
+	whathuh.clearDetails();
+	
+	startBoxRentalFormSearch(startdate,enddate);
+
+}
+
+// delete a new form schedule
+void deleteBoxRentalForm()
+{
+	// make sure something selected before deleting
+	
+	boxrentalformstr = whathuh.origid.getValue();
+	if(boxrentalformstr.equals("")) return;
+
+	// 28/1/2010: make sure the new form schedule is not assigned to any dispatch manifest
+	therec = getDispatchScheduleRec(boxrentalformstr);
+	if(therec != null)
+	{
+		boxrentalform = therec.get("origid");
+	
+		if(boxrentalform > 0)
+		{
+			showMessageBox(boxrentalformstr + " already assigned to " + BOXRENTAL_PREFIX + boxrentalform + "\nCannot delete");
+			return;
+		}
+	}
+
+	if (Messagebox.show("Delete new form " + boxrentalformstr, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		formno = strip_PrefixID(boxrentalformstr);
+
+		// redo this section, no direct delete, set isDeleted flag instead - audit-trail later on
+		sqlstatem = "delete from BoxRentalForm set deleted=1 where origid=" + formno;
+		
+		// sql.execute(sqlstatem);
+		
+		sql.close();
+		
+		// refresh the search-box
+		startBoxRentalFormSearch(stardate,enddate);
+		whathuh.clearDetails();
+	}
+}
+
+void tryNotes()
+{
+	msele = testsdrillbit2.getSelectedItem().getLabel();
+	alert("selected this: " + msele);
+}
+
+void playDocsDeliveryDetails()
+{
+	// get item selected in the list-box, testsdrillbit2 = hardcoded listbox id
+	
+	if(testsdrillbit2.getSelectedIndex() == -1) return;
+	
+	arno = testsdrillbit2.getSelectedItem().getLabel();
+	arorigidstr = "origid=" + arno;
+
+	uniqwindowid = "arcode" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","cust_addaddress.zul", uniqwindowid, arcodestr);
+	windcounter++;
+}
+
+// only accept arcode type 3XXX/XXX for drag-drop
+void dropAR_Code(Event event)
+{
+	Component dragged = event.dragged;
+	
+	iarcode = dragged.getLabel();
+	
+	// if no form selected, don't put in the address
+	if(whathuh.origid.getValue().equals("")) return;
+	
+	if(iarcode.substring(0,1).equals("3"))
+	{
+		self.setValue(iarcode);
+		
+		// set all the other fields with the primary address from mysoft.customer
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		sqlstatem = "select address1,address2,address3,telephone_no,fax_no,contact_person1 from customer where origis='" + iorigid + "'";
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+		
+		whathuh.address_1.setValue(therec.get("address1"));
+		whathuh.address_2.setValue(therec.get("address2"));
+		whathuh.city.setValue(therec.get("address3"));
+		
+		whathuh.state.setValue("");
+		whathuh.zip.setValue("");
+		whathuh.country.setValue("");
+		
+		whathuh.primaryphone.setValue(therec.get("telephone_no"));
+		whathuh.primaryfax.setValue(therec.get("fax_no"));
+		whathuh.contactperson.setValue(therec.get("contact_person1"));
+	}
+}
+
+void playAssignCustomerWindow()
+{	
+	uniqwindowid = "srhcust" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", uniqwindowid, "getcust=1");
+	windcounter++;
+}
+
+void playCustomerExtraAddress()
+{
+	arcodestr = "ar_code=" + whathuh.ar_code.getValue();
+
+	uniqwindowid = "arcode" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/cust_addaddress.zul", uniqwindowid, arcodestr);
+	windcounter++;
+}
+
+void playAssignNewBoxes()
+{
+	uniqwindowid = myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","boxcontainers/assign_new_box.zul", uniqwindowid, "boxo=0");
+	windcounter++;
+}
+
+void startSearchBox(Listbox iformstatus)
+{
+	if(iformstatus.getSelectedItem() == null) return;
+	
+	iselected = iformstatus.getSelectedItem().getLabel();
+	wheretype = "";
+	
+	if(iselected.equals("Partial"))
+		wheretype="where formstatus='PARTIAL'";
+		
+		
+	if(iselected.equals("Completed"))
+		wheretype="where formstatus='COMPLETED'";
+		
+	sqlstatem = "select * from status " + wheretype;
+	
+	alert(sqlstatem);
+
+}
+
+]]>
+</zscript>
+
+<menupopup id="boxSchedulingContext">
+
+<menuitem label="Add more address" onClick="playDocsDeliveryDetails()" /> 
+<menuitem label="Hide popup" />
+
+</menupopup>
+
+<div width="990px">
+<panel id="boxscheduling" title="Chiller Box"
+		border="normal" collapsible="true" closable="true"
+>
+<panelchildren>
+<hbox>
+<vbox>
+
+<!-- start of schedule search column -->
+
+<groupbox mold="3d" width="620px">
+<caption label="Rental Box" />
+<vbox>
+ <hbox>
+	<label value="Rent out date" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+
+	<label value="Return date" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	
+	<label value="Status" />
+	<listbox id="formstatus" rows="1" mold="select" />
+
+	<zscript>
+		populateDropdownListbox(formstatus, formcomplete_ddi);
+	</zscript>
+
+	<button label="Start search" onClick="startBoxRentalFormSearch(startdate,enddate)" />
+	
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+ </hbox>
+</vbox>
+
+<separator height="3px" />
+
+<!-- search results box -->
+<groupbox mold="3d" width="100%">
+<caption label="Search results" />
+<vbox>
+<div id="searchdiv" />
+</vbox>
+</groupbox>
+
+<hbox>
+ <button label="New form" onClick="createNewBoxRentalForm(hiddendatebox)" />
+ <button label="Delete" onClick="deleteBoxRentalForm()" />
+ <button label="Assign New Box" onClick="playAssignNewBoxes()" />
+ 
+</hbox>
+
+<separator height="3px" />
+
+<groupbox mold="3d" width="100%">
+<caption label="Rental Box Metadata" />
+<vbox>
+
+<groupbox>
+<vbox>
+	<hbox>
+		<label value="Date" />
+		<datebox id="rentout_date" format="yyyy-MM-dd" />
+		
+		<label value="BoxId" />
+		<textbox id="box_id" width="100px" droppable="true" onDrop="dropbox_id" />
+			
+		<label value="CustCode" />
+        <textbox id="ar_code" width="100px" droppable="true" onDrop="dropar_code" />
+		
+		<button label="Assign customer" onClick="playAssignCustomerWindow()" />
+	</hbox>
+	
+    <hbox>
+		<vbox>
+			<hbox>
+			<label value="Address1" />
+			<textbox id="address_1" width="300px" droppable="EXTADR" onDrop="dropExtraAddress_Code(event)" />
+	
+			<separator width="34px" />
+			<label value="Tel" />
+			<textbox id="primaryphone" />
+			</hbox>
+		
+			<hbox>
+			<label value="Address2" />
+			<textbox id="address_2" width="300px" droppable="EXTADR" onDrop="dropExtraAddress_Code(event)" />
+
+			<separator width="34px" />
+			<label value="Fax" />
+			<textbox id="primaryfax" />
+			</hbox>
+			
+			<hbox>
+			
+			<label value="City" />
+			<textbox id="city" />
+			
+			<separator width="5px" />
+			<label value="Postcode" />
+			<textbox id="zip" />
+
+			<separator width="5px" />
+			<label value="Contact" />
+			<textbox id="contactperson" />
+			</hbox>
+			
+			<hbox>
+			<label value="State" />
+			<textbox id="state" />
+
+			<label value="Country" />
+			<textbox id="country" />
+			
+			
+			</hbox>
+			
+		</vbox>
+		
+    </hbox>
+	
+</vbox>
+</groupbox>
+<!-- end of schedule metadata box -->
+
+<!-- rental box metadata crud buttons -->
+<hbox>
+<button id="saveupdatemeta" label="Save Chiller Form" onClick="saveBoxRentalForm()" />
+<button label="Use extra address" onClick="playCustomerExtraAddress()" />
+</hbox>
+
+</vbox>
+</groupbox>
+
+</groupbox>
+
+<!-- end of schedule search column -->
+
+</vbox>
+<!-- boxavailable search box -->
+<groupbox mold="3d" width="100%">
+<caption label="Box Available" />
+
+<div id="localboxdiv" />
+
+<zscript>
+localActivateWindow(localboxdiv, "boxcontainers/box_management.zul", "cusdo88", "boxcontainers=1");
+</zscript>
+
+</groupbox>
+<!-- end of boxavailable search box -->
+
+</hbox>
+</panelchildren>
+</panel>
+
+</div>
+
+<zscript>
+<![CDATA[
+		
+// Set search startdate and enddate to today's date
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+
+
+</zk>
+
+

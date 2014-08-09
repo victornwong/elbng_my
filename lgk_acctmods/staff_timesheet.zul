@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="staff_timesheet_manager" ?>
+<?page title="staff timesheet"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+<zk xmlns:h="http://www.w3.org/1999/xhtml" xmlns:zk="http://www.zkoss.org/2005/zk">
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/jobproject_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Staff Timesheet and upload to Mysoft
+Written by: Victor Wong
+(c)2010 Victor
+*/
+
+String[] department_defs = { "Administration" , "Operation" , "Supporting" };
+String[] position_defs = { "Staff" , "Supervisor" , "Executive", "Manager", "KPC" };
+String[] status_defs = { "Active" , "On-leave", "MC" , "Retired" };
+
+selected_staff_origid = "";
+
+void toggleTimeSheet_butts(boolean iwhat)
+{
+	upload_entries_btn.setVisible(iwhat);
+	change_entry_btn.setVisible(iwhat);
+	delete_entry_btn.setVisible(iwhat);
+}
+
+void showStaff_Timesheet(String istaff_name)
+{
+	Object[] timesheet_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Job.Date",true),
+	new listboxHeaderObj("Hours",true),
+	new listboxHeaderObj("Job.Notes",true),
+	new listboxHeaderObj("Posted",true),
+	new listboxHeaderObj("Post.Date",true),
+	};
+
+	Listbox newlb = makeVWListbox(stafftimesheet_holder, timesheet_lb_headers, "timesheet_lb", 10);
+
+	sql = lgk_sql();
+	if(sql == null) return;
+	sqlstm = "select origid,jobdate,jobhours,notes,posted,postdate from Staff_TimeSheet where staff_name='" + istaff_name + "' order by jobdate desc";
+	strecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(strecs.size() == 0) return;
+
+	toggleTimeSheet_butts(true);
+	newlb.setRows(20);
+	newlb.setMultiple(true);
+
+	for(dpi : strecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+
+		kabom.add(dpi.get("jobdate").toString().substring(0,10));
+		kabom.add(dpi.get("jobhours").toString());
+
+		kabom.add(dpi.get("notes"));
+		posted = (dpi.get("posted") == 1) ? "--YES-" : "------";
+		kabom.add(posted);
+
+		postdate = dpi.get("postdate");
+		postdate = (postdate == null) ? "----------" : postdate.toString().substring(0,10);
+		kabom.add(postdate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+class stafflistlb_onSelectListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_staff_origid = selitem.getLabel(); // 1st col = origid
+		sfname = getListcellItemLabel(selitem, 1);
+		
+		showStaff_Timesheet(sfname);
+	}
+}
+
+// Show staff from Staff_List
+void showStaffList()
+{
+	Object[] stafflist_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ID#",true),
+	new listboxHeaderObj("Name",true),
+	new listboxHeaderObj("Post",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("HOD",true),
+	new listboxHeaderObj("Department",true),
+	};
+
+	Listbox newlb = makeVWListbox(stafflist_div, stafflist_lb_headers, "stafflist_lb", 20);
+
+	sql = lgk_sql();
+	if(sql == null) return;
+	sqlstm = "select origid,staff_name,staff_id,staff_status,position,department,hod from Staff_List";
+	strecs = sql.rows(sqlstm);
+	sql.close();
+
+	newlb.addEventListener("onSelect", new stafflistlb_onSelectListener());
+
+	for(dpi : strecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("staff_id"));
+		
+		stname = dpi.get("staff_name");
+		stname = (stname.equals("")) ? "--NEW STAFF--" : stname;
+		
+		kabom.add(stname);
+		kabom.add(dpi.get("position"));
+		kabom.add(dpi.get("staff_status"));
+
+		//hod = (dpi.get("hod") == 1) ? "-Y-" : "---";
+		kabom.add(dpi.get("hod"));
+
+		kabom.add(dpi.get("department"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="staff_timesheet_panel" title="Staff Timesheet" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="400px" >
+	<west title="Staff list" size="450px" flex="true" splittable="true" collapsible="true">
+		<div>
+			<div id="stafflist_div" />
+		</div>
+	</west>
+	
+	<center>
+		<div style="padding:2px">
+			<div id="stafftimesheet_holder" />
+			<separator height="3px" />
+			<hbox>
+				<button id="upload_entries_btn" label="Post entries" style="font-size:9px" visible="false" />
+				<button id="change_entry_btn" label="Edit entry" style="font-size:9px" visible="false" />
+				<button id="delete_entry_btn" label="Delete" style="font-size:9px" visible="false" />
+			</hbox>
+		</div>
+	</center>
+</borderlayout>
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+setTodayDatebox(hiddendatebox);
+
+showStaffList();
+
+</zscript>
+</zk>

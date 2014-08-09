@@ -1,0 +1,1000 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="complainfeedback_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION="v0.5";
+/*
+Title		: Complaints and feedbacks management
+Written by	: Victor Wong
+
+Sorta like help-ticket system..
+
+Revisions:
+
+06/03/2012: started
+
+Some example codes:
+---
+Random random = new Random(20);
+String[] stocks = {"Csco", "Goog", "Yhoo", "Msft", "Orcl"};
+String[] color = {"red", "blue", "yellow", "green", "gray"};
+NumberFormat nf = NumberFormat.getInstance();
+Locale locale = Locale.ENGLISH;
+SimpleDateFormat df = new SimpleDateFormat("MMMM", locale);
+String[] months = new String[12];
+java.util.Calendar cal = java.util.Calendar.getInstance(locale);
+cal.clear();
+for (int j = 0; j &lt; 12; ++j) {
+	cal.set(java.util.Calendar.MONTH, j);
+	months[j] = df.format(cal.getTime());
+} 
+String nextPrice() {
+    nf.setMaximumFractionDigits( 2 );
+	return nf.format(Math.random() * 50 + 40);
+---
+*/
+/*
+import java.util.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.text.*;
+import org.victor.*;
+
+sechand = new SecurityFuncs();
+luhand = new LookupFuncs();
+lbhand = new ListboxHandler();
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+guihand = new GuiFuncs();
+dmshand = new DMSFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+COMPLAINT_PREFIX = "COMP";
+COMPLAIN_OPEN = "OPEN";
+COMPLAIN_CLOSE = "CLOSE";
+
+last_search_type = 0;
+global_selected_complain = "";
+global_selected_status = "";
+global_selected_car = "";
+
+selected_file_id = ""; // global for attach-docu origid
+
+// DB Func: get rec from elb_complaints by origid
+Object getComplaints_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from elb_complaints where origid=" + iorigid;
+	retv = sql.firstRow(sqlstm);
+	sql.close();
+	return retv;
+}
+
+// DB Func: get rec from elb_complaints_car by origid
+Object getComplaintsCAR_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from elb_complaints_car where origid=" + iorigid;
+	retv = sql.firstRow(sqlstm);
+	sql.close();
+	return retv;
+}
+
+void clearCAR_inputFields()
+{
+	car_notes.setValue("");
+	car_origid.setValue("");
+	car_prob_description.setValue("");
+}
+
+void clearTickss()
+{
+	luhand.clearCheckboxTicked(labticker_holder);
+	luhand.clearCheckboxTicked(adminticker_holder);
+	luhand.clearCheckboxTicked(actiontaken_holder);
+}
+
+void showComplaintsMetadata()
+{
+	if(global_selected_complain.equals("")) return;
+	crec = getComplaints_Rec(global_selected_complain);
+	if(crec == null) return;
+
+	clearTickss();
+
+	tab1.setLabel("Complaint details : " + crec.get("origid").toString()); // change tab-box title
+
+	cmp_origid.setValue(crec.get("origid").toString());
+	cmp_status.setValue(crec.get("status"));
+
+	lbhand.matchListboxItems(cmp_priority, kiboo.checkNullString(crec.get("priority")));
+	lbhand.matchListboxItems(cmp_assignto, kiboo.checkNullString(crec.get("assignto")));
+
+	cmp_datecreated.setValue(crec.get("datecreated").toString().substring(0,10));
+	cmp_receivedby.setValue(kiboo.checkNullString(crec.get("receivedby")));
+
+	cmp_client.setValue(kiboo.checkNullString(crec.get("client")));
+	cmp_client_contact.setValue(kiboo.checkNullString(crec.get("client_contact")));
+	cmp_client_tel.setValue(kiboo.checkNullString(crec.get("client_tel")));
+	cmp_client_fax.setValue(kiboo.checkNullString(crec.get("client_fax")));
+	cmp_client_email.setValue(kiboo.checkNullString(crec.get("client_email")));
+
+	cmp_natureofcomplaint.setValue(kiboo.checkNullString(crec.get("natureofcomplaint")));
+	
+	cmp_folderno_str.setValue(kiboo.checkNullString(crec.get("folderno_str")));
+
+	cmp_closeby.setValue(kiboo.checkNullString(crec.get("closeby")));
+	if(crec.get("closedate") != null) cmp_closedate.setValue(crec.get("closedate").toString().substring(0,10));
+
+	// for tab2
+	if(crec.get("lab_ticks") != null) luhand.tickCheckboxes(labticker_holder,crec.get("lab_ticks"));
+	cmp_lab_remarks.setValue(kiboo.checkNullString(crec.get("lab_remarks")));
+
+	if(crec.get("admin_ticks") != null) luhand.tickCheckboxes(adminticker_holder,crec.get("admin_ticks"));
+	cmp_admin_remarks.setValue(kiboo.checkNullString(crec.get("admin_remarks")));
+	cmp_misc_remarks.setValue(kiboo.checkNullString(crec.get("misc_remarks")));
+
+	// for tab3
+	if(crec.get("action_taken") != null) luhand.tickCheckboxes(actiontaken_holder,crec.get("action_taken"));
+	cmp_action_remarks.setValue(kiboo.checkNullString(crec.get("action_remarks")));
+	cmp_closeout.setValue(kiboo.checkNullString(crec.get("closeout")));
+	
+	// toggle delete-attached-docu button
+	deletedoc_btn.setDisabled(false);
+	if(useraccessobj.accesslevel < 9) // admin can do
+	{
+		if(!global_selected_status.equals(COMPLAIN_OPEN)) deletedoc_btn.setDisabled(true);
+	}
+
+	workarea.setVisible(true);
+}
+
+// onSelect event for loadComplaints_List()
+class complb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = complains_lb.getSelectedItem();
+		global_selected_complain = lbhand.getListcellItemLabel(isel,0);
+		global_selected_status = lbhand.getListcellItemLabel(isel,6);
+		showComplaintsMetadata();
+		
+		fillDocumentsList(global_selected_complain);
+
+		// clear CAR stuff		
+		if(cars_holder.getFellowIfAny("cars_lb") != null) cars_lb.setParent(null);
+		clearCAR_inputFields();
+	}
+}
+
+Object[] complb_headers = 
+{
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Client",true),
+	new listboxHeaderObj("Submit",true),
+	new listboxHeaderObj("Handler",true),
+	new listboxHeaderObj("Priority",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("CloseBy",true),
+	new listboxHeaderObj("C.Date",true),
+};
+
+// itype: 1=by date and searchtext, 2=by OPEN and priority
+void loadComplaints_List(int itype)
+{
+	last_search_type = itype;
+
+	// reset vars and clear stuff
+	global_selected_complain = "";
+	workarea.setVisible(false); // hide work-area
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+	byprio = bypriority_lb.getSelectedItem().getLabel();
+
+	Listbox newlb = lbhand.makeVWListbox(complains_holder, complb_headers, "complains_lb", 20);
+
+	sqlstm = "select top 100 origid,datecreated,status,client,receivedby,priority,status,closeby,closedate,assignto from elb_complaints " +
+	"where datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	if(itype == 2) sqlstm += "and status='" + COMPLAIN_OPEN + "' and priority='" + byprio + "' ";
+
+	if(!searchtext.equals(""))
+	{
+	/*
+		sqlstm += "and (subcon_name like '%" + searchtext + "%' or als_contact like '%" + searchtext + "%' " + 
+		"or folders_inside like '%" + searchtext + "%' or letterofintent like '%" + searchtext + "%' " + 
+		"or airwaybill like '%" + searchtext + "%' or extranotes like '%" + searchtext + "') ";
+	*/
+	}
+
+	sqlstm += "order by datecreated";
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+
+	newlb.addEventListener("onSelect", new complb_onSelect());
+
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("client"));
+		kabom.add(dpi.get("receivedby"));
+		kabom.add(kiboo.checkNullString(dpi.get("assignto")));
+		kabom.add(dpi.get("priority"));
+		kabom.add(dpi.get("status"));
+		kabom.add(kiboo.checkNullString(dpi.get("closeby")));
+		kabom.add(kiboo.checkNullDate(dpi.get("closedate"),"---"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void newComplaintForm()
+{
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sqlstm = "insert into elb_complaints (datecreated,receivedby,client,priority,status) values " +
+	"('" + todate + "','" + useraccessobj.username + "','','NORMAL','OPEN')";
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadComplaints_List(last_search_type); // refresh
+}
+
+void updateComplaintForm()
+{
+	if(global_selected_complain.equals("")) return;
+	if(global_selected_status.equals(COMPLAIN_CLOSE))
+	{
+		guihand.showMessageBox("Case already closed.. cannot update/insert anything.");
+		return;
+	}
+
+	cpriority = cmp_priority.getSelectedItem().getLabel();
+	cclient = kiboo.replaceSingleQuotes(cmp_client.getValue());
+	ccontact = kiboo.replaceSingleQuotes(cmp_client_contact.getValue());
+	ctel = kiboo.replaceSingleQuotes(cmp_client_tel.getValue());
+	cfax = kiboo.replaceSingleQuotes(cmp_client_fax.getValue());
+	cemail = kiboo.replaceSingleQuotes(cmp_client_email.getValue());
+	cnature = kiboo.replaceSingleQuotes(cmp_natureofcomplaint.getValue());
+	clabticks = luhand.saveCheckboxTicked(labticker_holder);
+	clabrem = kiboo.replaceSingleQuotes(cmp_lab_remarks.getValue());
+	cadticks = luhand.saveCheckboxTicked(adminticker_holder);
+	cadrem = kiboo.replaceSingleQuotes(cmp_admin_remarks.getValue());
+	cmrem = kiboo.replaceSingleQuotes(cmp_misc_remarks.getValue());
+	cactticks = luhand.saveCheckboxTicked(actiontaken_holder);
+	cactrem = kiboo.replaceSingleQuotes(cmp_action_remarks.getValue());
+	cclout = kiboo.replaceSingleQuotes(cmp_closeout.getValue());
+	cfolno = kiboo.replaceSingleQuotes(cmp_folderno_str.getValue());
+	cassto = cmp_assignto.getSelectedItem().getLabel();
+	
+	cnostr = COMPLAINT_PREFIX + global_selected_complain;
+
+	sqlstm = "update elb_complaints set complain_no_str='" + cnostr + "', priority='" + cpriority + "', client='" + cclient + "'," + 
+	"client_contact='" + ccontact + "', client_tel='" + ctel + "',client_fax='" + cfax + "',client_email='" + cemail + "'," + 
+	"natureofcomplaint='" + cnature + "', lab_ticks='" + clabticks + "',lab_remarks='" + clabrem + "', admin_ticks='" + cadticks + "'," + 
+	"admin_remarks='" + cadrem + "', misc_remarks='" + cmrem + "',action_taken='" + cactticks + "',action_remarks='" + cactrem + "'," + 
+	"closeout='" + cclout + "', folderno_str='" + cfolno + "', assignto='" + cassto + "' where origid=" + global_selected_complain;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadComplaints_List(last_search_type); // refresh
+}
+
+void sendCaseCloseEmail()
+{
+	crec = getComplaints_Rec(global_selected_complain);
+	if(crec == null) return;
+
+	subjstr = "[COMPLAINTS] Case close notification : " + kiboo.checkNullString(crec.get("client"));
+
+	msgbody =  "Complaint details : " + crec.get("origid").toString();
+	msgbody += "\n---------------------------------------";
+	msgbody += "\n\nDated: " + crec.get("datecreated").toString().substring(0,10);
+	msgbody += "\nReceived by: " + kiboo.checkNullString(crec.get("receivedby"));
+	msgbody += "\nClient: " + kiboo.checkNullString(crec.get("client"));
+	msgbody += "\n\nComplaint: " + kiboo.checkNullString(crec.get("natureofcomplaint"));
+	msgbody += "\n\nClose by: " + kiboo.checkNullString(crec.get("closeby"));
+	msgbody += "\nClose date: " + crec.get("closedate").toString().substring(0,10);
+	msgbody += "\n\nAction remarks: " + kiboo.checkNullString(crec.get("action_remarks"));
+	msgbody += "\n\n** THIS IS JUST A NOTIFICATION - NO REPLY REQUIRED **";
+
+	topeople22 = luhand.getLookupChildItems_StringArray("COMP_CASECLOSE_EMAILS",2);
+	topeople = kiboo.convertStringArrayToString(topeople22);
+	simpleSendEmail(SMTP_SERVER,"elabman@alsglobal.com.my",topeople,subjstr,msgbody);
+}
+
+// Close case - only pre-defined users can do this.
+void closeCase()
+{
+	if(global_selected_complain.equals("")) return;
+
+	if(Messagebox.show("Once case is closed, no more modification..", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	pwpw = luhand.getLookups_ConvertToStr("CMP_CLOSECASE_USERS",2,"~");
+	tuser = useraccessobj.username;
+	if(pwpw.indexOf(tuser) != -1)
+	{
+		sqlstm = "update elb_complaints set closeby='" + tuser + "', closedate='" + todate + "', status='" + COMPLAIN_CLOSE +"' where origid=" + global_selected_complain;
+		sqlhand.gpSqlExecuter(sqlstm);
+		guihand.showMessageBox("Case closed..");
+
+		// send email noti to whoever want to keep tab of complaints
+		sendCaseCloseEmail();
+
+		loadComplaints_List(last_search_type); // refresh
+	}
+	else
+	{
+		guihand.showMessageBox("[DENIED] You are not authorized to close case!");
+	}
+}
+
+// will only send noti-email if case is open. set lookups with persons' email
+// itype: 1=notify everyone, 2=notify only assignTo person
+// 25/05/2012: notify only person assigned to handler this complain
+void notifyPeople(int itype)
+{
+	if(global_selected_complain.equals("")) return;
+	crec = getComplaints_Rec(global_selected_complain);
+	if(crec == null) { guihand.showMessageBox("[ERR] Cannot access complaints table.."); return; }
+
+	DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+	//nm_ackdate.setValue(df.format(nmr.get("ackdate")));
+
+	subjstr = "[CLIENT COMPLAINTS] " + crec.get("client");
+	msgbody =  "Complaint #: " + crec.get("origid").toString() + "  Status : " + crec.get("status");
+	msgbody += "\n--------------------------------------------";
+	msgbody += "\n\nSubmitted by : " + crec.get("receivedby");
+	msgbody += "\nDated : " + df.format(crec.get("datecreated"));
+	msgbody += "\n\nClient : " +  crec.get("client");
+	msgbody += "\nContact : " + crec.get("client_contact");
+	msgbody += "\nTel : " + crec.get("client_tel");
+	msgbody += "\n\nComplaint:";
+	msgbody += "\n" + crec.get("natureofcomplaint");
+	msgbody += "\n\nActions:";
+	msgbody += "\n" + crec.get("action_remarks");
+	msgbody += "\n\nClose by : " + crec.get("closeby") + "  Close date : " + ((crec.get("closedate") == null) ? "" : df.format(crec.get("closedate")));
+
+	topeople = "";
+
+	switch(itype)
+	{
+		case 1:
+			topeople22 = luhand.getLookupChildItems_StringArray("COMP_CASECLOSE_EMAILS",2); // TODO: HARDCODED!!
+			topeople = kiboo.convertStringArrayToString(topeople22);
+			break;
+			
+		case 2:
+			kuli = luhand.getLookups_ByParent("CMP_CLOSECASE_USERS"); // TODO: HARDCODED!!
+			if(kuli != null)
+			{
+				assto = crec.get("assignto");
+				for(dpi : kuli)
+				{
+					if(assto.equals(dpi.get("disptext")))
+					{
+						topeople = dpi.get("value2"); // get lookup.value2 = email of assignto person
+						break;
+					}
+				}
+			}
+			break;
+	}
+	
+	if(!topeople.equals("")) // someone to send email to.. do it
+	{
+		simpleSendEmail(SMTP_SERVER,"elabman@alsglobal.com.my",topeople,subjstr,msgbody);
+		guihand.showMessageBox("Notification email has been sent to " + topeople);
+	}
+}
+
+
+// CAR management funcs
+
+void showCAR_Metadata(String iorigid)
+{
+	carec = getComplaintsCAR_Rec(iorigid);
+	if(carec == null) return;
+
+	car_origid.setValue(carec.get("origid").toString());
+	car_notes.setValue(carec.get("car_notes"));
+	car_prob_description.setValue(carec.get("prob_description"));
+}
+
+// onSelect for loadCAR_List()
+class carlb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = cars_lb.getSelectedItem();
+		global_selected_car = lbhand.getListcellItemLabel(isel,0);
+		tuser = lbhand.getListcellItemLabel(isel,2);
+
+		showCAR_Metadata(global_selected_car);
+
+		updatecar_butt.setDisabled(true); // always cannot update
+		// if owner of CAR is user and complaint still OPEN, can update CAR
+		if(tuser.equals(useraccessobj.username) && global_selected_status.equals(COMPLAIN_OPEN)) updatecar_butt.setDisabled(false);
+	}
+}
+
+Object[] carlb_headers = 
+{
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("SubmitBy",true),
+};
+
+void loadCAR_List(String icompid)
+{
+	if(icompid.equals("")) return;
+
+	// reset vars
+	global_selected_car = "";
+
+	Listbox newlb = lbhand.makeVWListbox(cars_holder, carlb_headers, "cars_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstm = "select top 100 origid,datecreated,username from elb_complaints_car where parent_id=" + icompid + " order by origid";
+
+	screcs = sql.rows(sqlstm);
+	sql.close();
+	if(screcs.size() == 0) return;
+
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new carlb_onSelect());
+
+	for(dpi : screcs)
+	{
+
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("username"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// hoho.. make new car!!!
+void makeNewCAR()
+{
+	if(global_selected_complain.equals("")) return;
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sqlstm = "insert into elb_complaints_car (parent_id,datecreated,username,car_notes,prob_description,locked) values " +
+	"(" + global_selected_complain + ",'" + todate + "','" + useraccessobj.username + "','','',0)";
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadCAR_List(global_selected_complain); // refresh
+}
+
+void updateCAR()
+{
+	if(global_selected_car.equals("")) return;
+	cnotes = kiboo.replaceSingleQuotes(car_notes.getValue());
+	cprob = kiboo.replaceSingleQuotes(car_prob_description.getValue());
+
+	sqlstm = "update elb_complaints_car set car_notes='" + cnotes + "', prob_description='" + cprob + "' where origid=" + global_selected_car;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	// reset things
+	clearCAR_inputFields();
+	global_selected_car = "";
+
+	guihand.showMessageBox("CAR updated...");
+}
+
+//--- ENDOF CAR management funcs
+
+void adminDeleteForm()
+{
+	if(global_selected_complain.equals("")) return;
+
+	if(Messagebox.show("HARD DELETE!!", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	// delete complaint rec
+	sqlstm = "delete from elb_complaints where origid=" + global_selected_complain;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	// delete CAR
+	sqlstm = "delete from elb_complaints_car where parent_id=" + global_selected_complain;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	loadComplaints_List(last_search_type); // refresh
+}
+
+// admin open-case and clear close-date
+void adminOpenCase()
+{
+	if(global_selected_complain.equals("")) return;
+	sqlstm = "update elb_complaints set closeby='', closedate=NULL, status='" + COMPLAIN_OPEN + "' where origid=" + global_selected_complain;
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadComplaints_List(last_search_type); // refresh
+}
+
+// -- These can be used in other modules
+// itype(customize for other mods) : 1=general lookups
+void activateLookupEditor(int itype)
+{
+	uniqwindowid = kiboo.makeRandomId("le");
+	runmestr = "alsglobal/staticlookupman.zul";
+	theparam = "lu=112&wt=General%20Lookups";
+	globalActivateWindow("miscwindows",runmestr, uniqwindowid, theparam, useraccessobj);
+}
+
+// Customize this for other modules
+void adminReloadLookups()
+{
+	luhand.populateListbox_ByLookup(bypriority_lb, "TASKS_PRIORITY", 2);
+	luhand.populateCheckbox_ByLookup(labticker_holder,"CMP_LAB_TICKS","font-size:9px",2);
+	luhand.populateCheckbox_ByLookup(adminticker_holder,"CMP_ADMIN_TICKS","font-size:9px",2);
+	luhand.populateCheckbox_ByLookup(actiontaken_holder,"CMP_ACTIONTAKEN_TICKS","font-size:9px",2);
+	luhand.populateListbox_ByLookup(cmp_priority, "TASKS_PRIORITY", 2);
+}
+
+void exportComplaintChecklist()
+{
+	uniqwindowid = kiboo.makeRandomId("ccl");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","reporting/birtReportViewerLookup_v1.zul", uniqwindowid, "bid=CPBR_1",useraccessobj);
+}
+
+//---- File uploading funcs
+
+// onSelect for filleDocumentsList()
+class doculinks_lb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = doculinks_lb.getSelectedItem();
+		selected_file_id = lbhand.getListcellItemLabel(selitem,0);
+
+		updatefiledesc_label.setLabel(lbhand.getListcellItemLabel(selitem,1));
+		update_file_description.setValue(lbhand.getListcellItemLabel(selitem,2));
+	}
+}
+
+void fillDocumentsList(String iorigid)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("File",true,"file_title",1),
+	new dblb_HeaderObj("Description",true,"file_description",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	selected_file_id = ""; // reset
+	duclink = "CC" + iorigid;
+
+	ds_sql = sqlhand.DMS_Sql();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can see everything..
+	{
+		sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(documents_holder,documentLinks_lb_headers,"doculinks_lb",10,ds_sql,sqlstm);
+	//newlb.setMultiple(true);
+	newlb.addEventListener("onSelect", new doculinks_lb_onSelect());
+	ds_sql.close();
+
+	//if(newlb.getItemCount() > 5) newlb.setRows(10);
+}
+
+void uploadFile()
+{
+	if(global_selected_complain.equals("")) return;
+	doculink_str = "CC" + global_selected_complain;
+	docustatus_str = "ACTIVE";
+
+	ftitle = kiboo.replaceSingleQuotes(fileupl_file_title.getValue());
+	fdesc = kiboo.replaceSingleQuotes(fileupl_file_description.getValue());
+
+	if(ftitle.equals(""))
+	{
+		guihand.showMessageBox("Please enter a filename..");
+		return;
+	}
+
+	// dmsfuncs.zs
+	dmshand.uploadFile(useraccessobj.username, useraccessobj.branch, kiboo.getDateFromDatebox(hiddendatebox),doculink_str,docustatus_str,ftitle,fdesc);
+	fillDocumentsList(global_selected_complain);
+	uploadfile_popup.close();
+}
+
+void showUploadPopup()
+{
+	if(global_selected_complain.equals("")) return;
+	uploadfile_popup.open(uploaddoc_btn);
+}
+
+void viewFile()
+{
+	if(selected_file_id.equals("")) return;
+	theparam = "docid=" + selected_file_id;
+	uniqid = kiboo.makeRandomId("vf");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","documents/viewfile.zul", uniqid, theparam, useraccessobj);
+}
+
+void deleteFile()
+{
+	if(selected_file_id.equals("")) return;
+
+	if (Messagebox.show("This is a hard-delete..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "delete from DocumentTable where origid=" + selected_file_id;
+	dmshand.dmsgpSqlExecuter(sqlstm);
+	fillDocumentsList(global_selected_complain); // refresh
+}
+
+void updateFileDescription()
+{
+	fdesc = kiboo.replaceSingleQuotes(update_file_description.getValue());
+	sqlstm = "update DocumentTable set file_description='" + fdesc + "' where origid=" + selected_file_id;
+	dmshand.dmsgpSqlExecuter(sqlstm);
+	fillDocumentsList(global_selected_complain); // refresh
+	updatefiledesc_popup.close();
+}
+
+
+]]>
+</zscript>
+
+<!-- update file description popup -->
+<popup id="updatefiledesc_popup">
+<groupbox width="400px">
+	<caption id="updatefiledesc_label" />
+	<label value="Description" style="font-size:9px" />
+	<textbox id="update_file_description" multiline="true" height="70px" width="99%" style="font-size:9px" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Update" style="font-size:9px" onClick="updateFileDescription()" />
+		<button label="Close" style="font-size:9px" onClick="updatefiledesc_popup.close()" />
+	</hbox>
+</groupbox>
+
+</popup>
+
+<!-- upload a file popup -->
+<popup id="uploadfile_popup">
+<groupbox>
+<caption label="Upload a file" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Filename" style="font-size:9px" />
+				<textbox id="fileupl_file_title" width="200px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Description" style="font-size:9px" />
+				<textbox id="fileupl_file_description" multiline="true" height="60px" width="200px" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Select file" onClick="uploadFile()"  style="font-size:9px" />
+	<button label="Close" onClick="uploadfile_popup.close()"  style="font-size:9px" />
+</hbox>
+
+</popup>
+
+
+<div width="1200px">
+<panel id="complaintfeedb_panel" title="Complaint / Feedback ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+	<groupbox mold="3d" width="550px"> <!-- complains lister -->
+		<grid>
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				<hbox>
+					<label value="Search" style="font-size:9px" />
+					<textbox id="searhtxt_tb" width="99%" style="font-size:9px" />
+					<button label="Load" style="font-size:9px" onClick="loadComplaints_List(1)" />
+				</hbox>
+			</row>
+			<row spans=",2,3">
+				<label value="Priority" style="font-size:9px" />
+				<listbox id="bypriority_lb" mold="select" style="font-size:9px" />
+				<hbox>
+					<button label="By OPEN + Priority" style="font-size:9px" onClick="loadComplaints_List(2)" />
+					<label style="font-size:9px">
+			(Max. 100 complaints per click..)
+					</label>
+				</hbox>
+			</row>
+		</rows>
+		</grid>
+
+		<separator height="3px" />
+		<hbox>
+			<button label="New customer complaint" onClick="newComplaintForm()" />
+			<button label="Notify handler" onClick="notifyPeople(2)" />
+			<button label="Export check-list" style="font-size:9px" onClick="exportComplaintChecklist()" />
+		</hbox>
+
+		<separator height="3px" />
+		<div id="adminstuff" style="background:#BB0000;padding:2px" visible="false">
+			<hbox>
+				<button label="openCase" style="font-size:9px" onClick="adminOpenCase()" />
+				<button label="Delete" style="font-size:9px" onClick="adminDeleteForm()" />
+				<button label="Lookups" style="font-size:9px" onClick="activateLookupEditor(1)" />
+				<button label="Reload lookups" style="font-size:9px" onClick="adminReloadLookups()" />
+			</hbox>
+		</div>
+
+		<separator height="3px" />
+
+		<div id="complains_holder" />
+	</groupbox>
+	
+	<!-- workarea ya -->
+	<div id="workarea" visible="false">
+	
+		<tabbox mold="accordion">
+		<tabs>
+			<tab id="tab1" label="Complaint details" />
+			<tab id="tab4" label="Supporting documents,emails and etc" />
+			<tab id="tab2" label="Division complaints" />
+			<tab id="tab3" label="Action / Close case" />
+			<tab id="tab5" label="Corrective Action Report (CAR)" />
+		</tabs>
+		<tabpanels>
+		
+		<tabpanel> <!-- complaint details -->
+		<hbox>
+			<div> <!-- the complaint details form -->
+				<grid width="550px" >
+					<rows>
+						<row>
+							<label value="Complaint No." style="font-size:9px" />
+							<div style="background:#E6E365;padding:2px">
+								<label id="cmp_origid" />
+							</div>
+							<label value="Status" style="font-size:9px" />
+							<label id="cmp_status" style="font-size:9px" />
+						</row>
+						<row>
+							<label value="Priority" style="font-size:9px" />
+							<listbox id="cmp_priority" mold="select" style="font-size:9px" />
+							<label value="Handler" style="font-size:9px" />
+							<listbox id="cmp_assignto" mold="select" style="font-size:9px" />
+						</row>
+						<row>
+							<label value="Dated" style="font-size:9px" />
+							<label id="cmp_datecreated" style="font-size:9px" />
+							<label value="Submit by" style="font-size:9px" />
+							<label id="cmp_receivedby" style="font-size:9px" />
+						</row>
+						<row spans=",3">
+							<label value="Client/Company" style="font-size:9px" />
+							<textbox id="cmp_client" style="font-size:9px" width="99%" />
+						</row>
+						<row>
+							<label value="Client contact" style="font-size:9px" />
+							<textbox id="cmp_client_contact" style="font-size:9px" width="99%" />						
+							<label value="Email" style="font-size:9px" />
+							<textbox id="cmp_client_email" style="font-size:9px" width="99%" />
+						</row>
+						<row>
+							<label value="Client tel" style="font-size:9px" />
+							<textbox id="cmp_client_tel" style="font-size:9px" width="99%" />
+							<label value="Client fax" style="font-size:9px" />
+							<textbox id="cmp_client_fax" style="font-size:9px" width="99%" />
+						</row>
+						<row spans=",3">
+							<label value="Report/Folder No." style="font-size:9px" />
+							<textbox id="cmp_folderno_str" multiline="true" width="99%" height="100px" style="font-size:9px" />
+						</row>
+						<row spans=",3">
+							<label value="Nature of complaint" style="font-size:9px" />
+							<textbox id="cmp_natureofcomplaint" multiline="true" width="99%" height="100px" style="font-size:9px" />
+						</row>
+						<row>
+							<label value="Close by" style="font-size:9px" />
+							<label id="cmp_closeby" style="font-size:9px" />
+							<label value="Close date" style="font-size:9px" />
+							<label id="cmp_closedate" style="font-size:9px" />
+						</row>
+					</rows>
+				</grid>
+			</div> <!-- ENDOF the complaint details form -->
+			<vbox>
+				<button label="Update form" style="font-size:9px" onClick="updateComplaintForm()" />
+			</vbox>
+		</hbox>
+		</tabpanel> <!-- ENDOF complaint details -->
+		
+		<tabpanel> <!-- Supporting documents -->
+			<hbox>
+				<button id="uploaddoc_btn" label="Upload file" style="font-size:9px" onClick="showUploadPopup()" />
+				<button id="viewdoc_btn" label="View file" style="font-size:9px" onClick="viewFile()" />
+				<button id="editdoc_btn" label="Update" style="font-size:9px" onClick="updatefiledesc_popup.open(editdoc_btn)" />
+				<button id="deletedoc_btn" label="Delete" style="font-size:9px" onClick="deleteFile()" />
+			</hbox>
+			<separator height="3px" />
+			<div id="documents_holder" />
+
+		</tabpanel> <!-- ENDOF Supporting documents -->
+
+		<tabpanel> <!-- Division complaints -->
+		<hbox>
+			<grid width="550px">
+				<rows>
+					<row spans="3">
+						<div style="background:#E6E365;padding:2px">
+							<label value="Laboratory" />
+						</div>
+					</row>
+					<row>
+						<vbox id="labticker_holder" />
+						<label value="Remarks" style="font-size:9px" />
+						<textbox id="cmp_lab_remarks" multiline="true" width="99%" height="85px" style="font-size:9px" />
+					</row>
+					<row spans="3">
+						<div style="background:#E6E365;padding:2px">
+							<label value="Administration" />
+						</div>
+					</row>
+					<row>
+						<vbox id="adminticker_holder" />
+						<label value="Remarks" style="font-size:9px" />
+						<textbox id="cmp_admin_remarks" multiline="true" width="99%" height="70px" style="font-size:9px" />
+					</row>
+					<row spans="3">
+						<div style="background:#E6E365;padding:2px">
+							<label value="Misc." />
+						</div>
+					</row>
+					<row spans="3">
+						<textbox id="cmp_misc_remarks" multiline="true" width="99%" height="70px" style="font-size:9px" />
+					</row>
+				</rows>
+			</grid>
+
+			<vbox>
+				<button label="Update form" style="font-size:9px" onClick="updateComplaintForm()" />
+			</vbox>
+
+		</hbox>
+		</tabpanel> <!-- ENDOF Division complaints -->
+		
+		<tabpanel> <!-- Action / Close out -->
+		<hbox>
+			<!-- the action taken part -->
+			<grid width="540px" >
+				<rows>
+					<row>
+						<div style="background:#E6E365;padding:2px">
+							<label value="Action Taken" />
+						</div>
+					</row>
+					<row>
+						<vbox id="actiontaken_holder" />
+					</row>
+					<row>
+						<textbox id="cmp_action_remarks" multiline="true" width="99%" height="100px" style="font-size:9px" />
+					</row>
+					<row>
+						<div style="background:#E6E365;padding:2px">
+							<label value="Close out" />
+							<label style="font-size:8px">
+							(if applicable, what action is in place to prevent recurrence of a similar complaint)
+							</label>
+						</div>
+					</row>
+					<row>
+						<textbox id="cmp_closeout" multiline="true" width="99%" height="100px" style="font-size:9px" />
+					</row>
+
+				
+				</rows>
+			</grid>
+			<!-- ENDOF the action taken part -->
+
+			<vbox>
+				<button label="Update form" style="font-size:9px" onClick="updateComplaintForm()" />
+				<button label="CLOSE CASE" onClick="closeCase()" />
+			</vbox>
+
+		</hbox>
+		</tabpanel> <!-- ENDOF Action / Close out -->
+		
+		<tabpanel> <!-- CAR -->
+			<hbox>
+				<button label="Load" style="font-size:9px" onClick="loadCAR_List(global_selected_complain)" />
+				<button id="newcar_butt" label="New CAR" style="font-size:9px" onClick="makeNewCAR()" />
+				<button id="updatecar_butt" label="Update" style="font-size:9px" onClick="updateCAR()" />
+				<!-- <button label="Print CAR" style="font-size:9px" /> -->
+			</hbox>
+			<separator height="3px" />
+			<div id="cars_holder" width="550px" />
+			<separator height="3px" />
+			<grid>
+				<rows>
+					<row>
+						<label value="CAR No." style="font-size:9px" />
+						<label id="car_origid" style="font-size:9px" />
+						<label value="Description of Problem (Max. 4000 chars)" style="font-size:9px" />
+					</row>
+					<row spans="3">
+						<textbox id="car_prob_description" style="font-size:9px" multiline="true" width="99%" height="150px" />
+					</row>
+					<row spans="3">
+						<label value="Corrective action (Max. 4000 chars)" style="font-size:9px" />
+					</row>
+					<row spans="3">
+						<textbox id="car_notes" style="font-size:9px" multiline="true" width="99%" height="150px" />						
+					</row>
+				</rows>
+			</grid>
+		</tabpanel> <!-- ENDOF CAR -->
+		
+	</tabpanels>
+	</tabbox>
+
+	</div> <!-- ENDOF workarea ya -->
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(bypriority_lb, "TASKS_PRIORITY", 2);
+
+luhand.populateCheckbox_ByLookup(labticker_holder,"CMP_LAB_TICKS","font-size:9px",2);
+luhand.populateCheckbox_ByLookup(adminticker_holder,"CMP_ADMIN_TICKS","font-size:9px",2);
+luhand.populateCheckbox_ByLookup(actiontaken_holder,"CMP_ACTIONTAKEN_TICKS","font-size:9px",2);
+luhand.populateListbox_ByLookup(cmp_priority, "TASKS_PRIORITY", 2);
+
+luhand.populateListbox_ByLookup(cmp_assignto, "CMP_CLOSECASE_USERS", 2);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

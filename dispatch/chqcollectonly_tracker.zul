@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="chqcollectonlytrack_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.1";
+/*
+Title		: Cheque collection only tracking
+Written by	: Victor Wong
+
+To track out-source cheque collection - destinations and dispatch manifests are created
+in the respective modules. This one just list them out where reasonnotes has "chq" or "cheque"
+
+Revisions:
+
+04/01/2012: started
+02/04/2012: ported to byte-compl
+09/04/2012: add reverse-charge-collection form-sending to courier-companies.. by email
+
+*/
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.zutl.*;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+import java.awt.Color;
+
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.pdf.PdfWriter;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+
+public class destListObject
+{
+	public String origid;
+	public int dispstat;
+	public Object checky;
+}
+
+global_last_loadtype = 1;
+ArrayList mainDestinationList;
+
+String[] destGridHeaders = { "","Stat","Id","Sch.Date","Comp.Date","Ticker","TAT","Customer","Contact","Reasons/Notes","Dispatcher" };
+
+// Load dispatch destinations - general purpose thing
+// itype: 1=by date, 2=by customer / contact person
+void loadDispatchDests(int itype)
+{
+	global_last_loadtype = itype;
+	workarea_box.setVisible(true);
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	ccname = kiboo.replaceSingleQuotes(custcont_tb.getValue());
+	dspnum = kiboo.replaceSingleQuotes(dispnum_tb.getValue());
+	
+	byccname = "";
+	if(itype == 2 && !ccname.equals(""))
+		byccname = "and (customer.customer_name like '%" + ccname + "%' or dsd.contactperson like '%" + ccname + "%') ";
+
+   	// remove previous grid
+	if(dispdests_holder.getFellowIfAny("destinations_lb") != null) destinations_lb.setParent(null);
+	mainDestinationList = new ArrayList();
+
+	thegrid = new Grid();
+	thegrid.setId("destinations_lb");
+
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+	gridhand.makeGridHeaderColumns(destGridHeaders, thegrid);
+
+    sqlstm = "select top 200 dsd.origid, dsd.schedule_date, customer.customer_name, " + 
+    "dsd.contactperson, dsd.reasonnotes, dsd.completed, dsd.dispatcher_id, " +
+    "dsd.complete_date, dsd.complete_ticker, datediff(day, dsd.schedule_date, dsd.complete_date) as disptat " +
+	"from dispatchscheduledetails dsd " +
+	"left join customer on dsd.ar_code = customer.ar_code " +
+	"where (dsd.reasonnotes  like '%chq%' or dsd.reasonnotes like '%cheque%') " +
+	"and dsd.schedule_date between '" + sdate + "' and '" + edate + "' " +
+	byccname +
+	"order by dsd.schedule_date";
+	
+	if(itype == 3)
+		sqlstm = "select dsd.origid, dsd.schedule_date, customer.customer_name, dsd.contactperson, dsd.reasonnotes, dsd.completed, dsd.dispatcher_id " +
+		"from dispatchscheduledetails dsd " +
+		"left join customer on dsd.ar_code = customer.ar_code " +
+		"where dsd.origid = " + dspnum;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	therecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(therecs.size() == 0) return;
+
+	for(dpi : therecs)
+	{
+		tdestobj = new destListObject();
+		tdestobj.origid = dpi.get("origid").toString();
+		tdestobj.dispstat = dpi.get("completed");
+
+		thestyle = "";
+		if(dpi.get("completed") == 1) thestyle = "background-color:#33AA00";
+
+		dest_row = gridhand.gridMakeRow("",thestyle,"",gridrows);
+
+		checkme = new Checkbox();
+		checkme.setParent(dest_row);
+		tdestobj.checky = checkme;
+
+		gridhand.makeLabelToParent((dpi.get("completed") == 1) ? "Y" : "N", "", dest_row);
+		gridhand.makeLabelToParent("DSPSCH" + dpi.get("origid").toString(),"",dest_row);
+		gridhand.makeLabelToParent(dpi.get("schedule_date").toString().substring(0,10),"",dest_row);
+
+		kmdate = kiboo.checkNullDate(dpi.get("complete_date"),"");
+		gridhand.makeLabelToParent(kmdate,"",dest_row);
+
+		gridhand.makeLabelToParent(kiboo.checkNullString(dpi.get("complete_ticker")),"",dest_row);
+
+		dtat = kiboo.checkNullString(dpi.get("disptat"));
+		gridhand.makeLabelToParent(dtat,"",dest_row);
+
+		gridhand.makeLabelToParent(dpi.get("customer_name"),"",dest_row);
+		gridhand.makeLabelToParent(dpi.get("contactperson"),"",dest_row);
+		gridhand.makeLabelToParent(dpi.get("reasonnotes"),"",dest_row);
+		gridhand.makeLabelToParent(dpi.get("dispatcher_id"),"",dest_row);
+
+		mainDestinationList.add(tdestobj);
+	}
+
+	thegrid.setParent(dispdests_holder);
+}
+
+void toggleDispatchStatus()
+{
+	if(mainDestinationList == null) return;
+
+	woli_complete = "";
+	woli_incomplete = "";
+
+	for(dpi : mainDestinationList)
+	{
+		if(dpi.checky.isChecked())
+		{
+			if(dpi.dispstat == 1)
+				woli_incomplete += dpi.origid + ",";
+			else
+				woli_complete += dpi.origid + ",";
+		}
+	}
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	if(!woli_complete.equals(""))
+	{
+		woli_complete = woli_complete.substring(0,woli_complete.length()-1);
+		sqlstm = "update dispatchscheduledetails set completed=1, complete_date='" + todaydate + 
+		"', complete_ticker='" + useraccessobj.username + "' where origid in (" + woli_complete + ")";
+		sql.execute(sqlstm);
+	}
+
+	if(!woli_incomplete.equals(""))
+	{
+		woli_incomplete = woli_incomplete.substring(0,woli_incomplete.length()-1);
+		sqlstm = "update dispatchscheduledetails set completed=0, complete_date='" + todaydate + 
+		"', complete_ticker='" + useraccessobj.username + "' where origid in (" + woli_incomplete + ")";
+		sql.execute(sqlstm);
+	}
+
+	sql.close();
+	loadDispatchDests(global_last_loadtype); // refresh
+}
+
+// export list of folders to Excel
+// can make this into multi-purpose func later
+void kasiExport_clicker()
+{
+	gridrows = null;
+	
+	for(kobj : destinations_lb.getChildren())
+	{
+		if(kobj instanceof Rows) gridrows = kobj;
+	}
+
+	if(gridrows == null) return;
+
+	ifilename = "chqcollist.xls";
+	isheetname = "Destinations";
+
+	// Uses Apache POI stuff
+	HSSFWorkbook wb = new HSSFWorkbook();
+	thefn = session.getWebApp().getRealPath("tmp/" + ifilename);
+	FileOutputStream fileOut = new FileOutputStream(thefn);
+	sheet = wb.createSheet(isheetname);
+
+	stylo = wb.createCellStyle();
+	stylo.setFillBackgroundColor((short)210);
+	
+	// Header row - folderListHeaders def above
+	row1 = sheet.createRow(0);
+	for(i=1; i < destGridHeaders.length; i++)
+	{
+		hedc = row1.createCell(i);
+		hedc.setCellValue(destGridHeaders[i]);
+		hedc.setCellStyle(stylo);
+	}
+
+	cellstylo = wb.createCellStyle();
+	cellstylo.setWrapText(true);
+
+	rowcount = 1;
+
+	for(robj : gridrows.getChildren())
+	{
+		if(robj instanceof Row)
+		{
+			row = sheet.createRow(rowcount);
+
+			colcount = 0;
+			for(lobj : robj.getChildren())
+			{
+				if(lobj instanceof Label)
+				{
+					labelval = lobj.getValue();
+					row.createCell(colcount).setCellValue(labelval);
+				}
+				colcount++;
+			}
+
+			rowcount++;
+		}	
+	}
+	
+	ps = sheet.getPrintSetup();
+	ps.setScale((short)70);
+
+	wb.write(fileOut);
+	fileOut.close();
+
+	// long method to let user download a file	
+	File f = new File(thefn);
+	fileleng = f.length();
+	finstream = new FileInputStream(f);
+	byte[] fbytes = new byte[fileleng];
+	finstream.read(fbytes,0,(int)fileleng);
+
+	AMedia amedia = new AMedia(ifilename, "xls", "application/vnd.ms-excel", fbytes);
+	Iframe newiframe = new Iframe();
+	newiframe.setParent(kasiexport_holder);
+	newiframe.setContent(amedia);
+}
+
+// Generate and send PDF reversed-charge-collection form to courier-company
+// itype: def courier-comp later
+void genSendCollectionForm(int itype)
+{
+
+
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="chqcollecttrackonly_panel" title="Cheque Collection Tracking Only ${MYVERSION}" border="normal" 
+collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+	<grid>
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+				<button label="Load by date" style="font-size:9px" onClick="loadDispatchDests(1)" />
+			</row>
+		</rows>
+	</grid>
+	
+	<grid>
+		<rows>
+			<row>
+				<label value="Customer/Contact" style="font-size:9px" />
+				<textbox id="custcont_tb" style="font-size:9px" />
+				<button label="Find" style="font-size:9px" onClick="loadDispatchDests(2)" />
+			</row>
+		</rows>
+	</grid>
+	
+	<grid>
+		<rows>
+			<row>
+				<label value="DSPSCH" style="font-size:9px" />
+				<textbox id="dispnum_tb" style="font-size:9px" />
+				<button label="by dispatch no." style="font-size:9px" onClick="loadDispatchDests(3)" />
+			</row>
+		</rows>
+	</grid>
+	
+</hbox>
+<separator height="2px" />
+<label style="font-size:8px">
+(Max. 200 records per load. Completed item is highlited green)
+</label>
+
+<div id="adminstuff" visible="false">
+<button label="gen-send pdf form" onClick="genSendCollectionForm(1)" />
+</div>
+
+<separator height="3px" />
+
+<hbox id="workarea_box" visible="false">
+	<div id="dispdests_holder" width="750px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+	<vbox>
+		<button label="Toggle dispatch status on ticked" onClick="toggleDispatchStatus()" />
+		<button label="Export to Excel" onClick="kasiExport_clicker()" />
+	</vbox>
+</hbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

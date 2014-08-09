@@ -1,0 +1,693 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="courier_outgoing_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/courier_funcs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.4";
+/*
+Title: Track courier Outgoing stuff
+Written by : Victor Wong
+Date started: 18/8/2010
+03/04/2012: optimize and port to byte-compl
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+String[] lu_DeliveryMethod = { "CitiLink", "PostLaju", "Registered Post", "Normal Post", "FedEx", "DHL", };
+String[] lu_DocumentType = { "Invoice only", "Invoice/COA", "COA only", "Debit Note", "Credit Note", "Others" };
+
+global_selected_courier_rec = "";
+
+Object[] couriers_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ar_code",false),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Recipient",true),
+	new listboxHeaderObj("Sent.Date",true),
+	new listboxHeaderObj("Doc.Type",true),
+	new listboxHeaderObj("Delv.Mthd",true),
+	new listboxHeaderObj("Track.No",true),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("Inv.Link",true),
+	new listboxHeaderObj("Amount",true),
+	new listboxHeaderObj("Billed",true),
+};
+
+// Load courier-tracking recs - iwhich, 1 = normal, 2 = by courier-company, 3=by tracking number
+// doesn't care courier direction, can be used for incoming too.
+void goFetchCourierInfo(int iwhich)
+{
+	Listbox newlb = lbhand.makeVWListbox(couriers_div, couriers_lb_headers, "couriers_lb", 10);
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	cnm = kiboo.replaceSingleQuotes(customername.getValue());
+
+	if(sdate == null || edate == null)
+	{
+		guihand.showMessageBox("Please specify start and end date for search");
+		return;
+	}
+
+	custnamestm = "";
+
+	if(!cnm.equals(""))
+		custnamestm = " and (customer_name like '%" + cnm + "%' or ar_code like '%" + cnm + "%')";
+	
+	bycourier = "";
+	if(iwhich == 2)
+		bycourier = "and delivery_method='" + courier_company.getSelectedItem().getLabel() + "'";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select origid,ar_code,customer_name,recipient,datecreated,document_type,delivery_method,billed," + 
+		"tracking_number,invoice_link,amount,folder_link from Courier_Tracking where " +
+		"datecreated between '" + sdate + "' and '" + edate + "' " +
+		custnamestm +
+		bycourier +
+		" order by datecreated desc";
+
+	// search by tracking-number - replace sqlstm
+	if(iwhich == 3)
+	{
+		trkno = kiboo.replaceSingleQuotes(trackingno_search_tb.getValue());
+		if(!trkno.equals(""))
+		{
+			sqlstm = "select origid,ar_code,customer_name,recipient,datecreated,document_type,delivery_method,billed," + 
+			"tracking_number,invoice_link,amount,folder_link from Courier_Tracking where " +
+			"tracking_number like '%" + trkno + "%' order by datecreated desc";
+		}
+	}
+	courecs = sql.rows(sqlstm);
+	sql.close();
+	if(courecs.size() == 0) return;
+	newlb.setRows(20);
+	for(dpi : courecs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(dpi.get("recipient"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("document_type"));
+		kabom.add(dpi.get("delivery_method"));
+		kabom.add(dpi.get("tracking_number"));
+		kabom.add(kiboo.checkEmptyString(dpi.get("folder_link")));
+		kabom.add(kiboo.checkEmptyString(dpi.get("invoice_link")));
+		kabom.add(dpi.get("amount").toString());
+
+		billornot = (dpi.get("billed") == 0) ? "---" : "YES";
+		kabom.add(billornot);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void playAssignCustomerWindow()
+{
+	uniqwindowid = kiboo.makeRandomId("findcust");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","dispatch/customer_search_popup.zul", uniqwindowid, "getcust=1",useraccessobj);
+}
+
+// 11/6/2010: if user manually key-in client's ar_code, this clicker will load the client's rec and show.
+// knockoff from registernew_samples_v2.zul
+void refreshCustomerDetails_Clicker(int iwhich)
+{
+	kkk = "";
+
+	switch(iwhich)
+	{
+		case 1 : 
+			kkk = newout_arcode.getValue().toUpperCase();
+			break;
+		case 2 :
+			kkk = editout_arcode.getValue().toUpperCase();
+			break;
+	}
+
+	if(kkk.equals("") || kkk.equals("CASH") || kkk.equals("CASH USD")) return;
+
+	comprec = sqlhand.getCompanyRecord(kkk); // func in alsglobal_sqlfuncs.zs
+
+	if(comprec != null)
+	{
+		switch(iwhich)
+		{
+			case 1:
+				newout_arcode.setValue(comprec.get("ar_code"));
+				newout_customer_name.setValue(comprec.get("customer_name"));
+				newout_recipient.setValue(comprec.get("contact_person1"));
+				break;
+
+			case 2:
+				editout_arcode.setValue(comprec.get("ar_code"));
+				editout_customer_name.setValue(comprec.get("customer_name"));
+				editout_recipient.setValue(comprec.get("contact_person1"));
+				break;
+		}
+	}
+}
+
+// New outgoing courier rec. - clear shit before showing the popup
+void newOutGoing_clicker()
+{
+	newout_customer_name.setValue("");
+	newout_arcode.setValue("");
+	newout_recipient.setValue("");
+	newout_tracking_number.setValue("");
+	newout_notes.setValue("");
+	newoutgoing_popup.open(newoutgoing_btn);
+}
+
+void saveNewOutgoingCourier_clicker()
+{
+	todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	customer_name = kiboo.replaceSingleQuotes(newout_customer_name.getValue());
+	if(customer_name.equals("")) return; // if empty, need not continue lor
+
+	ar_code = kiboo.replaceSingleQuotes(newout_arcode.getValue());
+	recipient = kiboo.replaceSingleQuotes(newout_recipient.getValue());
+
+	document_type = newout_document_type.getSelectedItem().getLabel();
+	delivery_method = newout_delivery_method.getSelectedItem().getLabel();
+	tracking_number = kiboo.replaceSingleQuotes(newout_tracking_number.getValue());
+	notes = kiboo.replaceSingleQuotes(newout_notes.getValue());
+
+	String[] myballs = { ar_code, customer_name, recipient, notes, todaysdate,
+		document_type, delivery_method, tracking_number, "OUT", "",
+		"", "0.0", "", "0", "",
+		"", useraccessobj.username, "" };
+
+	insertCourierTracking_Rec(myballs);
+
+	newoutgoing_popup.close();
+	goFetchCourierInfo(1); // refresh
+}
+
+//couriers_div, couriers_lb_headers, "couriers_lb"
+void editOutgoing_clicker()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(couriers_div,"couriers_lb")) return;
+
+	global_selected_courier_rec = couriers_lb.getSelectedItem().getLabel(); // 1st col = origid
+	ctrec = getCourierTracking_Rec(global_selected_courier_rec);
+	if(ctrec == null) return;
+
+	editout_customer_name.setValue(ctrec.get("customer_name"));
+	editout_arcode.setValue(ctrec.get("ar_code"));
+	editout_recipient.setValue(ctrec.get("recipient"));
+
+	matchListboxItems(editout_document_type, ctrec.get("document_type"));
+	matchListboxItems(editout_delivery_method, ctrec.get("delivery_method"));
+
+	editout_tracking_number.setValue(ctrec.get("tracking_number"));
+	editout_notes.setValue(ctrec.get("notes"));
+
+	amount = new BigDecimal(ctrec.get("amount"));
+	editout_amount.setValue(amount);
+
+	editout_container_do_link.setValue(ctrec.get("container_do_link"));
+	editout_invoice_link.setValue(ctrec.get("invoice_link"));
+
+	editout_thirdparty_customer_name.setValue(ctrec.get("thirdparty_customer_name"));
+	editout_thirdparty_ar_code.setValue(ctrec.get("thirdparty_ar_code"));
+
+	editout_folder_link.setValue(ctrec.get("folder_link"));
+	editoutgoing_popup.open(editoutgoing_btn);
+}
+
+// grab values from inputboxes and update database
+void editUpdate_clicker()
+{
+	editoutgoing_popup.close();
+	if(global_selected_courier_rec.equals("")) return;
+
+	customer_name = kiboo.replaceSingleQuotes(editout_customer_name.getValue());
+	ar_code = kiboo.replaceSingleQuotes(editout_arcode.getValue());
+	recipient = kiboo.replaceSingleQuotes(editout_recipient.getValue());
+
+	document_type = editout_document_type.getSelectedItem().getLabel();
+	delivery_method = editout_delivery_method.getSelectedItem().getLabel();
+	tracking_number = kiboo.replaceSingleQuotes(editout_tracking_number.getValue());
+	notes = kiboo.replaceSingleQuotes(editout_notes.getValue());
+
+	DecimalFormat df = new DecimalFormat("#.##");
+	amount = df.format(editout_amount.getValue());
+
+	container_do_link = kiboo.replaceSingleQuotes(editout_container_do_link.getValue());
+	invoice_link = kiboo.replaceSingleQuotes(editout_invoice_link.getValue());
+
+	party3name = kiboo.replaceSingleQuotes(editout_thirdparty_customer_name.getValue());
+	party3arcode = kiboo.replaceSingleQuotes(editout_thirdparty_ar_code.getValue());
+
+	folder_link = kiboo.replaceSingleQuotes(editout_folder_link.getValue());
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update Courier_Tracking set customer_name='" + customer_name + "', ar_code='" + ar_code + "'," +
+	"recipient='" + recipient + "', document_type='" + document_type + "', delivery_method='" + delivery_method + "'," +
+	"tracking_number='" + tracking_number + "', notes='" + notes + "', container_do_link='" + container_do_link + "', invoice_link='" + invoice_link + "'," +
+	"amount=" + amount + ", thirdparty_ar_code='" + party3arcode + "', thirdparty_customer_name='" + party3name + "', folder_link='" + folder_link + "' " +
+	"where origid=" + global_selected_courier_rec;
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	global_selected_courier_rec = ""; // done, reset the global
+	goFetchCourierInfo(1); // refresh
+}
+
+Object[] invoices_lb_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("Inv.Date",true),
+	new listboxHeaderObj("Inv.Number",true),
+	new listboxHeaderObj("Company",true),
+	new listboxHeaderObj("Remarks",true),
+	new listboxHeaderObj("Inv.Total",true),
+};
+
+// Let user connect courier-bill to an invoice -- should be useful
+void pickInvoice_clicker()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(couriers_div,"couriers_lb")) return;
+
+	// locate invoices by ar_code
+	selitem = couriers_lb.getSelectedItem();
+	global_selected_courier_rec = lbhand.getListcellItemLabel(selitem,0);
+	arcode = lbhand.getListcellItemLabel(selitem,1);
+
+	if(arcode.equals(""))
+	{
+		guihand.showMessageBox("Client without AR code..");
+		return;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select id,invoiceno,name,remark,invoicedate,curcode,total from invoice where code='" + arcode + "' order by invoicedate desc";
+	invrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(invrecs.size() == 0)
+	{
+		guihand.showMessageBox("No invoices found for this company..");
+		return;
+	}
+
+	Listbox newlb = lbhand.makeVWListbox(link_invoices_div, invoices_lb_headers, "invoices_lb", 10);
+
+	for(dpi : invrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("invoicedate").toString().substring(0,10));
+		kabom.add(dpi.get("invoiceno"));
+		kabom.add(lbhand.trimListitemLabel(dpi.get("name"),35));
+		kabom.add(lbhand.trimListitemLabel(dpi.get("remark"),30));
+		DecimalFormat df = new DecimalFormat("#.##");
+		invtotal = df.format(dpi.get("total"));
+		kabom.add(dpi.get("curcode") + " " + invtotal);
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	linkcourier_inv_popup.open(selitem);
+}
+
+// Actual linking courier-bill to invoice - uses global_selected_courier_rec set earlier
+void linkCourierToInvoice_clicker()
+{
+	linkcourier_inv_popup.close();
+	if(global_selected_courier_rec.equals("")) return;
+	if(!lbhand.check_ListboxExist_SelectItem(link_invoices_div,"invoices_lb")) return;
+
+	selitem = invoices_lb.getSelectedItem();
+	invnum = lbhand.getListcellItemLabel(selitem,2);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update Courier_Tracking set invoice_link='" + invnum + "' where origid=" + global_selected_courier_rec;
+	sql.execute(sqlstm);
+	sql.close();
+
+	global_selected_courier_rec = "";
+	goFetchCourierInfo(1); // refresh
+}
+
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Folder.No",true),
+	new listboxHeaderObj("Date.Crt",true),
+	new listboxHeaderObj("Company",true),
+};
+
+// Let user link courier-bill to folder too
+void linkCourierToFolder_clicker()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(couriers_div,"couriers_lb")) return;
+
+	// locate invoices by ar_code
+	selitem = couriers_lb.getSelectedItem();
+	global_selected_courier_rec = lbhand.getListcellItemLabel(selitem,0);
+	arcode = lbhand.getListcellItemLabel(selitem,1);
+
+	if(arcode.equals(""))
+	{
+		guihand.showMessageBox("Client without AR code..");
+		return;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select jobfolders.origid, jobfolders.folderno_str, jobfolders.datecreated, customer.customer_name from jobfolders " +
+		"left join customer on customer.ar_code=jobfolders.ar_code " +
+		"where jobfolders.ar_code='" + arcode + "' order by jobfolders.datecreated desc";
+
+	foldrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(foldrecs.size() == 0)
+	{
+		guihand.showMessageBox("No job-folders found for this client..");
+		return;
+	}
+
+	Listbox newlb = lbhand.makeVWListbox(link_folders_div, folders_lb_headers, "folders_lb", 10);
+
+	for(dpi : foldrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	linkcourier_folder_popup.open(selitem);
+}
+
+// Actual linking courier-bill to folder
+void linkCourierToFolder_real()
+{
+	linkcourier_folder_popup.close();
+	if(global_selected_courier_rec.equals("")) return;
+
+	if(!lbhand.check_ListboxExist_SelectItem(link_folders_div,"folders_lb")) return;
+
+	selitem = folders_lb.getSelectedItem();
+	folderno = lbhand.getListcellItemLabel(selitem,1);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update Courier_Tracking set folder_link='" + folderno + "' where origid=" + global_selected_courier_rec;
+	sql.execute(sqlstm);
+	sql.close();
+	global_selected_courier_rec = "";
+	goFetchCourierInfo(1); // refresh
+}
+
+// Delete func for admin only
+void delCourierBill_clicker()
+{
+	if(useraccessobj.accesslevel != 9) return;
+	if(!lbhand.check_ListboxExist_SelectItem(couriers_div,"couriers_lb")) return;
+
+	corigid = couriers_lb.getSelectedItem().getLabel(); // 1st col = origid
+
+	if (Messagebox.show("Delete courier bill", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+
+	delCourierTracking_Rec(corigid);
+	goFetchCourierInfo(1); // refresh
+}
+
+]]>
+</zscript>
+
+<popup id="linkcourier_folder_popup" >
+<groupbox mold="3d">
+	<caption label="Link courier-bill to folder" />
+	<div id="link_folders_div" width="500px" />
+</groupbox>
+<separator height="3px" />
+<button label="Link it.." style="font-size:9px" onClick="linkCourierToFolder_real()" />
+<button label="Close" style="font-size:9px" onClick="linkcourier_folder_popup.close()" />
+</popup>
+<!-- end of linkcourier_folder_popup -->
+
+<popup id="linkcourier_inv_popup" >
+<groupbox mold="3d">
+	<caption label="Link courier-bill to invoice" />
+	<div id="link_invoices_div" width="680px" />
+</groupbox>
+<separator height="3px" />
+<button label="Link it.." style="font-size:9px" onClick="linkCourierToInvoice_clicker()" />
+<button label="Close" style="font-size:9px" onClick="linkcourier_inv_popup.close()" />
+</popup>
+<!-- end of linkcourier_inv_popup -->
+
+<popup id="newoutgoing_popup">
+<div style="background:#556655;padding:3px">
+<label value="New outgoing courier" style="color:#ffffff" />
+</div>
+<groupbox>
+<caption label="Recipient info" />
+<hbox>
+	<label value="Customer name" style="font-size:9px" />
+	<textbox id="newout_customer_name" width="200px" style="font-size:9px" />
+	<separator width="5px" />
+	<label value="AR Code" style="font-size:9px" />
+	<textbox id="newout_arcode" width="60px" style="font-size:9px" />
+	<button label="Search customer" style="font-size:9px" onClick="playAssignCustomerWindow()" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Recipient" style="font-size:9px" />
+	<separator width="28px" />
+	<textbox id="newout_recipient" width="200px" style="font-size:9px" />
+	<separator width="109px" />
+	<button label="Load customer info" style="font-size:9px" onClick="refreshCustomerDetails_Clicker(1)" />
+</hbox>
+</groupbox>
+
+<groupbox>
+<caption label="Courier info" />
+<hbox>
+	<label value="Document type" style="font-size:9px" />
+	<listbox mold="select" rows="1" id="newout_document_type" style="font-size:9px" />
+	<separator width="5px" />
+	<label value="Delivery method" style="font-size:9px" />
+	<listbox mold="select" rows="1" id="newout_delivery_method" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Tracking#" style="font-size:9px" />
+	<separator width="20px" />
+	<textbox id="newout_tracking_number" width="250px" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Extra.Notes" style="font-size:9px" />
+	<separator width="11px" />
+	<textbox id="newout_notes" multiline="true" height="80px" width="400px" style="font-size:9px" />
+</hbox>
+</groupbox>
+
+<separator height="3px" />
+<button label="Save" style="font-size:9px" onClick="saveNewOutgoingCourier_clicker()" />
+<button label="Close" style="font-size:9px" onClick="newoutgoing_popup.close()" />
+</popup>
+<!-- end of newoutgoing_popup -->
+
+<!-- Edit outgoing courier popup -->
+<popup id="editoutgoing_popup">
+
+<div style="background:#996688;padding:3px">
+	<label value="Update courier details" style="color:#ffffff" />
+</div>
+
+<groupbox>
+<caption label="Recipient info" />
+<hbox>
+	<label value="Customer name" style="font-size:9px" />
+	<textbox id="editout_customer_name" width="220px" style="font-size:9px" disabled="true" />
+	<separator width="5px" />
+	<label value="AR Code" style="font-size:9px" />
+	<textbox id="editout_arcode" width="60px" style="font-size:9px" disabled="true" />
+	<!-- <button label="Search customer" style="font-size:9px" onClick="playAssignCustomerWindow()" /> -->
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Recipient" style="font-size:9px" />
+	<separator width="28px" />
+	<textbox id="editout_recipient" width="220px" style="font-size:9px" />
+	<separator width="109px" />
+	<!-- <button label="Load customer info" style="font-size:9px" onClick="refreshCustomerDetails_Clicker(2)" /> -->
+</hbox>
+</groupbox>
+
+<groupbox>
+<caption label="Courier info" />
+<hbox>
+	<label value="Document type" style="font-size:9px" />
+	<listbox mold="select" rows="1" id="editout_document_type" style="font-size:9px" />
+	<separator width="5px" />
+	<label value="Delivery method" style="font-size:9px" />
+	<listbox mold="select" rows="1" id="editout_delivery_method" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Tracking#" style="font-size:9px" />
+	<separator width="20px" />
+	<textbox id="editout_tracking_number" width="250px" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Extra.Notes" style="font-size:9px" />
+	<separator width="11px" />
+	<textbox id="editout_notes" multiline="true" height="80px" width="400px" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Shipping charges RM" style="font-size:9px" />
+	<separator width="6px" />
+	<decimalbox id="editout_amount" format="#.#" style="font-size:9px" />
+</hbox>
+
+<separator height="3px" />
+<hbox>
+	<label value="Containers.Pack.list#" style="font-size:9px" />
+	<separator width="2px" />
+	<textbox id="editout_container_do_link" width="100px" style="font-size:9px" />
+	<button label="Pick pack-list" style="font-size:9px" onClick='alert("-bulum-")'/>
+	<separator width="7px" />
+	<label value="Invoice#" style="font-size:9px" />
+	<textbox id="editout_invoice_link" width="100px" style="font-size:9px" />
+	<button label="Pick invoice" style="font-size:9px" onClick="pickInvoice_clicker()" />
+</hbox>
+<hbox>
+	<label value="Folder#" style="font-size:9px" />
+	<separator width="73px" />
+	<textbox id="editout_folder_link" width="100px" style="font-size:9px" />
+	<button label="Pick folder" style="font-size:9px" onClick="linkCourierToFolder_clicker()" />
+</hbox>
+</groupbox>
+
+<groupbox>
+<caption label="Third-party billing" />
+<hbox>
+	<label value="Charge customer name" style="font-size:9px" />
+	<textbox id="editout_thirdparty_customer_name" width="200px" style="font-size:9px" />
+	<label value="Charge AR_Code" style="font-size:9px" />
+	<textbox id="editout_thirdparty_ar_code" width="60px" style="font-size:9px" />
+</hbox>
+</groupbox>
+
+<separator height="3px" />
+<button label="Update" style="font-size:9px" onClick="editUpdate_clicker()" />
+<button label="Close" style="font-size:9px" onClick="editoutgoing_popup.close()" />
+</popup>
+<!-- end of editoutgoing_popup -->
+
+<div width="1100px">
+<panel id="courier_outgoing_panmee" title="Courier Tracking ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<groupbox mold="3d">
+<caption label="Cari-cari" />
+<hbox>
+	<label value="Start date" style="font-size:9px" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+	<separator width="5px"/>
+	<label value="End date" style="font-size:9px" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	<label value="Customer" style="font-size:9px" />
+	<textbox id="customername" width="200px" style="font-size:9px" />
+	<separator width="5px" />
+	<button label="Search/Refresh" style="font-size:9px" onClick="goFetchCourierInfo(1)" />
+</hbox>
+<separator height="3px" />
+<hbox>
+	<label value="Tracking number" style="font-size:9px" />
+	<textbox id="trackingno_search_tb" width="150px" style="font-size:9px" />
+	<button label="Locate" style="font-size:9px" onClick="goFetchCourierInfo(3)" />
+	
+	<separator width="5px" />
+	<label value="Search by courier company" style="font-size:9px" />
+	<listbox id="courier_company" mold="select" rows="1" style="font-size:9px" />
+	<button label="Search" style="font-size:9px" onClick="goFetchCourierInfo(2)" />
+</hbox>
+</groupbox>
+
+<groupbox mold="3d">
+<caption label="Workspace" />
+<hbox>
+	<button id="newoutgoing_btn" label="New outgoing" style="font-size:9px" onClick="newOutGoing_clicker()" />
+	<button id="editoutgoing_btn" label="Update" style="font-size:9px" onClick="editOutgoing_clicker()" />
+	<button id="link_courier_folder_btn" label="Link to folder" style="font-size:9px" onClick="linkCourierToFolder_clicker()" />
+	<button id="link_courier_inv_btn" label="Link to invoice" style="font-size:9px" onClick="pickInvoice_clicker()" />
+	<button id="del_courierbill_btn" label="Delete" style="font-size:9px" visible="false" onClick="delCourierBill_clicker()" />
+</hbox>
+<separator height="3px" />
+
+<div id="couriers_div" />
+
+</groupbox>
+
+</panelchildren>
+</panel>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+lbhand.populateDropdownListbox(newout_document_type,lu_DocumentType);
+lbhand.populateDropdownListbox(newout_delivery_method,lu_DeliveryMethod);
+
+lbhand.populateDropdownListbox(editout_document_type,lu_DocumentType);
+lbhand.populateDropdownListbox(editout_delivery_method,lu_DeliveryMethod);
+
+lbhand.populateDropdownListbox(courier_company,lu_DeliveryMethod);
+
+// Admin only stuff
+if(useraccessobj.accesslevel == 9)
+{
+	del_courierbill_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+</div>
+</zk>

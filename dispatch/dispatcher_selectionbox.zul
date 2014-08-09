@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="dispatcher_selection_box"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript>
+<![CDATA[
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+TODO: awkward codes - need to put them back to dispatch_manifest.zul
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+lbhand = new ListboxHandler();
+kiboo = new Generals();
+guihand = new GuiFuncs();
+
+MODULE_DBNAME = "DispatcherDetails";
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = dispatchers_lb.getSelectedItem().getLabel();
+		/*
+		whathuh.ea_newaddr_recno.setValue(irecno);
+		whathuh.showDetails();
+		*/
+	}
+}
+
+// Populate the listbox of all extra addresses for this customer
+// uses global-var the_arcode
+void populateDispatcherDetailsBox(Div thediv)
+{
+Object[] dsp_lb_headers = {
+	new listboxHeaderWidthObj("DispId",true,"80px"),
+	new listboxHeaderWidthObj("Dispatcher name",true,""),
+	new listboxHeaderWidthObj("Outsource company",true,""),
+};
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	sqlstatem = "select * from " + MODULE_DBNAME + " order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist.size() == 0) return;
+
+	String[] strarray = new String[3];
+	newlb = lbhand.makeVWListbox_Width(thediv,dsp_lb_headers,"dispatchers_lb",15);
+
+	for(ilist : tlist)
+	{
+		t_origid = DISPATCHER_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		strarray[1] = ilist.get("dispatcher_name");
+		strarray[2] = ilist.get("outsource_name");
+		lbhand.insertListItems(newlb,strarray,DISPATCHER_PREFIX,"");
+	}
+			
+} // end of populateDispatcherDetailsBox()
+
+]]>
+</zscript>
+
+<window id="dispatcher_selectionbox" title="Dispatcher" width="350px" height="300px" mode="overlapped" border="normal" closable="true" position="left,top">
+<div>
+<div id="extra_addr_div" />
+<separator height="10px" />
+<button label="Close window" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<zscript>
+populateDispatcherDetailsBox(extra_addr_div);
+</zscript>
+</div>
+</window>
+</zk>
+

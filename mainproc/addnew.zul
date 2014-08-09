@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="addnewincidentPage"?>
+
+<!--
+
+New incident data entry window
+
+Developer: Victor Wong
+(c)2009 Starlims Malaysia Sdn Bhd
+
+-->
+
+<zk>
+
+<zscript src="/mainproc/mirisglobal.zs" />
+
+<zscript>
+
+// command passed to IF1 form.
+// addnew.zul?dowhat=addnew = create a blank/new form
+// addnew.zul?dowhat=modify = retrieve data from tables and populate the fields!!
+
+maincommand = Executions.getCurrent().getParameter("dowhat");
+
+void showParams()
+{
+	alert(maincommand);
+}
+
+</zscript>
+
+<window id="addnewform" width="900px" height="600px"
+	title="CONFIDENTIAL FORM IR1 - PATIENT SAFETY EVENT REPORT"
+	position="center" mode="overlapped" border="normal" closable="true"
+	onCancel="closeAddNewForm()" onClose="closeAddNewForm()"	
+	>
+
+<borderlayout>
+
+<center>
+<div>
+
+<tabbox>
+ <tabs>
+  <tab id="ir1section1" label="Section 1" />
+  <tab id="ir2section2" label="Section 2" />
+ </tabs>
+
+ <tabpanels>
+ 
+ <tabpanel>
+  	<include src="${MAINPROCPATH}/IF1_section1.zul" />
+  </tabpanel>
+
+  <tabpanel fulfill="ir2section2.onSelect" >
+	<include src="${MAINPROCPATH}/IF1_section2.zul" />
+  </tabpanel>
+
+ </tabpanels>
+ 
+</tabbox>
+
+</div>
+
+</center>
+
+<south>
+<div>
+<button label="Add new" onClick="processForm(1)" if="${param.dowhat == &quot;addnew&quot;}" />
+<button label="Update" onClick="processForm(2)" if="${param.dowhat == &quot;modify&quot;}"/>
+<button label="Cancel" onClick="processForm(3)" />
+</div>
+</south>
+
+</borderlayout>
+
+<zscript>
+
+void closeAddNewForm()
+{
+	// refering back to main page, hardcoded for now.
+	Div contdiv = Path.getComponent("//main/mainWindow/thecontent");
+	Include thiswin = contdiv.getFellow("addnewincident");
+	
+	// just set the include source to empty, should remove this window
+	thiswin.setSrc("");
+}
+
+// The super plumbling codes, extract all fields from both section and insert into proper tables.
+void insertNewIncident()
+{
+
+}
+
+/*
+ Process IF1 form
+ what = 1 (insert/addnew)
+		= 2 (modify/update)
+		= 3 (close/cancel)
+*/
+void processForm(int what)
+{
+	switch(what)
+	{
+		case 1:
+			// now call the super script to insert form data into database
+			insertNewIncident();
+			break;
+			
+		case 2:
+			// update IF1 form
+			break;
+			
+		case 3:
+			closeAddNewForm();
+			break;
+	}
+}
+
+</zscript>
+</window>
+
+</zk>
+

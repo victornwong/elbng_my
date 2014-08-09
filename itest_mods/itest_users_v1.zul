@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="itestusercontrol_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "i-Test Users Controller";
+MYVERSION = "v0.2";
+/*
+Title		: i-Test user controller
+Written by	: Victor Wong
+
+Uses webreportuser table
+uses these lookups-parents: dd_accesslevel , dd_branches
+
+05/12/2012: codes to save customer-prefix to be used to identify COC or whatever later : customer.newfield9
+
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+// Global vars
+glob_selected_ar_code = "";
+glob_selected_customer_name = "";
+glob_selected_user = ""; // webreportuser.origid
+
+last_customer_search = 0;
+
+void resetGlobalVars()
+{
+	glob_selected_ar_code = "";
+	glob_selected_customer_name = "";
+	glob_selected_user = "";
+}
+
+void clearUserFields()
+{
+	wru_arcode.setValue("");
+	wru_username.setValue("");
+	wru_password.setValue("");
+	wru_fullname.setValue("");
+	wru_designation.setValue("");
+	wru_email.setValue("");
+	wru_handphone.setValue("");
+	wru_branch.setSelectedIndex(0);
+	wru_accesslevel.setSelectedIndex(0);
+	wru_locked.setChecked(false);
+
+	if(custusers_holder.getFellowIfAny("custusers_lb") != null) custusers_lb.clearSelection();
+	wru_username.setDisabled(false);
+
+	// reset vars
+	glob_selected_user = "";
+}
+
+// Show client user's metadata
+void showUserMetadata(String iorig)
+{
+	urec = sechand.getWebreport_Username_Rec(iorig);
+	if(urec == null) return;
+
+	wru_arcode.setValue(urec.get("ar_code"));
+	wru_username.setValue(urec.get("username"));
+	wru_username.setDisabled(true); // don't allow edit username
+	//wru_password
+	wru_fullname.setValue(urec.get("fullname"));
+	wru_designation.setValue(urec.get("designation"));
+	wru_email.setValue(urec.get("email"));
+	wru_handphone.setValue(urec.get("handphone"));
+	lbhand.matchListboxItems(wru_branch,urec.get("branch"));
+	lbhand.matchListboxItems(wru_accesslevel,urec.get("accesslevel").toString());
+	wru_locked.setChecked((urec.get("locked") == 1) ? true : false);
+
+}
+
+class custunameOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = custusers_lb.getSelectedItem();
+		glob_selected_user = lbhand.getListcellItemLabel(selitem,0);
+		showUserMetadata(glob_selected_user);
+	}
+}
+
+void showCustomerUsersBox()
+{
+Object[] custun_lb_headers = {
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Username",true,"100px"),
+	new listboxHeaderWidthObj("FullName",true,""),
+	new listboxHeaderWidthObj("Designation",true,"100px"),
+	new listboxHeaderWidthObj("E-Mail",true,"160px"),
+	new listboxHeaderWidthObj("Phone",true,"100px"),
+	new listboxHeaderWidthObj("LVL",true,"30px"),
+	new listboxHeaderWidthObj("DEL",true,"30px"),
+	new listboxHeaderWidthObj("LCK",true,"30px"),
+	new listboxHeaderWidthObj("BRH",true,"30px"),
+};
+
+	clearUserFields();
+	Listbox newlb = lbhand.makeVWListbox_Width(custusers_holder, custun_lb_headers, "custusers_lb", 10);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select wru.origid, wru.username, wru.fullname, wru.designation, wru.email, wru.handphone," + 
+	"wru.accesslevel, wru.deleted, wru.locked, wru.branch from webreportuser wru where wru.ar_code='" + glob_selected_ar_code + "'";
+	trecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(trecs.size() == 0) return;
+	newlb.addEventListener("onSelect", new custunameOnSelect());
+
+	for(dpi : trecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("fullname"));
+		kabom.add(dpi.get("designation"));
+
+		kabom.add(dpi.get("email"));
+		kabom.add(dpi.get("handphone"));
+
+		kabom.add(dpi.get("accesslevel").toString());
+		kabom.add((dpi.get("deleted") == 1) ? "Y" : "");
+		kabom.add((dpi.get("locked") == 1) ? "Y" : "");
+
+		kabom.add(dpi.get("branch"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"","");
+	}
+}
+
+class customernameOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = customernames_lb.getSelectedItem();
+		glob_selected_ar_code = lbhand.getListcellItemLabel(selitem,0);
+		glob_selected_customer_name = lbhand.getListcellItemLabel(selitem,1);
+		custprefix = lbhand.getListcellItemLabel(selitem,2);
+
+		customercap_lbl.setValue(glob_selected_customer_name);
+		showCustomerUsersBox();
+		custusers_gb.setVisible(true);
+		
+		customer_newfield9.setValue(custprefix);
+		custprefix_box.setVisible(true);
+	}
+}
+
+// itype: 1=load customers with username attached, 2=load by searchcust_tb
+void showCustomerBox(int itype)
+{
+Object[] custn_lb_headers = {
+	new listboxHeaderWidthObj("AR_Code",true,"65px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Prefix",true,""),
+};
+	stxt = kiboo.replaceSingleQuotes(searchcust_tb.getValue());
+	sqlstm = "select distinct wru.ar_code,customer.customer_name,customer.newfield9 from webreportuser wru left join customer on customer.ar_code = wru.ar_code";
+	if(itype == 2)
+	{
+		if(stxt.equals("")) return;
+		sqlstm = "select top 200 ar_code,customer_name,customer.newfield9 from customer where ar_code like '%" + stxt + "%' or customer_name like '%" + stxt + "%'";
+	}
+
+	last_customer_search = itype;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	trecs = sql.rows(sqlstm);
+	sql.close();
+	if(trecs.size() == 0) return;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(customers_holder, custn_lb_headers, "customernames_lb", 20);
+	newlb.addEventListener("onSelect", new customernameOnSelect());
+
+	if(trecs.size() > 20) newlb.setRows(38);
+
+	for(dpi : trecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("ar_code"));
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(kiboo.checkNullString(dpi.get("newfield9")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"","");
+	}
+}
+
+// Update/create customer users
+// itype: 1=new, 2=update
+void newupdateUser(int itype)
+{
+	if(itype == 1 && !glob_selected_user.equals("")) return;
+	if(itype == 2 && glob_selected_user.equals("")) return;
+
+	//arcode = kiboo.replaceSingleQuotes(wru_arcode.getValue());
+	username = kiboo.replaceSingleQuotes(wru_username.getValue());
+
+	if(username.equals(""))
+	{
+		guihand.showMessageBox("Username is required..");
+		return;
+	}
+
+	password = kiboo.replaceSingleQuotes(wru_password.getValue());
+	if(itype == 1 && password.equals(""))
+	{
+		guihand.showMessageBox("New user must have a password..");
+		return;
+	}
+
+	encrypt_password = sechand.als_MD5_Encrypter(password);
+
+	fullname = kiboo.replaceSingleQuotes(wru_fullname.getValue());
+	designation = kiboo.replaceSingleQuotes(wru_designation.getValue());
+	email = kiboo.replaceSingleQuotes(wru_email.getValue());
+	handphone = kiboo.replaceSingleQuotes(wru_handphone.getValue());
+	branch = wru_branch.getSelectedItem().getLabel();
+
+	accesslevel = wru_accesslevel.getSelectedItem().getLabel();
+	if(accesslevel.equals("God-like")) accesslevel = "9";
+
+	locked = (wru_locked.isChecked()) ? "1" : "0";
+
+	sqlstm = "insert into webreportuser (ar_code,username,password,fullname,designation,email,handphone,accesslevel,deleted,locked,branch) values " +
+	"('" + glob_selected_ar_code + "','" + username + "','" + encrypt_password + "','" + fullname + "','" + designation + "','" + 
+	email + "','" + handphone + "'," + accesslevel + ",0," + locked + ",'" + branch + "')";
+
+	if(itype == 2)
+		sqlstm = "update webreportuser set fullname='" + fullname + "', designation='" + designation + "', email='" + email + "'," +
+		"handphone='" + handphone + "',accesslevel=" + accesslevel + ",locked=" + locked + ",branch='" + branch + "' " +
+		"where origid=" + glob_selected_user;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	clearUserFields();
+	showCustomerUsersBox(); // refresh
+}
+
+void changePassword()
+{
+	if(glob_selected_user.equals("")) return;
+
+	password = kiboo.replaceSingleQuotes(wru_password.getValue());
+	if(password.equals(""))
+	{
+		guihand.showMessageBox("Cannot have blank password..");
+		return;
+	}
+	encrypt_password = sechand.als_MD5_Encrypter(password);
+	sqlstm = "update webreportuser set password='" + encrypt_password + "' where origid=" + glob_selected_user;
+	sqlhand.gpSqlExecuter(sqlstm);
+	guihand.showMessageBox("Password changed..");
+	wru_password.setValue("");
+}
+
+void deleteUser()
+{
+	if(glob_selected_user.equals("")) return;
+	if(Messagebox.show("Delete this user", "Are you sure?", Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "delete from webreportuser where origid=" + glob_selected_user;
+	sqlhand.gpSqlExecuter(sqlstm);
+	clearUserFields();
+	showCustomerUsersBox(); // refresh
+}
+
+void saveCustomerPrefix()
+{
+	if(glob_selected_ar_code.equals("")) return;
+	custprefix = kiboo.replaceSingleQuotes(customer_newfield9.getValue());
+	sqlstm = "update customer set newfield9='" + custprefix + "' where ar_code='" + glob_selected_ar_code + "'";
+	sqlhand.gpSqlExecuter(sqlstm);
+	showCustomerBox(last_customer_search); // refresh
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="checklist_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<hbox>
+	<groupbox mold="3d" width="400px">
+		<div style="background:#4d4d4d;padding:2px">
+			<label value="Clients" style="color:#ffffff" />
+		</div>
+		<separator height="3px" />
+		<hbox>
+			<label value="Custname/AR_Code" style="font-size:9px" />
+			<textbox id="searchcust_tb" style="font-size:9px" width="99%" />
+			<button label="Find" style="font-size:9px" onClick="showCustomerBox(2)" />
+			<button label="Load available" style="font-size:9px" onClick="showCustomerBox(1)" />
+		</hbox>
+		<separator height="3px" />
+		<vbox>
+			<div id="customers_holder" />
+			<hbox id="custprefix_box" visible="false" >
+				<label value="Customer-prefix" style="font-size:9px" />
+				<textbox id="customer_newfield9" style="font-size:9px" />
+				<button label="Save prefix" style="font-size:9px" onClick="saveCustomerPrefix()" />
+			</hbox>
+		</vbox>
+	</groupbox>
+
+	<vbox>
+		<groupbox id="custusers_gb" mold="3d" visible="false">
+			<div style="background:#4d4d4d;padding:2px">
+				<label value="Client - Users" style="color:#ffffff" />
+			</div>
+			<separator height="3px" />
+			<div style="background:#ffa500;padding:2px">
+				<label id="customercap_lbl" />
+			</div>
+			<separator height="2px" />
+			<div id="custusers_holder" />
+		</groupbox>
+		
+		<groupbox mold="3d" width="600px">
+			<grid>
+				<rows>
+					<row spans=",3">
+						<label value="AR_Code" style="font-size:9px" />
+						<label id="wru_arcode" style="font-size:9px" />
+						<!-- <button label="Assign customer" style="font-size:9px" /> -->
+					</row>
+					<row>
+						<label value="Username" style="font-size:9px" />
+						<textbox id="wru_username" style="font-size:9px" width="99%" />
+						<label value="Password" style="font-size:9px" />
+						<textbox id="wru_password" style="font-size:9px" width="99%" />
+					</row>
+					<row>
+						<label value="Full.Name" style="font-size:9px" />
+						<textbox id="wru_fullname" style="font-size:9px" width="99%" />
+						<label value="Designation" style="font-size:9px" />
+						<textbox id="wru_designation" style="font-size:9px" width="99%" />
+					</row>
+					<row>
+						<label value="Email" style="font-size:9px" />
+						<textbox id="wru_email" style="font-size:9px" width="99%" />
+						<label value="Phone" style="font-size:9px" />
+						<textbox id="wru_handphone" style="font-size:9px" width="99%" />
+					</row>
+					<row>
+						<label value="Branch" style="font-size:9px" />
+						<listbox id="wru_branch" mold="select" style="font-size:9px" />
+						<label value="Access.Level" style="font-size:9px" />
+						<listbox id="wru_accesslevel" mold="select" style="font-size:9px" />
+					</row>
+					<row spans="4">
+						<checkbox id="wru_locked" label="Lock account" style="font-size:9px" />
+					</row>
+				</rows>
+			</grid>
+			<separator height="2px" />
+			<hbox>
+				<button id="newupdate_btn" label="New user" style="font-size:9px" onClick="newupdateUser(1)" />
+				<button id="update_btn" label="Update.." style="font-size:9px" onClick="newupdateUser(2)" />
+				<button id="clrfields_btn" label="Clear fields" style="font-size:9px" onClick="clearUserFields()" />
+				<button id="chgpwd_btn" label="Change password" style="font-size:9px" onClick="changePassword()" />
+				<button id="deluser_btn" label="Delete user" style="font-size:9px" onClick="deleteUser()" visible="false" />
+			</hbox>
+		</groupbox>
+
+	</vbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(wru_accesslevel,"dd_accesslevel",2);
+luhand.populateListbox_ByLookup(wru_branch,"dd_branches",2);
+
+// admin stuff
+if(useraccessobj.accesslevel == 9)
+{
+	deluser_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

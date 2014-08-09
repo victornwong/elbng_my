@@ -1,0 +1,395 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="reportamend_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Report Amendment Requests Tracker";
+MYVERSION = "v0.1";
+/*
+Title		: Report amendment requests tracker
+Written by	: Victor Wong
+Dated		: 07/12/2012
+
+Revisions:
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+glob_selected_request = "";
+glob_selected_customer = "";
+glob_selected_doneby = "";
+glob_selected_status = "";
+
+Object getReportAmendment_Rec(String iwhat)
+{
+	sqlstm = "select * from elb_reportamendment where origid=" + iwhat;
+	retv = sqlhand.gpSqlFirstRow(sqlstm);
+	return retv;
+}
+
+// iwhat = folderno_str
+Object getFolderCustomer_Rec(String iwhat)
+{
+	sqlstm = "select jf.ar_code, cust.customer_name " + 
+	"from jobfolders jf left join customer cust on jf.ar_code = cust.ar_code " +
+	"where jf.folderno_str = '" + iwhat + "'";
+	retv = sqlhand.gpSqlFirstRow(sqlstm);
+	return retv;
+}
+
+void clearReqForm()
+{
+	r_origid.setValue("");
+	r_datecreated.setValue("");
+	r_folderno_str.setValue("");
+	r_ar_code.setValue("");
+	r_customer_name.setValue("");
+	r_req_type.setSelectedIndex(0);
+	r_notes.setValue("");
+}
+
+void toggleButts(boolean iwhat)
+{
+	updatereq_btn.setDisabled(iwhat);
+	folderrefresh_btn.setDisabled(iwhat);
+}
+
+void showRepAmendMetadata()
+{
+	arec = getReportAmendment_Rec(glob_selected_request);
+	if(arec == null)
+	{
+		guihand.showMessageBox("ERR: Cannot access database..");
+		return;
+	}
+
+	clearReqForm();
+
+	r_origid.setValue(arec.get("origid").toString());
+	r_datecreated.setValue(kiboo.checkNullDate(arec.get("datecreated"),"---"));
+	r_folderno_str.setValue(kiboo.checkNullString(arec.get("folderno_str")));
+	r_ar_code.setValue(kiboo.checkNullString(arec.get("ar_code")));
+	r_customer_name.setValue(glob_selected_customer);
+	lbhand.matchListboxItems(r_req_type,arec.get("req_type"));
+	r_notes.setValue(kiboo.checkNullString(arec.get("notes")));
+
+	request_form.setVisible(true);
+}
+
+Object[] repamendlb_headers = 
+{
+	new listboxHeaderWidthObj("###",true,"20px"),
+	new listboxHeaderWidthObj("Dated",true,"50px"),
+	new listboxHeaderWidthObj("Folder",true,"80px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Request",true,""),
+	new listboxHeaderWidthObj("Req.Type",true,""),
+	new listboxHeaderWidthObj("Req.By",true,"60px"),
+	new listboxHeaderWidthObj("Stat",true,"60px"),
+	new listboxHeaderWidthObj("Done",true,"50px"),
+	new listboxHeaderWidthObj("Done.By",true,"60px"),
+};
+
+// onSelect event for loadSubcons_List()
+class repamdlb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget().getSelectedItem();
+		glob_selected_request = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_customer = lbhand.getListcellItemLabel(isel,3);
+		glob_selected_doneby = lbhand.getListcellItemLabel(isel,9);
+		glob_selected_status = lbhand.getListcellItemLabel(isel,7);
+
+		// if request is NEW, user can update folder and stuff .. else no-way
+		toggleButts( (!glob_selected_status.equals("NEW")) ? true : false );
+
+		showRepAmendMetadata();
+	}
+}
+
+void loadReportAmendments()
+{
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+
+	Listbox newlb = lbhand.makeVWListbox_Width(repamds_holder, repamendlb_headers, "repamends_lb", 20);
+
+	sqlstm = "select top 200 repamd.origid,repamd.ar_code,repamd.username,repamd.folderno_str," + 
+	"repamd.datecreated,repamd.notes,repamd.donedate,repamd.doneby, repamd.status, repamd.req_type, cust.customer_name " +
+	"from elb_reportamendment repamd left join customer cust on repamd.ar_code = cust.ar_code " +
+	"where repamd.datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	if(!searchtext.equals(""))
+		sqlstm += "and (cust.customer_name like '%" + searchtext + "%' or repamd.notes like '%" + searchtext + "%') ";
+
+	sqlstm += "order by repamd.origid";
+
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.addEventListener("onSelect", new repamdlb_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(kiboo.checkNullString(dpi.get("folderno_str")));
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(kiboo.checkNullString(dpi.get("notes")));
+		kabom.add(kiboo.checkNullString(dpi.get("req_type")));
+		kabom.add(kiboo.checkNullString(dpi.get("username")));
+		kabom.add(kiboo.checkNullString(dpi.get("status")));
+		kabom.add(kiboo.checkNullDate(dpi.get("donedate"),"---"));
+		kabom.add(kiboo.checkNullString(dpi.get("doneby")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+NEWREQ_BTN = "newreq_btn";
+CANCELREQ_BTN = "cancelreq_btn";
+COMPLETEREQ_BTN = "completereq_btn";
+UPDATEREQ_BTN = "updatereq_btn";
+FOLDERREFRESH_BTN = "folderrefresh_btn";
+EXPORT_BTN = "export_btn";
+
+// admin funcs
+CLEAR_STATS = "clear_stats";
+DELETE_REQ = "delete_req";
+
+void doFunc(Object icomp)
+{
+	itype = icomp.getId();
+	todate = kiboo.todayISODateString();
+	refresh = false;
+	hideform = false;
+
+	if(itype.equals(NEWREQ_BTN))
+	{
+		sqlstm = "insert into elb_reportamendment (ar_code,folderno_str,username,datecreated,notes,status) " +
+		"values ('','','" + useraccessobj.username + "','" + todate + "','','NEW')";
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+	}
+	
+	if(itype.equals(FOLDERREFRESH_BTN))
+	{
+		folderstr = kiboo.replaceSingleQuotes(r_folderno_str.getValue());
+		if(folderstr.equals("")) return;
+
+		jrec = getFolderCustomer_Rec(folderstr);
+		if(jrec == null) return;
+
+		r_ar_code.setValue(jrec.get("ar_code"));
+		r_customer_name.setValue(jrec.get("customer_name"));
+	}
+
+	if(itype.equals(EXPORT_BTN))
+	{
+		exportListboxExcel(repamds_holder,"repamends_lb","reportAmendments.xls",repamendlb_headers,"Requests",kasiexport_holder,65);
+	}
+
+	// after the stuff above, all below need glob_selected_request to work..
+	if(glob_selected_request.equals("")) return;
+	else
+	{
+
+	if(itype.equals(COMPLETEREQ_BTN))
+	{
+		sqlstm = "update elb_reportamendment set status='DONE', donedate='" + todate + "', " + 
+		"doneby='" + useraccessobj.username + "' where origid=" + glob_selected_request;
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+		hideform = true;
+	}
+	
+	if(itype.equals(CANCELREQ_BTN))
+	{
+		if(!glob_selected_status.equals("NEW"))
+		{
+			guihand.showMessageBox("This request is either done or cancelled -- no more changes");
+			return;
+		}
+
+		sqlstm = "update elb_reportamendment set status='CANCEL' where origid=" + glob_selected_request;
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+		hideform = true;
+	}
+
+	if(itype.equals(UPDATEREQ_BTN))
+	{
+		gfold = kiboo.replaceSingleQuotes(r_folderno_str.getValue());
+		garcode = kiboo.replaceSingleQuotes(r_ar_code.getValue());
+		greq = r_req_type.getSelectedItem().getLabel();
+		gnotes = kiboo.replaceSingleQuotes(r_notes.getValue());
+
+		sqlstm = "update elb_reportamendment set folderno_str='" + gfold + "',ar_code='" + garcode + "'," +
+		"req_type='" + greq + "', notes='" + gnotes + "' where origid=" + glob_selected_request;
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+	}
+
+	if(itype.equals(DELETE_REQ))
+	{
+		if (Messagebox.show("This is a hard-delete..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+		
+		sqlstm = "delete from elb_reportamendment where origid=" + glob_selected_request;
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+		hideform = true;
+	}
+	
+	if(itype.equals(CLEAR_STATS))
+	{
+		sqlstm = "update elb_reportamendment set status='NEW',donedate=null,doneby=null where origid=" + glob_selected_request;
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+	}
+
+	} // else if(glob_selected_request.equals(""))
+
+	if(refresh)
+	{
+		loadReportAmendments();
+		if(hideform) request_form.setVisible(false); 
+	}
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="checklist_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+<grid width="400px">
+<rows>
+	<row>
+		<label value="Start date" style="font-size:9px" />
+		<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+		<label value="End date" style="font-size:9px" />
+		<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+	</row>
+	<row spans=",,2">
+		<label value="Search" style="font-size:9px" />
+		<textbox id="searhtxt_tb" width="99%" style="font-size:9px" />
+		<button label="Load" style="font-size:9px" onClick="loadReportAmendments()" />
+	</row>
+</rows>
+</grid>
+
+<groupbox mold="3d">
+	<hbox>
+		<button id="${NEWREQ_BTN}" label="New amendment request" style="font-size:9px" onClick="doFunc(self)" />
+		<button id="${COMPLETEREQ_BTN}" label="Complete/done" style="font-size:9px" onClick="doFunc(self)" />
+		<button id="${EXPORT_BTN}" label="Export checklist" style="font-size:9px" onClick="doFunc(self)" />
+		<separator width="20px" />
+		<button id="${CANCELREQ_BTN}" label="Cancel request" style="font-size:9px" onClick="doFunc(self)" />
+		
+		<div style="background:#ef2929;padding:2px" id="adminstuff" visible="false">
+			<button id="${CLEAR_STATS}" label="Clear stats" style="font-size:9px" onClick="doFunc(self)" />
+			<button id="${DELETE_REQ}" label="DELETE" style="font-size:9px" onClick="doFunc(self)" />
+		</div>
+		
+	</hbox>
+</groupbox>
+
+</hbox>
+
+<separator height="3px" />
+
+<hbox>
+<div id="repamds_holder" width="800px" />
+
+<grid width="380px" id="request_form" visible="false" >
+	<rows>
+		<row>
+			<label value="Request #" />
+			<label id="r_origid" />
+			<label value="Dated" style="font-size:9px" />
+			<label id="r_datecreated" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Folder" style="font-size:9px" />
+			<hbox>
+				<textbox id="r_folderno_str" style="font-size:9px" />
+				<button id="${FOLDERREFRESH_BTN}" label="RLD" style="font-size:9px" onClick="doFunc(self)" />
+			</hbox>
+			<label value="AR_CODE" style="font-size:9px" />
+			<label id="r_ar_code" style="font-size:9px" />
+		</row>
+		<row spans="1,3">
+			<label value="Customer" style="font-size:9px" />
+			<label id="r_customer_name" style="font-size:9px" />
+		</row>
+		<row spans="1,3">
+			<label value="Request type" style="font-size:9px" />
+			<listbox id="r_req_type" mold="select" style="font-size:9px" />
+		</row>
+		<row spans="4">
+			<vbox>
+				<label value="Request description" style="font-size:9px" />
+				<textbox id="r_notes" multiline="true" style="font-size:9px" width="250px" height="100px" />
+			</vbox>
+		</row>
+		<row spans="4">
+			<button id="${UPDATEREQ_BTN}" label="Update request" style="font-size:9px" onClick="doFunc(self)" />
+		</row>
+		<row spans="4">
+		<label style="font-size:9px">
+		(After you have completed any report amendments, do upload a copy of the amended report to the job-folder for
+		future reference)
+		</label>
+		
+		</row>
+	</rows>
+</grid>
+
+</hbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+luhand.populateListbox_ByLookup(r_req_type, "REP_AMEND_TYPE",2);
+
+if(useraccessobj.accesslevel >= 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

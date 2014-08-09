@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="print_quotation_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : Print quotation
+Written by : Victor Wong
+
+*NOTES*
+14/11/2011: modified to use birtURL() instead of the hardcoded one.
+28/02/2012: print quote with version
+*/
+import org.victor.*;
+guihand = new GuiFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_quoteid = Executions.getCurrent().getParameter("qid");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+	thesrc = birtURL() + BIRT_QUOTETEMPLATE_VERSION + "&elbquoteid=" + param_quoteid;
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_quotation_box" width="800px" height="600px" title="Print Quotation" position="center"
+mode="overlapped" border="normal" closable="true" sizable="true">
+<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<separator height="3px" />
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

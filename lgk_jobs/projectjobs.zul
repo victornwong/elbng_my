@@ -1,0 +1,1105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="projectjobs_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/jobproject_funcs.zs" />
+<zscript src="../lgkglobal/jobcostingtree.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Project and Jobs costing sheet
+Written by: Victor Wong
+
+**NOTES**
+
+JobCode.newfield1 = customer AR-code
+
+*/
+
+WHICHDB = ASMA_DB; // set default DB id for this module. refer to lgk_sqlfuncs .. openTheDatabase()
+
+TREE_PARENT_NAME = "JOBS";
+JOBCODE_PREFIX = "ASJ";
+
+String[] JOBROLES = { "MANAGER", "COORDINATOR", "CONSULTANT", "ENGINEER", "DRAFTING", "TECHNICIAN", "GENERAL SUPPORT" };
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+lastsearchjobs_type = 2;
+
+selected_jobcode_id = "";
+selected_job_code = "";
+selected_job_customer = "";
+selected_job_person_id = "";
+
+selected_jobtree_codeid = "";
+jobtree_parent = "";
+jobtree_parent_id = "";
+jobtree_sub_id = "";
+
+DecimalFormat nf = new DecimalFormat("0.00");
+
+String makeJobCode_ID(String iwhat)
+{
+	return JOBCODE_PREFIX + iwhat;
+}
+
+// Show job category dropdown - can be used in other mods
+void populateJobCat_dropdown(Div iwhat)
+{
+	Object[] jobcat_lb_headers = {
+	new dblb_HeaderObj("desc",true,"description",1),
+	new dblb_HeaderObj("code",false,"code",1),
+	};
+
+	sql = openTheDatabase(WHICHDB);
+	if(sql == null) return;
+	sqlstm = "select code,description from tbljobcategory order by description";
+	Listbox newlb = makeVWListbox_onDB(iwhat,jobcat_lb_headers,"jb_category",1,sql,sqlstm);
+	sql.close();
+	newlb.setStyle("font-size:9px");
+	newlb.setMold("select");
+	newlb.setSelectedIndex(0);
+}
+
+void clearJobInputs_clicker()
+{
+	selected_jobcode_id = ""; // reset
+	selected_job_code = "";
+	selected_job_customer = "";
+	selected_job_person_id = "";
+
+	selected_jobtree_codeid = 0;
+	jobtree_parent = "";
+	jobtree_parent_id = "";
+	jobtree_sub_id = "";
+
+	jb_custname.setValue("");
+	jb_newfield1.setValue("");
+	jb_jobdescription.setValue("");
+	jb_estexpense.setValue("0");
+	jb_estrevenue.setValue("0");
+	jb_category.setSelectedIndex(0);
+	jobnewupdate_btn.setLabel("New..");
+
+	jobmetadata_lbl.setLabel("Job Metadata");
+	jobcosting_label.setLabel("Job Costing");
+
+	newupdatepeople_btn.setLabel("New person");
+
+	setTodayDatebox(jb_stdate);
+	setTodayDatebox(jb_enddate);
+
+	// hide other groupboxes
+	jobcost_gb.setVisible(false);
+	jobdocs_gb.setVisible(false);
+	people_gb.setVisible(false);
+}
+
+// onSelect event for showProjectPeople()
+class projpeople_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_job_person_id = getListcellItemLabel(selitem,0);
+
+		usern = getListcellItemLabel(selitem,1);
+		role = getListcellItemLabel(selitem,2);
+		fulln = getListcellItemLabel(selitem,3);
+
+		// show job person metadata
+		jp_username.setValue(usern);
+		jp_fullname.setValue(fulln);
+		matchListboxItems(jp_jobrole,role);
+
+		newupdatepeople_btn.setLabel("Update..");
+	}
+}
+
+
+// 07/05/2011: show people linked to project/job
+void showProjectPeople(String ijobcode)
+{
+//selected_job_person_id
+Object[] jbpeople_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Username",true),
+	new listboxHeaderObj("Role",true),
+	new listboxHeaderObj("Fullname",false),
+	};
+
+	if(ijobcode.equals("")) return;
+
+	Listbox newlb = makeVWListbox(people_holder,jbpeople_headers,"jobpeople_lb",5);
+
+	sqlstm = "select origid,username,fullname,jobrole from job_people where jobcode='" + ijobcode + "'";
+	sql = openTheDatabase(WHICHDB);
+	if(sql == null) return;
+	jobpeps = sql.rows(sqlstm);
+	sql.close();
+
+	if(jobpeps.size() == 0) return;
+	if(jobpeps.size() > 5) newlb.setRows(8);
+	newlb.addEventListener("onSelect", new projpeople_Listener());
+
+	for(dpi : jobpeps)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+
+		usern = (dpi.get("username").equals("")) ? "---" : dpi.get("username");
+		role = (dpi.get("jobrole").equals("")) ? "---" : dpi.get("jobrole");
+
+		kabom.add(usern);
+		kabom.add(role);
+		kabom.add(dpi.get("fullname"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void showJobMetadata()
+{
+	if(selected_jobcode_id.equals("")) return;
+	
+	jobrec = getJobCode_Rec(selected_jobcode_id, WHICHDB);
+	if(jobrec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve job metadata..");
+		return;
+	}
+	
+	jb_jobcode.setValue(checkNullString(jobrec.get("jobcode")));
+
+	jb_custname.setValue(checkNullString(jobrec.get("CustName")));
+	jb_newfield1.setValue(checkNullString(jobrec.get("NewField1")));
+
+	stdate = jobrec.get("StDate");
+	if(stdate != null) jb_stdate.setValue(stdate);
+
+	eddate = jobrec.get("EndDate");
+	if(eddate != null) jb_enddate.setValue(eddate);
+
+	jb_jobdescription.setValue(checkNullString(jobrec.get("Jobdescription")));
+
+	estexp = (jobrec.get("EstExpense") == null) ? "0" : nf.format(jobrec.get("EstExpense"));
+	jb_estexpense.setValue(estexp);
+
+	estrev = (jobrec.get("EstRevenue") == null) ? "0" : nf.format(jobrec.get("EstRevenue"));
+	jb_estrevenue.setValue(estrev);
+
+	if(jobrec.get("Category") == null )
+		jb_category.setSelectedIndex(0);
+	else
+		matchListboxItemsColumn(jb_category,jobrec.get("Category"),1);
+
+	jobmetadata_lbl.setLabel("Job Metadata : " + selected_job_code + " : " + selected_job_customer);
+	jobnewupdate_btn.setLabel("Update.."); // change button label
+
+	// job-tree check if exist, if not, insert one to display properly
+	jtrec = getLookup_Rec(selected_job_code, WHICHDB);
+	// job-tree for job-code doesnt exist, make one
+	if(jtrec == null)
+	{
+		if(!insertBlankLookupParent(selected_job_code,TREE_PARENT_NAME, WHICHDB)) // jobcostingree.zs
+		{
+			showMessageBox("[ERROR] Cannot create job-costing data tree!!!");
+			return;
+		}
+		wotrec = getLookup_Rec(selected_job_code, WHICHDB);
+		jtrec = wotrec;
+	}
+
+	jobtree_parent_id = jtrec.get("idlookups").toString();
+
+	jobtree_parent = selected_job_code;
+	dpInputBoxes.plb_id = jobtree_parent_id; // store job-code-id as ref later in refreshing jobcosting tree
+	
+	// now, show the job-costing tree
+	jobcosting_tree.setRows(15);
+	showLookupTree(jobtree_parent_id,jobcosting_tree,WHICHDB);
+	
+	jobcosting_label.setLabel("Job Costing: " + selected_job_code);
+	
+	// the linking documents
+	showDocumentsList(selected_job_code);
+
+	// show people linked to job/project
+	showProjectPeople(selected_job_code);
+}
+
+// onSelect for searchJobs_clicker()
+class jobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_jobcode_id = getListcellItemLabel(selitem,0);
+		selected_job_code = getListcellItemLabel(selitem,1);
+		selected_job_customer = getListcellItemLabel(selitem,2);
+		showJobMetadata();
+
+		jobcost_gb.setVisible(true); // show the other groupboxes
+		jobdocs_gb.setVisible(true);
+		people_gb.setVisible(true);
+	}
+}
+
+void searchJobs_clicker(int itype)
+{
+Object[] jobs_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("Job.Code",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Job.Desc",true),
+	new listboxHeaderObj("Start.Date",true),
+	new listboxHeaderObj("End.Date",true),
+	new listboxHeaderObj("Est.Expense",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Job.Cat",true),
+	};
+
+	lastsearchjobs_type = itype;
+	srchstr = replaceSingleQuotes(projob_search_tb.getValue());
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+
+	Listbox newlb = makeVWListbox(jobs_holder,jobs_headers,"jobs_lb",5);
+
+	sqlstm = "select top 100 id,jobcode,jobdescription,custname,stdate,enddate,estexpense,category," + 
+	"status,newfield1 from jobcode where ";
+
+	wherestr = "jobcode like '%" + srchstr + "%' or custname like '%" + srchstr + 
+	"%' or jobdescription like '%" + srchstr + "%' or newfield1 like '%" + srchstr + "%'";
+
+	if(itype == 2) wherestr = "entrydate between '" + sdate + "' and '" + edate + "'";
+
+	sqlstm += wherestr + " order by id";
+
+	sql = openTheDatabase(WHICHDB);
+	if(sql == null) return;
+	jobrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(jobrecs.size() == 0) return;
+	if(jobrecs.size() > 5) newlb.setRows(12);
+	newlb.addEventListener("onSelect", new jobslb_Listener());
+
+	for(dpi : jobrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+
+		jbcode = (dpi.get("jobcode") == null) ? makeJobCode_ID(dpi.get("id")) : dpi.get("jobcode");
+		kabom.add(jbcode);
+
+		kabom.add(checkNullString_RetWat(dpi.get("custname"),"---"));
+		kabom.add(checkNullString_RetWat(dpi.get("jobdescription"),"---"));
+
+		stdate = (dpi.get("stdate") == null) ? "---" : dpi.get("stdate").toString().substring(0,10);
+		enddt = (dpi.get("enddate") == null) ? "---" : dpi.get("enddate").toString().substring(0,10);
+
+		kabom.add(stdate);
+		kabom.add(enddt);
+
+		estexp = (dpi.get("estexpense") == null) ? "---" : nf.format(dpi.get("estexpense"));
+		kabom.add(estexp);
+
+		kabom.add(checkNullString_RetWat(dpi.get("status"),"---"));
+		kabom.add(checkNullString_RetWat(dpi.get("category"),"---"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Update or insert new jobcode metadata
+void updatenewJob()
+{
+	tjobcode = replaceSingleQuotes(jb_jobcode.getValue());
+	custname = replaceSingleQuotes(jb_custname.getValue());
+	if(custname.equals("") || tjobcode.equals("")) { showMessageBox("Customer name and jobcode needed.."); return; }
+
+	arcode_newfield1 = replaceSingleQuotes(jb_newfield1.getValue());
+
+	jobstart = getDateFromDatebox(jb_stdate);
+	jobend = getDateFromDatebox(jb_enddate);
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	jobdesc = replaceSingleQuotes(jb_jobdescription.getValue());
+
+	estexpense = replaceSingleQuotes(jb_estexpense.getValue());
+	estrevenue = replaceSingleQuotes(jb_estrevenue.getValue());
+
+	selitem = jb_category.getSelectedItem();
+	jobcategory = getListcellItemLabel(selitem,1);
+
+	sqlstm = "insert into jobcode (jobcode,CustName,NewField1,StDate,EndDate,EstExpense,EstRevenue,Category,jobdescription,entrydate) values " +
+	"('" + tjobcode + "','" + custname + "','" + arcode_newfield1 + "','" + jobstart + "','" + jobend + "'," + 
+	estexpense + "," + estrevenue + ",'" + jobcategory + "','" + jobdesc + "','" + todaydate + "')";
+
+	sql = openTheDatabase(WHICHDB);
+	if(sql == NULL) { showMessageBox("[ERROR] Cannot access database.. call administrator"); return; }
+
+	insertflag = true;
+
+	if(!selected_jobcode_id.equals(""))
+	{
+		sqlstm = "update jobcode set jobcode='" + tjobcode + "',CustName='" + custname + "',NewField1='" + arcode_newfield1 + "'," +
+		"StDate='" + jobstart + "',EndDate='" + jobend + "',EstExpense=" + estexpense + ",EstRevenue=" + estrevenue +
+		",Category='" + jobcategory + "',jobdescription='" + jobdesc + "' where id=" + selected_jobcode_id;
+
+		insertflag = false;
+	}
+	else
+	{
+		// if it's a new job .. check if jobcode exist
+		chkexist = "select jobcode from jobcode where jobcode='" + tjobcode + "'";
+		exrec = sql.firstRow(chkexist);
+		if(exrec != null)
+		{
+			sql.close();
+			showMessageBox("Jobcode exist, cannot create new job..");
+			return;
+		}
+	}
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	searchJobs_clicker(lastsearchjobs_type); // refresh
+
+	if(insertflag) clearJobInputs_clicker(); // if it's an insert, clear the fields .. user has reselect from list
+}
+
+// Job-costing tree handling funcs
+void showJobCostDetails(Tree wTree)
+{
+	selitem = wTree.getSelectedItem();
+	lookupid = getTreecellItemLabel(selitem,3);
+	if(lookupid == null) return;
+	therec = getLookup_Rec_byID(lookupid, WHICHDB);
+
+	if(therec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve job-costing details.. contact administrator");
+		return;
+	}
+
+	selected_jobtree_codeid = therec.get("idlookups").toString(); // for use later
+	dpInputBoxes.idlookups = therec.get("idlookups").intValue();
+
+	cost_name.setValue(therec.get("name"));
+	costdescription_zzdisptext.setValue(therec.get("disptext"));
+
+	iexpired = therec.get("expired");
+	wexpi = false;
+	if(iexpired == 1) wexpi = true;
+
+	costcode_expired.setChecked(wexpi);
+
+	zzval = 0;
+	if(therec.get("intval") != null) zzval = (int)therec.get("intval");
+	code_intval.setValue(zzval);
+
+	estcost_value1.setValue(therec.get("value1"));
+	projectmanager_value2.setValue(therec.get("value2"));
+
+	projman_email_value3.setValue(therec.get("value3"));
+	cost_glcode_value4.setValue(therec.get("value4"));
+//misc_value5.setValue(therec.get("value5"));
+
+	jobtree_parent = therec.get("name");
+
+} // end of showJobCostDetails()
+
+void verifyDelete(Tree itypetree, lookupInputs winputs)
+{
+    if (Messagebox.show("This is a hard-delete, you know what you are doing right?", "Delete",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) == Messagebox.YES)
+	{
+		deleteLookupItem(itypetree,winputs,WHICHDB);
+		winputs.clearValues();
+	}
+}
+
+// Insert to job-costing tree trunk or branch: 1=trunk
+void insertMainOrChild(int itype)
+{
+	if(itype == 1)
+		insertLookupItem(jobcosting_tree,dpInputBoxes,WHICHDB,jobtree_parent_id,"0");
+	else
+	{
+		if(selected_jobtree_codeid.equals("")) return;
+		insertLookupItem(jobcosting_tree,dpInputBoxes,WHICHDB,jobtree_parent_id,selected_jobtree_codeid);
+	}
+}
+
+// ENDOF Job-costing tree handling funcs
+
+//--- linking documents related funcs
+void doViewDoculinkPopup()
+{
+	// make sure something to look-for in table - 20/10/2010: customize this for other linking-id
+	if(selected_job_code.equals("")) return;
+
+	documentLinkProp.global_eq_origid = selected_job_code;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+// List all documents linked to jobcode
+void showDocumentsList(String selected_id)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + selected_id;
+
+	ds_sql = openDocumentStorage(WHICHDB);
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+}
+
+void viewDocument()
+{
+	if(!check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid + "&zdb=" + WHICHDB.toString();
+	uniqid = makeRandomId("vd");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+//--- ENDOF linking documents related
+
+
+// Sum all main-children estimated cost and dump into est.expenses field
+void updateJobEstimatedCost()
+{
+	if(selected_jobcode_id.equals("")) return;
+	sql = openTheDatabase(WHICHDB);
+	if(sql == NULL) { showMessageBox("[ERROR] Cannot access database.."); return; }
+
+	// find all main-children to job from jobcosting_tree
+	sqlstm = "select value1 from jobcosting_tree where myparentid=" + jobtree_parent_id;
+	c_estcosts = sql.rows(sqlstm);
+	sql.close();
+	if(c_estcosts.size() == 0) return;
+
+	esttotal = 0.0;
+
+	for(dpi : c_estcosts)
+	{
+		smval = Float.parseFloat(dpi.get("value1"));
+		esttotal += smval;
+	}
+
+	jb_estexpense.setValue(nf.format(esttotal));
+}
+
+void clearProjectPeople()
+{
+	selected_job_person_id = "";
+	jp_username.setValue("");
+	jp_fullname.setValue("");
+
+	newupdatepeople_btn.setLabel("New person");
+}
+
+void newProjectPeople()
+{
+	if(selected_job_code.equals("")) return;
+
+	username = jp_username.getValue();
+	fullname = jp_fullname.getValue();
+	jobrole = jp_jobrole.getSelectedItem().getLabel();
+
+	todat = getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into job_people (username,fullname,designation,jobcode,dateadded," + 
+	"jobrole,email,cellphone) " +
+	"values ('','','','" + selected_job_code + "','" + todat + "'," + 
+	"'','','')";
+
+	if(!selected_job_person_id.equals(""))
+	sqlstm = "update job_people set username='" + username + "'," + 
+	"fullname='" + fullname + "',jobrole='" + jobrole + "'," + 
+	"dateadded='" + todat + "' where origid=" + selected_job_person_id;
+
+	sql = openTheDatabase(WHICHDB);
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showProjectPeople(selected_job_code); // refresh
+}
+
+void removeProjectPeople()
+{
+	if(selected_job_person_id.equals("")) return;
+
+    if (Messagebox.show("Remove person from job/project.. are you sure?", "Remove",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) == Messagebox.NO) return;
+
+	sqlstm = "delete from job_people where origid=" + selected_job_person_id;		
+	sql = openTheDatabase(WHICHDB);
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showProjectPeople(selected_job_code); // refresh
+}
+
+// Double-clicker for userPickupPopulate
+class userPicker_DClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		pickUserPopup.close();
+
+		// customize this for other mods
+		if(!selected_job_code.equals(""))
+		{
+			selitem = usernames_lb.getSelectedItem();
+			usern = getListcellItemLabel(selitem,0);
+			fulln = getListcellItemLabel(selitem,1);
+			
+			// check for dups username
+			if(ExistInListbox(jobpeople_lb,usern,1))
+			{
+				showMessageBox("Username exists in job, cannot have dups");
+				return;
+			}
+
+			jp_username.setValue(usern);
+			jp_fullname.setValue(fulln);
+		}
+	}
+}
+
+void userPickerPopulate()
+{
+//userpicker_holder
+	Object[] sm_lb_headers = {
+	new dblb_HeaderObj("Username",true,"username",1),
+	new dblb_HeaderObj("Full.Uname",true,"fullname",1),
+	};
+
+	sql = openTheDatabase(WHICHDB);
+    if(sql == NULL) return;
+	sqlstm = "select username,fullname from portaluser order by username";
+	Listbox newlb = makeVWListbox_onDB(userpicker_holder,sm_lb_headers,"usernames_lb",10,sql,sqlstm);
+	sql.close();
+	newlb.setStyle("font-size:9px");
+
+	dc_obj = new userPicker_DClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+void validatePickUser()
+{
+	if(selected_job_person_id.equals("")) return;
+	if(selected_job_code.equals("")) return;
+	pickUserPopup.open(pickusername_btn);
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<!-- document management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="lgkglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of document management popup -->
+
+<popup id="pickUserPopup">
+<groupbox mold="3d" width="300px">
+	<div id="userpicker_holder" />
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="projectjobs_panel" title="Projects - Jobs (development version)" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<!-- <button label="X Close" style="font-size:8px" onClick="globalCloseWindow(myincludeid)" /> -->
+<separator height="3px" />
+
+<groupbox mold="3d" style="padding:3px">
+	<caption label="Projects/Jobs List" />
+	<hbox>
+		<label value="Project/Job" style="font-size:9px" />
+		<textbox id="projob_search_tb" style="font-size:9px" width="180px" value="j00001" />
+		<button label="Search" style="font-size:9px" onClick="searchJobs_clicker(1)" />
+		
+		<label value="Start date" style="font-size:9px" />
+		<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+		<label value="End date" style="font-size:9px" />
+		<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+		<button label="Search by date" style="font-size:9px" onClick="searchJobs_clicker(2)" />
+
+		<label value="(Max. 100 recs per click)" style="font-size:9px" />
+		
+	</hbox>
+	<separator height="3px" />
+	<div id="jobs_holder" />
+</groupbox>
+
+<hbox>
+
+<!-- vbox to hold job-metadata and job-documents -->
+<vbox>
+<groupbox mold="3d" width="600px" style="padding:3px">
+	<caption id="jobmetadata_lbl" label="Job Metadata" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+		<row>
+			<label value="Job.Code" style="font-size:9px" />
+			<textbox id="jb_jobcode" style="font-size:9px" width="99%" />
+			<label value="Job.Category" style="font-size:9px" />
+			<div id="jobcat_holder" />
+		</row>
+		<row>
+			<label value="Customer" style="font-size:9px" />
+			<textbox id="jb_custname" width="200px" style="font-size:9px" />
+			<label value="AR.Code" style="font-size:9px" />
+			<hbox>
+				<textbox id="jb_newfield1" style="font-size:9px" />
+				<button id="jbpickcust_btn" label="Pick customer" style="font-size:9px" onClick="selectcustomer_popup.open(cfind_holder)" />
+				<label id="cfind_holder" />
+			</hbox>
+		</row>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="jb_stdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="jb_enddate" format="yyyy-MM-dd" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Job.Description" style="font-size:9px" />
+			<textbox id="jb_jobdescription" multiline="true" width="98%" height="60px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Est.Expenses RM" style="font-size:9px" />
+			<textbox id="jb_estexpense" style="font-size:9px" value="0.00" />
+			<label value="Est.Revenue RM" style="font-size:9px" />
+			<textbox id="jb_estrevenue" style="font-size:9px" value="0.00" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button id="jobclearfields_btn" label="Clear fields" style="font-size:9px" onClick="clearJobInputs_clicker()" />
+		<button id="jobnewupdate_btn" label="New.." style="font-size:9px" onClick="updatenewJob()" />
+		<button id="jobcommit_btn" label="Commit job" style="font-size:9px" />
+		<button id="jobdelete_btn" label="Delete job" style="font-size:9px" />
+	</hbox>
+</groupbox>
+
+<groupbox id="people_gb" mold="3d" width="600px" visible="false">
+<caption label="People" />
+<hbox>
+<div id="people_holder" width="300px" />
+
+<vbox>
+<div width="280px">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+	<row>
+		<label value="Username" style="font-size:9px" />
+		<label id="jp_username" style="font-size:9px" />
+		<button id="pickusername_btn" label="Pick user" style="font-size:9px" onClick="validatePickUser()" />
+	</row>
+	<row spans=",2">
+		<label value="Full name" style="font-size:9px" />
+		<label id="jp_fullname" style="font-size:9px" />
+	</row>
+	<row spans=",2">
+		<label value="Job role" style="font-size:9px" />
+		<listbox id="jp_jobrole" mold="select" rows="1" style="font-size:9px" />
+		<zscript>
+		populateDropdownListbox(jp_jobrole,JOBROLES);
+		</zscript>
+	</row>
+	</rows>
+</grid>
+</div>
+<hbox>
+	<button label="Clear" style="font-size:9px" onClick="clearProjectPeople()" />
+	<button id="newupdatepeople_btn" label="New person" style="font-size:9px" onClick="newProjectPeople()" />
+	<button label="Remove" style="font-size:9px" onClick="removeProjectPeople()" />
+</hbox>
+</vbox>
+
+</hbox>
+</groupbox>
+
+
+<groupbox id="jobdocs_gb" mold="3d" width="600px" visible="false">
+	<caption label="Job Documents" />
+	<div id="doculist_holder" />
+	<separator height="3px" />
+	<hbox>
+		<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+		<button id="viewdoculinks_btn" label="Upload document" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+	</hbox>
+</groupbox>
+
+</vbox>
+<!-- ENDOF vbox to hold job-metadata and job-documents -->
+
+<groupbox id="jobcost_gb" mold="3d" style="padding:3px" visible="false">
+<caption id="jobcosting_label" label="Job Costing" />
+<textbox id="hiddenbox" visible="false" />
+<hbox>
+	<button label="Update estimation for job" style="font-size:9px" onClick="updateJobEstimatedCost()" />
+</hbox>
+<separator height="3px" />
+
+<tree id="jobcosting_tree" zclass="z-dottree" rows="5" onSelect="showJobCostDetails(jobcosting_tree)" >
+<treecols>
+	<treecol label="Breakdown" />
+	<treecol label="Description" />
+	<treecol label="Est.Cost" />
+</treecols>
+</tree>
+<separator height="3px" />
+<groupbox mold="3d">
+	<caption label="Cost-breakdown Metadata" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+		<row>
+			<label value="Cost code" style="font-size:9px" />
+			<textbox id="cost_name" style="font-size:9px" width="98%" />
+			<label value="Est.Cost RM" style="font-size:9px" />
+			<textbox id="estcost_value1" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Description" style="font-size:9px" />
+			<textbox id="costdescription_zzdisptext" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Project manager" style="font-size:9px" />
+			<textbox id="projectmanager_value2" style="font-size:9px" width="98%" />
+			<label value="Email" style="font-size:9px" />
+			<textbox id="projman_email_value3" style="font-size:9px" width="98%" />
+		</row>
+		<row>
+			<label value="GL Code" style="font-size:9px" />
+			<hbox>
+				<textbox id="cost_glcode_value4" style="font-size:9px" width="98%" />
+				<button label="Pick code" style="font-size:9px" />
+			</hbox>
+			<label value="Whatever" style="font-size:9px" />
+			<textbox id="misc_value5" style="font-size:9px" width="98%" />
+		</row>
+		<row>
+			<label value="Expired" style="font-size:9px" />
+			<checkbox id="costcode_expired" />
+			<label value="Code Integer" style="font-size:9px" />
+			<intbox id="code_intval" style="font-size:9px" />
+		</row>
+		</rows>
+<zscript>
+<![CDATA[
+// def the input-boxes for cost-tree items
+dpInputBoxes = new lookupInputs(cost_name,costdescription_zzdisptext,costcode_expired,code_intval,
+estcost_value1,projectmanager_value2,projman_email_value3, cost_glcode_value4, misc_value5,
+hiddenbox, hiddenbox, hiddenbox,
+"JOBS",jobcosting_tree);
+]]>
+</zscript>
+		
+	</grid>
+	<separator height="3px" />
+	<hbox>
+        <button label="Clear" style="font-size:9px" onClick="dpInputBoxes.clearValues()" />
+        <button label="Insert main-cost" style="font-size:9px" onClick="insertMainOrChild(1)" />
+        <button label="Insert sub-cost" style="font-size:9px" onClick="insertMainOrChild(2)" />
+        <button label="Update" style="font-size:9px" onClick="updateLookupItem(jobcosting_tree,dpInputBoxes,WHICHDB)" />
+        <button label="Delete" style="font-size:9px" onClick="verifyDelete(jobcosting_tree,dpInputBoxes)" />
+    </hbox>
+	</groupbox>
+</groupbox>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+setTodayDatebox(jb_stdate);
+setTodayDatebox(jb_enddate);
+
+populateJobCat_dropdown(jobcat_holder);
+userPickerPopulate(); // populate user picker popup
+
+documentLinkProp.document_idprefix = "DOCS";
+documentLinkProp.doc_whichdb = WHICHDB;
+lgk_setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+// ---- Customer search popup stuff ---- can be used in other modules
+void showCustomerInfo(String iarcode)
+{
+	comprec = lgk_getCompanyRecord(iarcode);
+	if(comprec == null) return;
+
+	cfind_company_lbl.setValue(checkNullString_RetWat(comprec.get("customer_name"),"---"));
+	cfind_address1_lbl.setValue(checkNullString_RetWat(comprec.get("address1"),"---"));
+	cfind_address2_lbl.setValue(checkNullString_RetWat(comprec.get("address2"),"---"));
+	cfind_address3_lbl.setValue(checkNullString_RetWat(comprec.get("address3"),"---"));
+	//cfind_address4_lbl.setValue(checkNullString_RetWat(comprec.get("Address4"),"---"));
+	cfind_tel_lbl.setValue(checkNullString_RetWat(comprec.get("telephone_no"),"---"));
+	cfind_fax_lbl.setValue(checkNullString_RetWat(comprec.get("fax_no"),"---"));
+	cfind_contact_lbl.setValue(checkNullString_RetWat(comprec.get("contact_person1"),"---"));
+	cfind_email_lbl.setValue(checkNullString_RetWat(comprec.get("E_mail"),"---"));
+
+	// if(iarcode.equals("BLACKLIST")) custinfo_gb.setStyle("background:#FF3333");
+}
+
+class searchcustomersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		tarcode = getListcellItemLabel(selitem,0);
+		showCustomerInfo(tarcode);
+	}
+}
+
+// onDoubleClick listener for searchCustomers()
+class searchcustLBDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = customers_lb.getSelectedItem();
+		sarcode = getListcellItemLabel(selitem,0);
+		if(sarcode.equals("BLACKLIST")) return;
+
+		comprec = lgk_getCompanyRecord(sarcode);
+		if(comprec != null)
+		{
+			// customize this part if need to use in other module - where to show the selected client info
+			// 25/04/2011: customized for ASMA job-project setup module
+			jb_newfield1.setValue(comprec.get("ar_code"));
+			jb_custname.setValue(comprec.get("customer_name"));
+			
+			//qt_ar_code.setValue(comprec.get("ar_code"));
+
+			// codes taken from dropAR_Code()
+			// populate fields
+			/*
+			qt_customer_name.setValue(comprec.get("customer_name"));
+			qt_contact_person1.setValue(comprec.get("contact_person1"));
+			qt_address1.setValue(comprec.get("address1"));
+			qt_address2.setValue(comprec.get("address2") + comprec.get("address3"));
+			qt_telephone.setValue(comprec.get("telephone_no"));
+			qt_fax.setValue(comprec.get("fax_no"));
+			qt_email.setValue(comprec.get("E_mail"));
+
+			//qt_exchangerate.setValue(comprec.get("
+			tterms = comprec.get("credit_period");
+			ssman = comprec.get("Salesman_code");
+
+			if(tterms != null) matchListboxItems(qt_terms,tterms);
+			if(ssman != null) matchListboxItems(qt_salesperson,ssman);
+
+			matchListboxItems(qt_curcode,comprec.get("CurCode"));
+			*/
+		}
+		
+		selectcustomer_popup.close();
+	}
+}
+
+void searchCustomers()
+{
+Object[] clients_lb_headers = {
+	new listboxHeaderObj("AR_CODE",true),
+	new listboxHeaderObj("Company",true),
+	};
+
+	schtext = replaceSingleQuotes(cust_search_tb.getValue());
+	if(schtext.equals("")) return;
+
+	Listbox newlb = makeVWListbox(foundcustomer_holder, clients_lb_headers, "customers_lb", 5);
+
+	sql = lgk_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstm = "select top 50 ar_code,customer_name,credit_period from customer where " +
+	"ar_code like '%" + schtext + "%' or " +
+	"customer_name like '%" + schtext + "%' or " +
+	"address1 like '%" + schtext + "%' or " +
+	"address2 like '%" + schtext + "%' or " +
+	"address3 like '%" + schtext + "%' or " +
+	"address4 like '%" + schtext + "%' or " +
+	"contact_person1 like '%" + schtext + "%' " +
+	"order by customer_name";
+
+	custrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(custrecs.size() == 0) return;
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new searchcustomersLB_Listener());
+
+	for(dpi : custrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		credp = dpi.get("credit_period");
+		arcode = dpi.get("ar_code");
+		if(credp.equals("BLACKLIST")) arcode = "BLACKLIST";
+		kabom.add(arcode);
+		kabom.add(dpi.get("customer_name"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	dc_obj = new searchcustLBDoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+// ---- ENDOF Customer search popup stuff ----
+
+
+]]>
+</zscript>
+</zk>

@@ -1,0 +1,856 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="equipment_browser_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/als_lookuptree.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title: Equipment Browser, the fun part, show imagemap, clickable, search equipment and shit like that
+Developers : Victor
+
+**NOTES**
+
+8/7/2010: Knockoff from equipmentmanager.zul
+
+8/7/2010: add new codes to play around with imagemap - uses Equipments.userdef1 to link to Mapper_Pos.origid
+Mapper_Pos is play-around in locationmanager.zul - these will then be used in the equipments-browser-locator mod
+
+*/
+
+/*
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import java.util.ArrayList;
+import java.util.List;
+import java.sql.ResultSet;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+*/
+
+glob_mysoftcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, QCOFFICER_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+global_eq_location = "";
+global_eq_locdescription = "";
+
+// String global_eq_origid = "";
+// String global_doculink_origid = "";
+
+String global_location_tree = "";
+
+String[] equip_category = { "Analytical instrument" , "Lab-Site equipment", "Supporting equipment" };
+String[] equip_type = { "Measurement" , "Prep" , "Digestion", "Filteration", "Misc" };
+String[] equip_status = { "Active", "Retired", "Repairing", "Damaged" };
+
+// imagemap_div
+// remember to update equipmentmanager.zul, uses idiv instead of hardcoded
+void makeImagemapThing(Div idiv, String imfn, String iparentid)
+{
+	if(idiv.getFellowIfAny("mango") != null)
+		mango.setParent(null);
+		
+	if(imfn.equals("")) return;
+
+	Imagemap kamage = new Imagemap();
+	kamage.setSrc(imfn);
+	kamage.setId("mango");
+	kamage.addEventListener("onClick", new areamap_Listener());
+	kamage.setParent(idiv);
+	
+	// lets grab 'em area for the imagemap
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "select origid,area_id,shape,coords from Mapper_Pos where parent_id='" + iparentid + "'";
+	maprecs = sql.rows(sqlst);
+	sql.close();
+	
+	if(maprecs.size() < 1) return;
+	
+	for(mpi : maprecs)
+	{
+		Area marea = new Area();
+		marea.setShape(mpi.get("shape"));
+		marea.setCoords(mpi.get("coords"));
+		areaid = mpi.get("area_id");
+		marea.setId("MAP" + mpi.get("origid").toString()); // form area-id .. chop to get origid to mapper_pos later
+		marea.setTooltiptext(areaid);
+		marea.setParent(kamage);
+	}
+}
+
+void hideButtons()
+{
+	newequip_btn.setVisible(false);
+	removeequip_btn.setVisible(false);
+}
+
+void showButtons()
+{
+	// group-access security check - accesslevel >=3 
+	if(check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, 3))
+	{
+		newequip_btn.setVisible(true);
+		removeequip_btn.setVisible(true);
+	}
+}
+
+void equip_detail_hideButtons()
+{
+	eq_updatedetails_btn.setVisible(false);
+	
+	if(documentLinkProp.refreshListbox != null)
+		documentLinkProp.refreshListbox.hideCrudButtons();
+}
+
+void equip_detail_showButtons()
+{
+	// group-access security check - accesslevel >=3 
+	if(check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, 3))
+	{
+		//eq_updatedetails_btn.setVisible(true); // 8/7/2010: not use here, maybe for admin later
+		documentLinkProp.refreshListbox.showCrudButtons();
+	}
+
+	// 15/4/2010: set only admin can access delete buttons
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+}
+
+void clearDetailsInput()
+{
+	equipname_lbl.setLabel("-");
+	tb_eq_name.setValue("");
+	
+	lb_eq_category.setSelectedIndex(0);
+	lb_eq_type.setSelectedIndex(0);
+	
+	lb_eq_status.setSelectedIndex(0);
+	tb_extranotes.setValue("");
+
+}
+
+Object[] areamapper_pos_lb_headers = {
+	new listboxHeaderObj("Area.Id",true),
+	new listboxHeaderObj("origid",true),
+};
+
+// Show all area_id assoc. with location map/pic
+//  areamap_div , global_eq_location
+void populateAreaMap_Selector()
+{
+	Listbox newlb = makeVWListbox(areamap_div, areamapper_pos_lb_headers, "areamap_pos_lb",1);
+	newlb.setMold("select");
+
+	if(global_eq_location.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "select origid,area_id from Mapper_Pos where parent_id='" + global_eq_location + "'";
+	maprecs = sql.rows(sqlst);
+	sql.close();
+
+	if(maprecs.size() < 1) return;
+
+	for(ami : maprecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(ami.get("area_id"));
+		kabom.add(ami.get("origid").toString());
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	newlb.setSelectedIndex(0);
+}
+
+class equiplistbox_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		
+		eorigid = getListcellItemLabel(lbitem, 0);
+		eqrec = getEquipmentRec(eorigid);
+		
+		if(eqrec == null) return;
+		
+		eqname = checkEmptyString(eqrec.get("EQ_name"));
+		equipname_lbl.setLabel(eqname);
+		
+		documentLinkProp.global_eq_origid = eorigid; // save eq origid into global-var
+		
+		// populate equip details input
+		tb_eq_name.setValue(eqrec.get("EQ_name"));
+		tb_extranotes.setValue(eqrec.get("extranotes"));
+
+		matchListboxItems(lb_eq_category, eqrec.get("EQ_category"));
+		matchListboxItems(lb_eq_type, eqrec.get("EQ_type"));
+		matchListboxItems(lb_eq_status, eqrec.get("EQ_status"));
+		
+		// 8/7/2010: Equipments.userdef1 = mapper_pos.origid
+		mapobj = getMapperPos_Rec(eqrec.get("userdef1"));
+		if(mapobj != null)
+		{
+			marea_id = mapobj.get("area_id");
+			
+			// If we have the area.map drop-down, match it, else no
+			if(areamap_div.getFellowIfAny("areamap_pos_lb") != null)
+				matchListboxItems(areamap_pos_lb,marea_id);
+		}
+
+		// show Equipment Details buttons
+		equip_detail_showButtons();
+
+		// show document-links - recode
+		documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+		// clear linking-document origid..
+		documentLinkProp.global_doculink_origid = "";
+
+		// 8/7/2010: play around with location and imagemap thing - equip_location_lbl
+		// NOTES: not efficient, will load the picture and others each time.. visit this section later.
+		locid = eqrec.get("location_id");
+		if(!locid.equals(""))
+		{
+			locrec = getLookup_Rec(locid); // get location rec from Lookups
+			if(locrec != null)
+			{
+				if(mapobj != null)
+				{
+					subloca = "::" + mapobj.get("area_id");
+				}
+
+				locdisptext = locrec.get("disptext");
+
+				mapfn = locrec.get("value5");
+				makeImagemapThing(fuyo_imagemap_div,mapfn,locid);
+				pixtitle_lbl.setTitle(locdisptext); // set the picture title
+
+				equip_location_lbl.setValue("Location: " + locdisptext + subloca);
+			}
+		}
+	}
+}
+
+Object[] equipments_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("EQID",true),
+	new listboxHeaderObj("Equip Name",true),
+	new listboxHeaderObj("Type",true),
+	new listboxHeaderObj("Category",true),
+	new listboxHeaderObj("Where",true),
+	new listboxHeaderObj("Status",true)
+};
+
+// Show equips at selected location - will populate a listbox
+// Tree onSelect listener
+void showEquipments(Tree wTree)
+{
+	// clear linking-document origid and listbox..
+	documentLinkProp.global_doculink_origid = "";
+
+	// makeDocumentLinks_Listbox(linkingdocs_div); 
+	// makeVWListbox(linkingdocs_div, documentLinks_lb_headers, "doculinks_lb", 5);
+
+	equip_detail_hideButtons();
+
+	itreeitm = wTree.getSelectedItem();
+	ilocation = getTreecellItemLabel(itreeitm,0);
+
+	if(ilocation.equals("")) return;
+
+	global_eq_location = ilocation; // save eq location to global var
+	
+	ilocationdesc = getTreecellItemLabel(itreeitm, 1); // get location description from tree-branch
+	equip_location_lbl.setValue("Location: " + ilocationdesc);
+	
+	// Listbox newlb = makeEquipments_Listbox(equipments_div);
+	Listbox newlb = makeVWListbox(equipments_div, equipments_lb_headers, "equips_lb", 10);
+	
+	clearDetailsInput();
+	documentLinkProp.global_eq_origid = "";
+	
+	showButtons();
+	
+	// 8/7/2010: populate area-map listbox, uses Mapper_Pos table - areamap_div
+	populateAreaMap_Selector();
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "select origid,EQ_name,EQ_type,EQ_category,EQ_status,userdef1 from Equipments where location_id='" + ilocation + "' and deleted=0";
+	eqrecs = sql.rows(sqlst);
+	sql.close();
+
+	// no equip recs, just return
+	if(eqrecs == null || eqrecs.size() == 0) return;
+
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new equiplistbox_Listener()); // onSelect listener to drill-in
+
+	for(eqsatu : eqrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		eqorigid = eqsatu.get("origid").toString();
+		kabom.add(eqorigid);
+		kabom.add(EQID_PREFIX + eqorigid); // equipment id to show to user
+		
+		eqname = trimListitemLabel(eqsatu.get("EQ_name"),18);
+		
+		kabom.add(checkEmptyString(eqname)); // checkEmptyString() in alsglobalfuncs.zs
+		
+		eqtype = trimListitemLabel(eqsatu.get("EQ_type"),10);
+		kabom.add(checkEmptyString(eqtype));
+		
+		eqcat = trimListitemLabel(eqsatu.get("EQ_category"),13);
+		kabom.add(checkEmptyString(eqcat));
+
+		manaloh = "-----";
+		mapobj = getMapperPos_Rec(eqsatu.get("userdef1"));
+		if(mapobj != null)
+		{
+			manaloh = trimListitemLabel(mapobj.get("area_id"),12);
+		}
+
+		kabom.add(manaloh);
+		kabom.add(checkEmptyString(eqsatu.get("EQ_status")));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Create a new entry in the Equipment table, make use of location -> global_eq_location .. important to keep track on things
+void newEquipment()
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	thecon = sql.getConnection();
+
+	longistm = "insert into Equipments (EQ_name,EQ_category,EQ_type,EQ_status,branch,location_id,purchased_date,retired_date," +
+	"mysoftasset_link,extranotes,deleted,department,depart_user,userdef1,userdef2,userdef3) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+	pstmt = thecon.prepareStatement(longistm);
+
+	mybranch = useraccessobj.branch;
+
+	pstmt.setString(1,"");
+	pstmt.setString(2,"");
+	pstmt.setString(3,"");
+	pstmt.setString(4,"");
+	pstmt.setString(5,mybranch);
+	pstmt.setString(6,global_eq_location);
+	pstmt.setString(7,"");
+	pstmt.setString(8,"");
+	pstmt.setInt(9,0);
+	pstmt.setString(10,"");
+	pstmt.setInt(11,0);
+	pstmt.setString(12,"");
+	pstmt.setString(13,"");
+	pstmt.setString(14,"");
+	pstmt.setString(15,"");
+	pstmt.setString(16,"");
+
+	pstmt.executeUpdate();
+	sql.close();
+	
+	// refresh equipments listbox
+	showEquipments(location_tree);
+}
+
+void removeEquipment()
+{
+	if (Messagebox.show("Remove this equipment..", "Are you sure?", 
+	Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		sqlst = "update Equipments set deleted=1 where origid=" + documentLinkProp.global_eq_origid;
+		sql.execute(sqlst);
+		sql.close();
+
+		// refresh equipments listbox
+		showEquipments(location_tree);
+		clearDetailsInput();
+		documentLinkProp.global_eq_origid = "";
+	}
+}
+
+void updateEquipmentDetails()
+{
+	if(documentLinkProp.global_eq_origid.equals("")) return;
+	if(global_eq_location.equals("")) return;
+
+	ieqname = replaceSingleQuotes(tb_eq_name.getValue());
+	ieqcategory = lb_eq_category.getSelectedItem().getLabel();
+
+	ieqtype = lb_eq_type.getSelectedItem().getLabel();
+	ieqstatus = lb_eq_status.getSelectedItem().getLabel();
+
+	ieqextranotes = replaceSingleQuotes(tb_extranotes.getValue());
+	
+	areamap_id = "";
+	
+	if(areamap_pos_lb.getItemCount() > 0)
+	{
+		selitem = areamap_pos_lb.getSelectedItem();
+		areamap_id = getListcellItemLabel(selitem,1); // get the hidden Mapper_Pos.origid
+	}
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlstat = "update Equipments set eq_name='" + ieqname + "', eq_category='" + ieqcategory + "', eq_type='" + ieqtype + "', eq_status='" + ieqstatus + "', " +
+		"extranotes='" + ieqextranotes + "', userdef1='" + areamap_id + "' where origid=" + documentLinkProp.global_eq_origid;
+		
+	sql.execute(sqlstat);
+	sql.close();
+
+	// refresh
+	showEquipments(location_tree);
+
+	clearDetailsInput();
+	documentLinkProp.global_eq_origid = "";
+}
+
+Object[] mapperpos_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Area.ID",true),
+	new listboxHeaderObj("Shape",true),
+	new listboxHeaderObj("Coords",true),
+};
+
+// Populate popup div with whatever mapper-positions stored
+// uses Mapper_Pos table
+void showMapperPositions(String imana)
+{
+	Listbox newlb = makeVWListbox(mapper_pos_div, mapperpos_lb_headers, "mapperpos_lb", 5);
+	
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select * from Mapper_Pos where parent_id='" + imana + "'";
+	mappos = sql.rows(sqlstm);
+	sql.close();
+
+	if(mappos.size() < 1) return;
+
+	//newlb.addEventListener("onSelect", new mapper_pos_Listener());
+	newlb.setRows(15);
+
+	for(mpi : mappos)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(mpi.get("origid").toString());
+		kabom.add(mpi.get("area_id"));
+		kabom.add(mpi.get("shape"));
+
+		coords = mpi.get("coords");
+		if(coords.length() > 30)
+			coords = trimListitemLabel(coords,30) + "...";
+			
+		if(coords.equals("")) coords = "----------";
+		kabom.add(coords);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Imagemap->Area onClick listener
+class areamap_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		String areaid = event.getArea();
+		if (areaid != null)
+		{
+			Area area = self.getFellow(areaid);
+			//alert(""+area.getId()+": "+area.getTooltiptext());
+			posorigid = area.getId().substring(3);
+			showEquipments_OnLocation("",posorigid,"");
+			
+			equip_location_lbl.setValue("Location: " + global_eq_locdescription + " :: " + area.getTooltiptext());
+		}
+	}
+}
+
+void viewLocationMapPicture_clicker()
+{
+	if(global_eq_location.equals("")) return;
+	locrec = getLookup_Rec(global_eq_location);
+	if(locrec != null)
+	{
+		mapfn = locrec.get("value5"); // HARDCODED: Lookups.value5 is the map/pic filename , set in locationmanager.zul
+		if(!mapfn.equals(""))
+		{
+			mapper_where_lbl.setLabel(global_eq_location);
+			//kipe = loadShowImage(mapfn);
+			//popupimage.setContent(kipe);
+			
+			makeImagemapThing(imagemap_div,mapfn,global_eq_location);
+			
+			showMapperPositions(global_eq_location);
+			viewmap_popup.open(viewmap_btn);
+		}
+		else
+		{
+			//showMessageBox("Whoops! No map/picture assigned..");
+		}
+	}
+}
+
+void showselpos()
+{
+	selitem = areamap_pos_lb.getSelectedItem();
+	me1 = getListcellItemLabel(selitem,0);
+	me2 = getListcellItemLabel(selitem,1);
+	
+	alert("me1: " + me1 + " me2: " + me2);
+}
+
+void showEquipments_OnLocation(String iloca, String mappy_p, String rojaksearch)
+{
+	Listbox newlb = makeVWListbox(equipments_div, equipments_lb_headers, "equips_lb", 10);
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "select origid,EQ_name,EQ_type,EQ_category,EQ_status,userdef1 from Equipments where location_id='" + iloca + "' and deleted=0";
+
+	// search equipments by imagemap, Equipments.userdef1 = Mapper_Pos.origid
+	if(!mappy_p.equals(""))
+		sqlst = "select origid,EQ_name,EQ_type,EQ_category,EQ_status,userdef1 from Equipments where userdef1='" + mappy_p + "' and deleted=0";
+
+	// search equipments by name - rojak search!!!
+	if(!rojaksearch.equals(""))
+		sqlst = "select origid,EQ_name,EQ_type,EQ_category,EQ_status,userdef1 from Equipments where EQ_name like '%" + rojaksearch + "%' and deleted=0";
+
+	eqrecs = sql.rows(sqlst);
+	sql.close();
+
+	// no equip recs, just return
+	if(eqrecs == null || eqrecs.size() == 0) return;
+
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new equiplistbox_Listener()); // onSelect listener to drill-in
+
+	for(eqsatu : eqrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		eqorigid = eqsatu.get("origid").toString();
+		kabom.add(eqorigid);
+		kabom.add(EQID_PREFIX + eqorigid); // equipment id to show to user
+		
+		eqname = trimListitemLabel(eqsatu.get("EQ_name"),18);
+		
+		kabom.add(checkEmptyString(eqname)); // checkEmptyString() in alsglobalfuncs.zs
+		
+		eqtype = trimListitemLabel(eqsatu.get("EQ_type"),10);
+		kabom.add(checkEmptyString(eqtype));
+		
+		eqcat = trimListitemLabel(eqsatu.get("EQ_category"),13);
+		kabom.add(checkEmptyString(eqcat));
+
+		manaloh = "-----";
+		mapobj = getMapperPos_Rec(eqsatu.get("userdef1"));
+		if(mapobj != null)
+		{
+			manaloh = trimListitemLabel(mapobj.get("area_id"),12);
+		}
+
+		kabom.add(manaloh);
+		kabom.add(checkEmptyString(eqsatu.get("EQ_status")));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void showImageMap_tree_clicker(Tree wTree)
+{
+// clear linking-document origid and listbox..
+	documentLinkProp.global_doculink_origid = "";
+
+	// makeDocumentLinks_Listbox(linkingdocs_div); 
+	// makeVWListbox(linkingdocs_div, documentLinks_lb_headers, "doculinks_lb", 5);
+
+	equip_detail_hideButtons();
+
+	itreeitm = wTree.getSelectedItem();
+	ilocation = getTreecellItemLabel(itreeitm,0);
+
+	if(ilocation.equals("")) return;
+
+	global_eq_location = ilocation; // save eq location to global var
+	
+	global_eq_locdescription = getTreecellItemLabel(itreeitm, 1); // get location description from tree-branch
+	equip_location_lbl.setValue("Location: " + global_eq_locdescription);
+	
+	pixtitle_lbl.setTitle(global_eq_locdescription);
+	
+	// fuyo_imagemap_div
+
+	locrec = getLookup_Rec(global_eq_location);
+	posorigid = "";
+
+	if(locrec != null)
+	{
+		//posorigid = locrec.get("origid").toString(); // use later to load the equips in the map
+
+		mapfn = locrec.get("value5"); // HARDCODED: Lookups.value5 is the map/pic filename , set in locationmanager.zul
+		if(!mapfn.equals(""))
+		{
+			mapper_where_lbl.setLabel(global_eq_location);
+			makeImagemapThing(fuyo_imagemap_div,mapfn,global_eq_location);
+			showMapperPositions(global_eq_location);
+		}
+		else
+		{
+			// remove anything left behind
+			if(fuyo_imagemap_div.getFellowIfAny("mango") != null)
+				mango.setParent(null);
+
+			showMessageBox("Whoops! No map/picture assigned..");
+		}
+	}
+	
+	clearDetailsInput();
+	documentLinkProp.global_eq_origid = "";
+	// showButtons();
+	// 8/7/2010: populate area-map listbox, uses Mapper_Pos table - areamap_div
+
+	populateAreaMap_Selector();
+	showEquipments_OnLocation(global_eq_location,"","");
+}
+
+void searchEquipments_clicker()
+{
+	rjkstr = searchequip_tb.getValue();
+	if(rjkstr.equals("")) return;
+	
+	// remove watever imagemap loaded earlier
+	if(imagemap_div.getFellowIfAny("mango") != null)
+		mango.setParent(null);
+	
+	equip_location_lbl.setValue(""); // clear whatever location string set earlier
+		
+	showEquipments_OnLocation("","",rjkstr);
+}
+
+]]>
+</zscript>
+
+<!-- popup to show location map picture thing -->
+<popup id="viewmap_popup">
+<hbox>
+	<groupbox>
+		<caption id="mapper_where_lbl" label="..." />
+		<div id="imagemap_div" />
+		<image id="popupimage" />
+	</groupbox>
+	<groupbox>
+		<caption label="Map/Picture positions" />
+		<div id="mapper_pos_div" width="350px" />
+		<separator height="3px" />
+		<button label="X Close" style="font-size:9px" onClick="viewmap_popup.close()" />
+		<label style="font-size:9px" value="(Use Locations Manager to setup these)" />
+	</groupbox>
+</hbox>
+</popup>
+
+<div width="1100px">
+<panel id="equipment_browser_panel" title="Equipment Browser" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="900px">
+	<west title="Locations" size="28%" splittable="true" collapsible="true" style="padding:2px" >
+	<div>
+	<!-- showEquipments(location_tree) -->
+		<tree id="location_tree" zclass="z-dottree" rows="20" onSelect="showImageMap_tree_clicker(location_tree)" >
+			<treecols>
+				<treecol label="Where" />
+				<treecol label="Description" />
+			</treecols>
+		</tree>
+		<separator height="3px" />
+		
+		<label value="Search equipment" style="font-size:9px" />
+		<textbox id="searchequip_tb" style="font-size:9px" />
+		
+		<button label="Do it.." style="font-size:9px" onClick="searchEquipments_clicker()" />
+
+		<!-- <button id="viewmap_btn" label="View map/picture" style="font-size:9px" onClick="viewLocationMapPicture_clicker()" /> -->
+	</div>
+	</west>
+
+	<center>
+	<borderlayout height="900px">
+		<north id="pixtitle_lbl" height="400px" splittable="true" collapsible="true" title="::">
+			<div>
+				<div id="fuyo_imagemap_div" />
+			</div>
+		</north>
+		
+		<center>
+		<borderlayout height="400px">
+			<west title="Equipments" size="55%" splittable="true" collapsible="true" style="padding:2px" >
+			<div>
+				<div style="background:#667788">
+					<label id="equip_location_lbl" style="color:#ffffff;padding:3px" />
+				</div>
+				
+				<separator height="5px" />
+				<div id="equipments_div" />
+				<separator height="5px" />
+				<hbox>
+					<button visible="false" id="newequip_btn" label="New equipment" onClick="newEquipment()" style="font-size:9px" />
+					<button visible="false" id="removeequip_btn" label="Remove equip" onClick="removeEquipment()" style="font-size:9px" />
+				</hbox>
+			</div>
+			</west>
+
+			<center title="Equipment details" style="padding:2px" >
+				<div>
+					<groupbox>
+						<caption id="equipname_lbl" />
+
+						<hbox>
+							<label value="Name" style="font-size:9px" />
+							<textbox id="tb_eq_name" width="260px" style="font-size:9px" />
+						</hbox>
+						<separator height="3px" />
+
+						<hbox>
+							<label value="Category" style="font-size:9px" />
+							<listbox id="lb_eq_category" mold="select" rows="1" style="font-size:9px" />
+
+							<label value="Type" style="font-size:9px" />
+							<listbox id="lb_eq_type" mold="select" rows="1" style="font-size:9px" />
+						</hbox>
+
+						<separator height="3px" />
+
+						<hbox>
+							<label value="Status" style="font-size:9px" />
+							<separator width="13px" />
+							<listbox id="lb_eq_status" mold="select" rows="1" style="font-size:9px" />
+						</hbox>
+
+						<vbox>
+							<label value="Notes" style="font-size:9px" />
+							<textbox id="tb_extranotes" multiline="true" height="60px" width="320px" style="font-size:9px" />
+						</vbox>
+						<separator height="3px" />
+						<hbox>
+							<label value="Area.Map" style="font-size:9px" />
+							<div id="areamap_div" />
+							<!-- <button label="View map/picture" style="font-size:9px" onClick="viewLocationMapPicture_clicker()" /> -->
+						</hbox>
+					</groupbox>
+					<separator height="5px" />
+					<hbox>
+						<button visible="false" id="eq_updatedetails_btn" label="Update details"  onClick="updateEquipmentDetails()"  style="font-size:9px" />
+					</hbox>
+					<separator height="3px" />
+					<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+				</div>
+			</center>
+		</borderlayout>
+		</center>
+	</borderlayout>
+	</center>
+
+	<south>
+	<div>
+	</div>
+	</south>
+
+</borderlayout>
+
+</div>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+
+setTodayDatebox(hiddendatebox);
+
+// set branch for tree-lookup
+// LOCATIONS_TREE_SHAHALAM = "LOCATIONS";
+// LOCATIONS_TREE_JB = "JBLOCATIONS";
+// LOCATIONS_TREE_KK = "KKLOCATIONS";
+// if admin login with branch=ALL, will only see shah-alam locations
+
+global_location_tree = LOCATIONS_TREE_SHAHALAM; // always default to SA
+mybranch = useraccessobj.branch;
+
+if(mybranch.equals("JB")) global_location_tree = LOCATIONS_TREE_JB;
+if(mybranch.equals("KK")) global_location_tree = LOCATIONS_TREE_KK;
+
+showLookupTree(global_location_tree, location_tree);
+
+populateDropdownListbox(lb_eq_category, equip_category);
+populateDropdownListbox(lb_eq_type, equip_type);
+populateDropdownListbox(lb_eq_status, equip_status);
+
+hideButtons();
+equip_detail_hideButtons();
+
+documentLinkProp.document_idprefix = EQID_PREFIX; // def in alsglobaldef.zs
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+</zscript>
+
+</zk>
+

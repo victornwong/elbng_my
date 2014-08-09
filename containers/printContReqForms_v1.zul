@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="prncontreqforms_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : Print container request forms by BIRT
+Written by: Victor Wong
+
+**NOTES**
+Knock-off from the main module - just change the rpt filename and some stuff
+
+*/
+import org.victor.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_contreqid = Executions.getCurrent().getParameter("scn");
+param_itype = Executions.getCurrent().getParameter("ity");
+
+guihand = new GuiFuncs();
+
+BIRT_CONTREQPACKFORM = "alsReports/contreqPackList_v1.rptdesign";
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+
+	templatefn = BIRT_CONTREQPACKFORM;
+	//if(param_itype.equals("2")) templatefn = BIRT_COMMERCIALINV;
+
+	thesrc = BIRT_WEBVIEWER + templatefn + "&contrqid=" + param_contreqid;
+
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_potsing_box" width="900px" height="700px" title="Containers Request Papers" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true">
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<button label="X Close" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

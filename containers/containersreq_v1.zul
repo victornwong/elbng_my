@@ -1,0 +1,987 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="containerreq_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.4";
+/*
+Title		: Container requester
+Written by	: Victor Wong
+Date start	: 15/05/2012
+
+**NOTES**
+Total rewrite of containersreq_oldunused.zul .. more fixed container types to request
+
+19/02/2013: req by Saj - email notification. Show request.by in list
+
+*/
+/*
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.text.*;
+import java.util.*;
+import java.lang.Float;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+last_list_type = 0;
+global_selected_request = "";
+global_requested_by = "";
+global_customer_name = "";
+global_req_status = "";
+
+REQ_NEW = "NEW";
+REQ_WIP = "WIP";
+REQ_SHIP = "SHIP";
+
+ArrayList containers_lookup;
+
+class container_type
+{
+	public String tb_id;
+	public String cont_desc;
+	public String cont_preservative;
+	public float cont_empty_weight;
+	public float cont_filled_weight;
+}
+/*
+Object[] woli = {
+};
+*/
+
+Object getContainerReq_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from containerreq where origid=" + iorigid;
+	retv = sql.firstRow(sqlstm);
+	sql.close();
+	return retv;
+}
+
+//--- to be used in searchSelectCustomer_v1.zs
+class CallMeObject
+{
+	public Object companyrec;
+	public Object callme;
+	void doSomething()
+	{
+		if(companyrec == null) return;
+
+		reqd_arcode.setValue(companyrec.get("ar_code"));
+		reqd_customer_name_tb.setValue(companyrec.get("customer_name"));
+		reqd_contact_person1_tb.setValue(companyrec.get("contact_person1"));
+		reqd_address1_tb.setValue(companyrec.get("address1"));
+		reqd_address2_tb.setValue(companyrec.get("address2") + ", " + companyrec.get("address3"));
+		reqd_telephone_tb.setValue(companyrec.get("telephone_no"));
+		reqd_fax_tb.setValue(companyrec.get("fax_no"));
+		reqd_email_tb.setValue(companyrec.get("E_mail"));
+		selectcustomer_popup.close();
+	}
+}
+
+local_callme = new CallMeObject();
+//---
+
+void disableStuff(boolean iwhat)
+{
+	savereq_btn.setDisabled(iwhat);
+	getcust_btn.setDisabled(iwhat);
+}
+
+void clearBoxes()
+{
+	reqd_arcode.setValue("");
+	reqd_customer_name_tb.setValue("");
+	reqd_contact_person1_tb.setValue("");
+	reqd_address1_tb.setValue("");
+	reqd_address2_tb.setValue("");
+	reqd_telephone_tb.setValue("");
+	reqd_fax_tb.setValue("");
+	reqd_city_tb.setValue("");
+	reqd_zipcode_tb.setValue("");
+	reqd_state_tb.setValue("");
+	reqd_country_tb.setValue("");
+	reqd_notes_tb.setValue("");
+	reqd_email_tb.setValue("");
+
+	reqd_shipcompany_tb.setSelectedIndex(0);
+	reqd_ship_airwaybill_tb.setValue("");
+	reqd_ship_notes_tb.setValue("");
+
+	reqd_projectname_tb.setValue("");
+	reqd_soilpermit_tb.setValue("");
+	reqd_otherfees_tb.setValue("");
+	reqd_dispatchby.setValue("");
+
+	for(i=0; i<containers_lookup.size(); i++)
+	{
+		tbid = "cont" + (i+1).toString() + "_qty";
+		thetb = containersgrid.getFellowIfAny(tbid);
+		if(thetb != null) thetb.setValue(null);
+	}
+}
+
+void showContQuantity(String iorigid)
+{
+	sqlstm = "select field1,quantity from containerreq_items where contreq_parent=" + iorigid;
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs == null) return;
+	for(dpi : screcs)
+	{
+		tbid = dpi.get("field1");
+		thetb = containersgrid.getFellowIfAny(tbid);
+		if(thetb != null) thetb.setValue(dpi.get("quantity"));
+	}
+}
+
+void showContReqMetadata(String iorigid)
+{
+	if(iorigid.equals("")) return;
+	crec = getContainerReq_Rec(iorigid);
+	if(crec == null) { guihand.showMessageBox("[ERR] Cannot access container request table..."); return; }
+
+	clearBoxes();
+
+	contreq_title.setValue("Containers request: " + crec.get("origid").toString());
+	reqd_arcode.setValue(kiboo.checkNullString(crec.get("ar_code")));
+	reqd_customer_name_tb.setValue(kiboo.checkNullString(crec.get("customer_name")));
+	reqd_contact_person1_tb.setValue(kiboo.checkNullString(crec.get("contact_person")));
+	reqd_address1_tb.setValue(kiboo.checkNullString(crec.get("address1")));
+	reqd_address2_tb.setValue(kiboo.checkNullString(crec.get("address2")));
+	reqd_telephone_tb.setValue(kiboo.checkNullString(crec.get("telephone")));
+	reqd_fax_tb.setValue(kiboo.checkNullString(crec.get("fax")));
+	reqd_city_tb.setValue(kiboo.checkNullString(crec.get("city")));
+	reqd_zipcode_tb.setValue(kiboo.checkNullString(crec.get("zipcode")));
+	reqd_state_tb.setValue(kiboo.checkNullString(crec.get("state")));
+	reqd_country_tb.setValue(kiboo.checkNullString(crec.get("country")));
+	reqd_notes_tb.setValue(kiboo.checkNullString(crec.get("notes")));
+	reqd_email_tb.setValue(kiboo.checkNullString(crec.get("email")));
+
+	reqd_projectname_tb.setValue(kiboo.checkNullString(crec.get("projectname")));
+	reqd_soilpermit_tb.setValue(kiboo.checkNullString(crec.get("soilpermit")));
+	reqd_otherfees_tb.setValue(kiboo.checkNullString(crec.get("otherfees")));
+	reqd_dispatchby.setValue(kiboo.checkNullString(crec.get("dispatchby")));
+
+	if(crec.get("ship_company") != null) lbhand.matchListboxItems(reqd_shipcompany_tb,crec.get("ship_company"));
+	reqd_ship_airwaybill_tb.setValue(kiboo.checkNullString(crec.get("ship_airwaybill")));
+	reqd_ship_notes_tb.setValue(kiboo.checkNullString(crec.get("ship_notes")));
+
+	disableStuff(false);
+
+	// check req stat , if it's WIP/SHIP disable savereq_btn, getcust_btn
+	if(!crec.get("req_status").equals(REQ_NEW)) disableStuff(true);
+
+	showContQuantity(iorigid);
+
+	theform.setVisible(true);
+	workarea.setVisible(true);
+}
+
+// onSelect event for loadSubcons_List()
+class contreq_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = contreqs_lb.getSelectedItem();
+		global_selected_request = lbhand.getListcellItemLabel(isel,0);
+		global_requested_by = lbhand.getListcellItemLabel(isel,3);
+		global_customer_name = lbhand.getListcellItemLabel(isel,1);
+		global_req_status = lbhand.getListcellItemLabel(isel,4);
+		//global_selected_status = lbhand.getListcellItemLabel(isel,5);
+		showContReqMetadata(global_selected_request);
+	}
+}
+
+Object[] contreqs_lb_headers = {
+	new listboxHeaderWidthObj("CRQ#",true,"40px"),
+	new listboxHeaderWidthObj("Customer.Name",true,""),
+	new listboxHeaderWidthObj("Req.Date",true,"50px"),
+	new listboxHeaderWidthObj("Req.By",true,"50px"),
+	new listboxHeaderWidthObj("Status",true,"50px"),
+	new listboxHeaderWidthObj("Ship.Date",true,"60px"),
+};
+
+void listContainerRequests(int itype)
+{
+	last_list_type = itype;
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+
+	Listbox newlb = lbhand.makeVWListbox_Width(contreqs_holder, contreqs_lb_headers, "contreqs_lb", 12);
+
+	sqlstm = "select origid,username,customer_name,datecreated,shipout_date,req_status from containerreq " +
+	"where datecreated between '" + sdate + "' and '" + edate + "'";
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.addEventListener("onSelect", new contreq_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("req_status"));
+		kabom.add(kiboo.checkNullDate(dpi.get("shipout_date"),"---"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void newContainerRequest()
+{
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into containerreq (username,datecreated,req_status) values ('" + useraccessobj.username + "','" + todate + "','" + REQ_NEW + "')";
+	sqlhand.gpSqlExecuter(sqlstm);
+	listContainerRequests(last_list_type); // refresh
+}
+
+void saveContainerReq()
+{
+	if(global_selected_request.equals("")) return;
+
+	arcod = reqd_arcode.getValue();
+	custnm = kiboo.replaceSingleQuotes(reqd_customer_name_tb.getValue());
+	cont1 = kiboo.replaceSingleQuotes(reqd_contact_person1_tb.getValue());
+	addr1 = kiboo.replaceSingleQuotes(reqd_address1_tb.getValue());
+	addr2 = kiboo.replaceSingleQuotes(reqd_address2_tb.getValue());
+	tel = kiboo.replaceSingleQuotes(reqd_telephone_tb.getValue());
+	fax = kiboo.replaceSingleQuotes(reqd_fax_tb.getValue());
+	city = kiboo.replaceSingleQuotes(reqd_city_tb.getValue());
+	zipcod = kiboo.replaceSingleQuotes(reqd_zipcode_tb.getValue());
+	cstate = kiboo.replaceSingleQuotes(reqd_state_tb.getValue());
+	country = kiboo.replaceSingleQuotes(reqd_country_tb.getValue());
+	reqnot = kiboo.replaceSingleQuotes(reqd_notes_tb.getValue());
+	email = kiboo.replaceSingleQuotes(reqd_email_tb.getValue());
+
+	prjnam = kiboo.replaceSingleQuotes(reqd_projectname_tb.getValue());
+	soilper = kiboo.replaceSingleQuotes(reqd_soilpermit_tb.getValue());
+	othfee = kiboo.replaceSingleQuotes(reqd_otherfees_tb.getValue());
+	dispby = kiboo.replaceSingleQuotes(reqd_dispatchby.getValue());
+
+	shpcomp = reqd_shipcompany_tb.getSelectedItem().getLabel();
+	shpairway = kiboo.replaceSingleQuotes(reqd_ship_airwaybill_tb.getValue());
+	shpnot = kiboo.replaceSingleQuotes(reqd_ship_notes_tb.getValue());
+	//reqd_shipout_date_tb
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+
+	sqlstm = "update containerreq set ar_code='" + arcod + "', customer_name='" + custnm + "', address1='" + addr1 + "', address2='" + addr2 + "'," +
+	"telephone='" + tel + "',fax='" + fax + "',city='" + city + "',zipcode='" + zipcod + "',state='" + cstate + "',country='" + country + "'," +
+	"contact_person='" + cont1 + "',email='" + email + "',notes='" + reqnot + "', ship_company='" + shpcomp + "', ship_airwaybill='" + shpairway + "'," +
+	"ship_notes='" + shpnot + "',projectname='" + prjnam + "',soilpermit='" + soilper + "',otherfees='" + othfee + "',dispatchby='" + dispby + "' where origid=" + global_selected_request;
+
+	sql.execute(sqlstm);
+
+	// save the containers-grid boxes
+	// remove prev recs from containerreq_items
+	sqlstm1 = "delete from containerreq_items where contreq_parent=" + global_selected_request;
+	sql.execute(sqlstm1);
+
+	// now save 'em .. containerreq_items.field1=inputbox-id, field2=label color, field3=preservative
+	for(i=0; i<containers_lookup.size(); i++)
+	{
+		tbid = "cont" + (i+1).toString() + "_qty";
+		thetb = containersgrid.getFellowIfAny(tbid);
+		if(thetb != null)
+		{
+			qtyv = thetb.getValue();
+			if(qtyv != null)
+			{
+				if(qtyv > 0)
+				{
+					wop = containers_lookup.get(i);
+					cdesc = wop.get("disptext");
+					clabl = wop.get("value1");
+					cpresv = wop.get("value2");
+					sqlstm2 = "insert into containerreq_items (contreq_parent,description,quantity,field1,field2,field3) values " +
+					"(" + global_selected_request + ",'" + cdesc + "'," + qtyv.toString() + ",'" + tbid + "','" + clabl + "','" + cpresv + "')";
+
+					sql.execute(sqlstm2);
+				}
+			}
+		}
+	}
+
+	sql.close();
+	listContainerRequests(last_list_type); // refresh
+
+	guihand.showMessageBox("Container request saved..");
+}
+
+void updateShipDate()
+{
+	if(global_selected_request.equals("")) return;
+	shpdate = kiboo.getDateFromDatebox(reqd_shipout_date_tb);
+	sqlstm = "update containerreq set req_status='" + REQ_SHIP + "', shipout_date='" + shpdate + "' where origid=" + global_selected_request;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listContainerRequests(last_list_type); // refresh
+	showContReqMetadata(global_selected_request);
+}
+
+void commitReqPack()
+{
+	if(global_selected_request.equals("")) return;
+
+	if(Messagebox.show("Once request is committed, no changes except for shipping info..", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "update containerreq set req_status='" + REQ_WIP + "' where origid=" + global_selected_request;
+	sqlhand.gpSqlExecuter(sqlstm);
+	listContainerRequests(last_list_type); // refresh
+	showContReqMetadata(global_selected_request);
+
+	theparam = "scn=" + global_selected_request + "&ity=1";
+	uniqwindowid = kiboo.makeRandomId("pcr");
+	runmestr = "containers/printContReqForms_v1.zul";
+	guihand.globalActivateWindow(mainPlayground,"miscwindows",runmestr, uniqwindowid, theparam, useraccessobj);
+}
+
+void exportContReqChecklist()
+{
+	uniqwindowid = kiboo.makeRandomId("ccl");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","reporting/birtReportViewerLookup_v1.zul", uniqwindowid, "bid=CPBR_5",useraccessobj);
+}
+
+// itype: 1=del rec, 2=clear req_status flag
+void admindelrec(int itype)
+{
+	if(global_selected_request.equals("")) return;
+
+	if(itype == 1)
+	{
+		if(Messagebox.show("HARD-Delete containers request", "Are you sure?",
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+		sqlstm0  = "delete from containerreq where origid=" + global_selected_request + ";";
+		sqlstm0 += "delete from containerreq_items where contreq_parent=" + global_selected_request + ";";
+		sqlhand.gpSqlExecuter(sqlstm0);
+		clearBoxes();
+		global_selected_request = "";
+	}
+
+	if(itype == 2)
+	{
+		sqlstm = "update containerreq set req_status='" + REQ_NEW + "' where origid=" + global_selected_request;
+		sqlhand.gpSqlExecuter(sqlstm);
+	}
+
+	listContainerRequests(last_list_type); // refresh
+	showContReqMetadata(global_selected_request);
+}
+
+// 19/02/2013: req by Saj to send email notification for new containers-req
+void emailNotifyPacker()
+{
+	if(global_selected_request.equals("")) return;
+	if(global_req_status.equals("NEW")) { guihand.showMessageBox("Kasi commit dulu ya"); return; }
+
+	subjstr = "Re: Containers request submitted CRQ#" + global_selected_request;
+	topeople = luhand.getLookups_ConvertToStr("CONTREQ_NOTI",2,",");
+	msgtext =  "Containers request CRQ#: " + global_selected_request;
+	msgtext += "\nCustomer               : " + global_customer_name;
+	msgtext += "\nRequested by           : " + global_requested_by;
+	msgtext += "\nPacking notes          :\n" + reqd_notes_tb.getValue();
+	msgtext += "\n\n** THIS IS A NOTIFICATION, DO NOT REPLY **";
+	msgtext += "\n** PROCESS ASAP                         **";
+	//alert(msgtext);
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+	guihand.showMessageBox("Notification email sent..");
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers(local_callme)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<div width="1200px">
+<panel id="checklist_panel" title="Containers Requester ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<hbox>
+
+<div width="550px"> <!-- leftside -->
+
+<div id="formarea">
+
+<groupbox mold="3d" width="100%">
+	<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+		</row>
+		<row spans=",,2">
+			<label value="Search" style="font-size:9px" />
+			<textbox id="searhtxt_tb" width="99%" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="listContainerRequests(1)" />
+		</row>
+	</rows>
+	</grid>
+	<separator height="2px" />
+	<hbox>
+		<button label="New container request" style="font-size:9px" onClick="newContainerRequest()" />
+		<button label="Commit + process request" style="font-size:9px" onClick="commitReqPack()" />
+		<button label="Email notification" style="font-size:9px" onClick="emailNotifyPacker()" />
+		<button label="Export checklist" style="font-size:9px" onClick="exportContReqChecklist()" />
+	</hbox>
+	<separator height="2px" />
+	<!--
+	<hbox>
+		<button label="Print DO" style="font-size:9px" />
+		<button label="Print proforma invoice" style="font-size:9px" />
+	</hbox>
+	-->
+
+	<div id="adminstuff" style="background:#a52a2a;padding:2px" visible="false">
+		<hbox>
+			<button label="delete" style="font-size:9px" onClick="admindelrec(1)" />
+			<button label="clr flag" style="font-size:9px" onClick="admindelrec(2)" />
+		</hbox>
+	</div>
+
+</groupbox>
+<groupbox mold="3d" width="100%">
+	<div id="contreqs_holder" />
+</groupbox>
+
+<div id="theform" visible="false">
+
+<div style="padding:2px;background:#ffa500">
+	<hbox>
+	<label id="contreq_title" value="Containers request:" style="font-weight:bold" />
+	<separator width="10px" />
+	<button id="savereq_btn" label="Save containers request form" onClick="saveContainerReq()" />
+	</hbox>
+</div>
+
+<tabbox mold="accordion">
+	<tabs>
+		<tab label="Customer info" />
+		<tab label="Shipping info" />
+	</tabs>
+	<tabpanels>
+
+	<tabpanel> <!-- Customer info -->
+	<grid>
+		<rows>
+		<row>
+			<label value="Cust.Name" style="font-size:9px" />
+			<textbox id="reqd_customer_name_tb" width="99%" style="font-size:9px" />
+			<hbox>
+				<label value="AR_CODE: " style="font-size:9px" />
+				<label id="reqd_arcode" style="font-size:9px" />
+			</hbox>
+			<button id="getcust_btn" label="Get customer" style="font-size:9px" onClick="selectcustomer_popup.open(self)" />
+		</row>
+		<row spans=",3">
+			<label value="Cont.Person" style="font-size:9px" />
+			<textbox id="reqd_contact_person1_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address1" style="font-size:9px" />
+			<textbox id="reqd_address1_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address2" style="font-size:9px" />
+			<textbox id="reqd_address2_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="City" style="font-size:9px" />
+			<textbox id="reqd_city_tb" width="99%" style="font-size:9px" />
+			<label value="Zipcode" style="font-size:9px" />
+			<textbox id="reqd_zipcode_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="State" style="font-size:9px" />
+			<textbox id="reqd_state_tb" width="99%" style="font-size:9px" />
+			<label value="Country" style="font-size:9px" />
+			<textbox id="reqd_country_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Telephone" style="font-size:9px" />
+			<textbox id="reqd_telephone_tb" width="99%" style="font-size:9px" />
+			<label value="Fax" style="font-size:9px" />
+			<textbox id="reqd_fax_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Email" style="font-size:9px" />
+			<textbox id="reqd_email_tb" width="99%" style="font-size:9px" />
+		</row>
+		<!--
+		<row spans=",3">
+			<label value="Status" style="font-size:9px" />
+			<label id="reqd_req_status_lbl" style="font-size:9px" />
+		</row>
+		-->
+		<row spans=",3">
+			<label value="Project name" style="font-size:9px" />
+			<textbox id="reqd_projectname_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Soil permit" style="font-size:9px" />
+			<textbox id="reqd_soilpermit_tb" width="99%" style="font-size:9px" />
+			<label value="Other fees" style="font-size:9px" />
+			<textbox id="reqd_otherfees_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Packing.Notes" style="font-size:9px" />
+			<textbox id="reqd_notes_tb" multiline="true" width="99%" height="50px" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+	</tabpanel> <!-- ENDOF Customer info -->
+	
+	<tabpanel> <!-- shipping info -->
+		<grid>
+			<rows>
+				<row>
+					<label value="Shipping company" style="font-size:9px" />
+					<listbox id="reqd_shipcompany_tb" mold="select" style="font-size:9px" />
+					<label value="Airway bill" style="font-size:9px" />
+					<textbox id="reqd_ship_airwaybill_tb" width="180px" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Shipping.Notes" style="font-size:9px" />
+					<textbox id="reqd_ship_notes_tb" multiline="true" width="99%" height="50px" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Dispatch by" style="font-size:9px" />
+					<textbox id="reqd_dispatchby" style="font-size:9px" width="60%" />
+				</row>
+				<row spans=",,2">
+					<label value="Ship.Date" style="font-size:9px" />
+					<datebox id="reqd_shipout_date_tb" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+					<button label="Update shipping info" style="font-size:9px" onClick="updateShipDate()" />
+				</row>
+			</rows>
+		</grid>
+	</tabpanel> <!-- ENDOF shipping info -->
+	</tabpanels>
+</tabbox>
+</div> <!-- ENDOF theform -->
+
+</div> <!-- ENDOF formarea -->
+
+</div> <!-- ENDOF leftside -->
+
+<div id="workarea" visible="false">
+<grid id="containersgrid" width="640px">
+	<columns>
+		<column label="Test Parameter(s)" width="30%"/>
+		<column label="Sample Bottle / Label Colour" width="30%" />
+		<column label="Containers" width="30%"/>
+		<column label="Quantity" />
+	</columns>
+	<rows>
+		<row>
+			<label style="font-size:9px" multiline="true">
+Acidity, Alkalinity, BOD,
+Chloride, Chromium VI,
+Colour, Conductivity,
+Flouride, Hardness,
+Nitrate, Nitrite, pH,
+Reactive Phosphorus, Silica,
+Solids, Sulphate, Turbidity,
+Paraquat/ Diquat
+			</label>
+			<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle 
+Container Volume: 750ml,500ml,250mL
+Label Colour: Green
+Preservation: None
+			</label>
+			<image src="/alsimg/containers/cont1.jpg" />
+			<vbox>
+				<hbox>
+					<label value="750ml" />
+					<separator width="5px" />
+					<intbox id="cont1_qty" />
+				</hbox>
+				<hbox>
+					<label value="500ml" />
+					<separator width="5px" />
+					<intbox id="cont2_qty" />
+				</hbox>
+				<hbox>
+					<label value="250ml" />
+					<separator width="5px" />
+					<intbox id="cont3_qty" />
+				</hbox>
+
+			</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Chlorophyll
+		</label>
+		
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle (Opaque)
+Container Volume: 1L
+Label Colour: Green
+Preservation: None
+		</label>
+		
+		<image src="/alsimg/containers/cont2.jpg" />
+		<hbox>
+			<label value="1L" />
+			<separator width="5px" />
+			<intbox id="cont4_qty" />
+		</hbox>
+
+		</row>
+		
+		<row>
+		<label style="font-size:9px" multiline="true">
+COD, Ammonia, Nitrate + NOx, Total Kjeldahl Nitrogen,
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle 
+Container Volume: 500ml,100ml
+Label Colour: Purple
+Preservation: Sulphuric Acid
+		</label>
+		<image src="/alsimg/containers/cont3.jpg" />
+		<vbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont5_qty" />
+			</hbox>
+			<hbox>
+				<label value="500ml" />
+				<separator width="5px" />
+				<intbox id="cont6_qty" />
+			</hbox>
+		</vbox>
+
+		</row>
+		
+		<row>
+		<label style="font-size:9px" multiline="true">
+Oil and Grease, Total Phenols
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Amber Glass bottle
+Container Volume: 500ml, 100ml
+Label Colour: Purple
+Preservation: Sulphuric Acid
+		</label>
+		<image src="/alsimg/containers/cont4.jpg" />
+
+		<vbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont7_qty" />
+			</hbox>
+			<hbox>
+				<label value="500ml" />
+				<separator width="5px" />
+				<intbox id="cont8_qty" />
+			</hbox>
+		</vbox>
+
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Total Organic Carbon
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Glass vials
+Container Volume: 40ml
+Label Colour: Purple
+Preservation:  Sulphuric Acid
+		</label>
+		<image src="/alsimg/containers/cont5.jpg" />
+		<vbox>
+			<hbox>
+				<label value="40ml" />
+				<separator width="5px" />
+				<intbox id="cont9_qty" />
+			</hbox>
+		</vbox>
+
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Pesticides, PCBs, SVOC, TPH (C10-C36), PAH, Speciated Phenols, Herbicides, Phthalate Esters, TBT, Explosives
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Amber Glass bottle
+Container Volume: 500mL
+Label Colour: Orange
+Preservation: None
+		</label>
+		<image src="/alsimg/containers/cont6.jpg" />
+		<vbox>
+			<hbox>
+				<label value="500ml" />
+				<separator width="5px" />
+				<intbox id="cont10_qty" />
+			</hbox>
+		</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Metals
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle
+Container Volume: 100ml
+Label Colour: Red
+Preservation: Nitric Acid
+		</label>
+		<image src="/alsimg/containers/cont7.jpg" />
+		<vbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont11_qty" />
+			</hbox>
+		</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+VOC, BTEX, TPH(C6-C9)
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Glass vials
+Container Volume: 2 x 40ml
+Label Colour: Maroon
+Preservation: Hydrochloric Acid
+		</label>
+		<image src="/alsimg/containers/cont8.jpg" />
+		<vbox>
+			<hbox>
+				<label value="40ml" />
+				<separator width="5px" />
+				<intbox id="cont12_qty" />
+			</hbox>
+		</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Cyanide (Total/ Free)
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle
+Container Volume: 100ml
+Label Colour: Blue
+Preservation: Sodium Hydroxide
+		</label>
+		<image src="/alsimg/containers/cont9.jpg" />
+
+		<vbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont13_qty" />
+			</hbox>
+		</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Sulphides
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Plastic bottle
+Container Volume: 100ml
+Label Colour: Fluoro Yellow
+Preservation: Zinc Acetate and Sodium Hydroxide
+		</label>
+		<image src="/alsimg/containers/cont10.jpg" />
+		<vbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont14_qty" />
+			</hbox>
+		</vbox>
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+Microbiological Analysis (including Total Plate Count, Total Coliforms, Faecal Coliforms, E. Coli –etc.)
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Water
+Sample Container: Sterile Plastic
+Container Volume: 1L Glass,60ml,40ml
+Label Colour: White
+Preservation: None
+		</label>
+		<image src="/alsimg/containers/cont11.jpg" />
+		<vbox>
+			<hbox>
+				<label value="1L Glass" />
+				<separator width="5px" />
+				<intbox id="cont15_qty" />
+			</hbox>
+
+			<hbox>
+				<label value="60ml" />
+				<separator width="5px" />
+				<intbox id="cont16_qty" />
+			</hbox>
+			<hbox>
+				<label value="40ml" />
+				<separator width="5px" />
+				<intbox id="cont17_qty" />
+			</hbox>
+
+		</vbox>
+		
+		</row>
+
+		<row>
+		<label style="font-size:9px" multiline="true">
+All major analyses in soil
+		</label>
+		<label style="font-size:9px" multiline="true">
+Sample Matrix: Soil
+Sample Container: Glass Jar
+Container Volume: 100ml, 40ml
+Label Colour: Orange
+Preservation: None
+		</label>
+		<image src="/alsimg/containers/cont12.jpg" />
+
+		<vbox>
+			<hbox>
+				<label value="40ml" />
+				<separator width="5px" />
+				<intbox id="cont18_qty" />
+			</hbox>
+			<hbox>
+				<label value="100ml" />
+				<separator width="5px" />
+				<intbox id="cont19_qty" />
+			</hbox>
+
+		</vbox>
+
+		</row>
+
+	</rows>
+</grid>
+</div> <!-- ENDOF workarea -->
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(reqd_shipcompany_tb,"DELIVERY_METHOD",2);
+// fillup lookup var
+containers_lookup = luhand.getLookups_ByParent("CONTAINERS_TYPE");
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

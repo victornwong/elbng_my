@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="supplier_categorysetup_win"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Supplier Category Setup
+Written by: Victor Wong
+Notes:
+work on SupplierCategory
+tblStockInMaster.NewField10 = AP.Code
+*/
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+selected_suppcat_id = "";
+selected_suppcat_cat = "";
+selected_suppcat_desc = "";
+
+]]>
+</zscript>
+
+<window id="supplier_categorysetup_box" width="450px" height="280px" title="Supplier Category Setup" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<!-- <button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />	 -->
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<separator height="3px" />
+<label id="error_msg" style="font-size:12px;font-weight:bold" />
+<div style="padding:3px">
+
+<div id="suppliercats_holder" />
+<separator height="3px" />
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+	<row>
+		<label value="Category.Code" style="font-size:9px" />
+		<textbox id="supcat_category" style="font-size:9px" width="320px" />
+	</row>
+	<row>
+		<label value="Description" style="font-size:9px" />
+		<textbox id="supcat_cat_desc" style="font-size:9px" width="320px" />
+	</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+	<button label="Clear fields" style="font-size:9px" onClick="clearInputs_clicker()" />
+	<button id="newupdate_btn" label="New.." style="font-size:9px" onClick="newupdate_suppcat_clicker()" />
+	<button label="Delete" style="font-size:9px" />
+</hbox>
+
+</div>
+<zscript>
+<![CDATA[
+
+void clearInputs_clicker()
+{
+	selected_suppcat_id = "";
+	selected_suppcat_cat = "";
+	selected_suppcat_desc = "";
+
+	supcat_category.setValue("");
+	supcat_cat_desc.setValue("");
+	supcat_category.setDisabled(false);
+	newupdate_btn.setLabel("New..");
+}
+
+void newupdate_suppcat_clicker()
+{
+	supcat = replaceSingleQuotes(supcat_category.getValue());
+	supdesc = replaceSingleQuotes(supcat_cat_desc.getValue());
+	if(supcat.equals("")) return;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update suppliercategory set category='" + supcat + "', cat_desc='" + supdesc + "' where id=" + selected_suppcat_id;
+
+	if(selected_suppcat_id.equals("")) // new supplier-cat
+	{
+		// chk for dups
+		chkdup = "select category from suppliercategory where category='" + supcat + "'";
+		kkrec = sql.firstRow(chkdup);
+		if(kkrec != null)
+		{
+			showMessageBox("Supplier category code is already in used..");
+			sql.close();
+			return;
+		}
+
+		sqlstm = "insert into suppliercategory (category,cat_desc) values ('" + supcat + "','" + supdesc + "')";
+	}
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	clearInputs_clicker();
+	showSupplierCategory(); // refresh
+}
+
+// onSelect for showSupplierCategory()
+class suppcatslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_suppcat_id = getListcellItemLabel(selitem,0);
+		selected_suppcat_cat = getListcellItemLabel(selitem,1);
+		selected_suppcat_desc = getListcellItemLabel(selitem,2);
+
+		supcat_category.setValue(selected_suppcat_cat);
+		supcat_cat_desc.setValue(selected_suppcat_desc);
+		supcat_category.setDisabled(true);
+		newupdate_btn.setLabel("Update..");
+	}
+}
+// Show all supplier category in listbox
+void showSupplierCategory()
+{
+	Object[] suppliercat_lb_headers = {
+	new dblb_HeaderObj("id",false,"Id",2),
+	new dblb_HeaderObj("Cat.Code",true,"Category",1),
+	new dblb_HeaderObj("Description",true,"Cat_Desc",1),
+	};
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select * from suppliercategory";
+	Listbox newlb = makeVWListbox_onDB(suppliercats_holder,suppliercat_lb_headers,"suppliercats_lb",8,sql,sqlstm);
+	if(newlb.getItemCount() > 8) newlb.setRows(10);
+	newlb.addEventListener("onSelect", new suppcatslb_Listener());
+	sql.close();
+}
+
+// STARTUP CODES
+setTodayDatebox(hiddendatebox);
+
+showSupplierCategory();
+
+]]>
+</zscript>
+</window>
+</zk>

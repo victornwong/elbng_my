@@ -1,0 +1,472 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="request_tracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+VERSION: 1.0
+
+Title: Simple request tracker
+Written by: Victor Wong
+
+**NOTES**
+14/09/2011: start development - simple request tracker to be used by ALSI and ALSM for watever things
+
+*/
+
+/*
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+*/
+
+adminflag = Executions.getCurrent().getParameter("root");
+
+String[] requestworker = { "tchin@alsglobal.com.my","leeyl@alsglobal.com.my","finance@alsglobal.com.my" };
+
+String[] requestbypeople = { "Jones","Suzanne","Meita","Wike","Melissa","Intan","Doc Chin","Zainab","Malia" };
+String[] requestTypes = { "Equipment", "Lab Consumables", "Calibration & Maintenance of Equipment", "General Maintenance", "Office Supplies" };
+String[] requestPriority = { "Within 7 days", "Within 14 days", "Within 1 month", "Good to Have" };
+
+selected_request = "";
+selected_status = "";
+
+last_requestlister = 0;
+last_requestlisterflag = 0;
+
+// DBfunc: get request-tracker rec by origid
+Object getRequestTrackRec(String iorigid)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from requesttrack where origid=" + iorigid;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+void clearInputBoxes()
+{
+	requestorigid.setValue("");
+	requestby.setSelectedIndex(0);
+	requesttype.setSelectedIndex(0);
+	requestpriority.setSelectedIndex(0);
+	setTodayDatebox(requestfinishby);
+	requestabout.setValue("");
+
+	workitnotes.setValue("");
+	airwaybill.setValue("");
+	requeststatus.setValue("");
+	setTodayDatebox(completedate);
+
+	newupdate_btn.setLabel("New request");
+
+	status_gb.setVisible(false);
+
+	// reset vars
+	selected_request = "";
+	selected_status = "";
+}
+
+void showRequestMetadata(String iorigid)
+{
+	tdata = getRequestTrackRec(iorigid);
+	if(tdata == null) { showMessageBox("ERROR: Cannot load request tracker record.. panic!"); return; }
+
+	requestorigid.setValue(tdata.get("origid").toString());
+	matchListboxItems(requestby,tdata.get("requestby"));
+	matchListboxItems(requesttype,tdata.get("requesttype"));
+	matchListboxItems(requestpriority,tdata.get("requestpriority"));
+	requestfinishby.setValue(tdata.get("requestfinishby"));
+	requestabout.setValue(tdata.get("requestabout"));
+
+	workitnotes.setValue(checkNullString(tdata.get("workitnotes")));
+	airwaybill.setValue(checkNullString(tdata.get("airwaybill")));
+	requeststatus.setValue(tdata.get("requeststatus"));
+
+	if(tdata.get("completedate") == null) setTodayDatebox(completedate);
+	else completedate.setValue(tdata.get("completedate"));
+
+	cancelrequest_btn.setDisabled(false);
+	incomplete_btn.setDisabled(false);
+	completed_btn.setDisabled(false);
+	notification_btn.setDisabled(false);
+
+	if(selected_status.equals("COMPLETED") || selected_status.equals("CANCEL"))
+	{
+		cancelrequest_btn.setDisabled(true);
+		completed_btn.setDisabled(true);
+		notification_btn.setDisabled(true);
+	}
+
+	status_gb.setVisible(true);
+}
+
+Object[] requests_lb_headers = {
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Requestor",true),
+	new listboxHeaderObj("CompleteBy",true),
+	new listboxHeaderObj("Priority",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("S.Dated",true),
+	new listboxHeaderObj("Request",true),
+};
+
+// onSelect for listRequests()
+class requestslb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = requests_lb.getSelectedItem();
+		selected_request = getListcellItemLabel(selitem,0);
+		selected_status = getListcellItemLabel(selitem,5);
+
+		newupdate_btn.setLabel("Update request");
+		showRequestMetadata(selected_request);
+	}
+}
+
+// itype: 1=by date, 2=by flag
+// iflag: 1=incomplete, 2=completed, 3=canceled
+void listRequests(int itype, int iflag)
+{
+	// reset vars and clear stuff
+	selected_request = "";
+	clearInputBoxes();
+
+	last_requestlister = itype;
+	last_requestlisterflag = iflag;
+
+	//srchstr = replaceSingleQuotes(quote_search.getValue());
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	Listbox newlb = makeVWListbox(requests_holder, requests_lb_headers, "requests_lb", 5);
+
+	sqlstm = "select top 200 origid,requestdate,requestby,requestfinishby,requestpriority,requeststatus,completedate,requesttype " +
+	"from requesttrack where requestdate between '" + sdate + "' and '" + edate + "' ";
+
+	if(itype == 2)
+	{
+		compflag = "INCOMPLETE";
+		switch(iflag)
+		{
+			case 2: compflag = "COMPLETED";
+			break;
+
+			case 3: compflag = "CANCEL";
+			break;
+		}
+
+		sqlstm = sqlstm + " and requeststatus='" + compflag + "' ";
+	}
+
+	sqlstm = sqlstm + " order by origid";
+
+	therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(30);
+	newlb.invalidate();
+	newlb.addEventListener("onSelect", new requestslb_onSelect());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("requestdate").toString().substring(0,10));
+		kabom.add(dpi.get("requestby"));
+		kabom.add(dpi.get("requestfinishby").toString().substring(0,10));
+		kabom.add(dpi.get("requestpriority"));
+		kabom.add(dpi.get("requeststatus"));
+		kabom.add((dpi.get("completedate") == null) ? "---" : dpi.get("completedate").toString().substring(0,10));
+		kabom.add(trimListitemLabel(dpi.get("requesttype"),40));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// the new and update func
+void newupdateRequest()
+{
+	itoday = getDateFromDatebox(hiddendatebox);
+	irequestby = requestby.getSelectedItem().getLabel();
+	irequesttype = requesttype.getSelectedItem().getLabel();
+	irequestpriority = requestpriority.getSelectedItem().getLabel();
+	irequestfinishby = getDateFromDatebox(requestfinishby);
+	irequestabout = replaceSingleQuotes(requestabout.getValue());
+
+	newupdate_flag = true;
+
+	sqlstm = "insert into requestTrack (requestdate,requestby,requesttype,requestpriority,requestfinishby,requestabout,requeststatus) values " +
+	"('" + itoday + "','" + irequestby + "','" + irequesttype + "','" + irequestpriority + "','" + irequestfinishby + "','" + irequestabout + "'," + 
+	"'INCOMPLETE')";
+	
+	// it's an update ..
+	if(!selected_request.equals(""))
+	{
+		sqlstm = "update requestTrack set requestdate='" + itoday + "', requestby='" + irequestby + "'," + 
+		"requesttype='" + irequesttype + "'," + "requestpriority='" + irequestpriority + "', requestfinishby='" + irequestfinishby + "'," + 
+		"requestabout='" + irequestabout + "' " +
+		"where origid=" + selected_request;
+		
+		newupdate_flag = false;
+	}
+	
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	if(newupdate_flag) autorequest_EmailNotification();
+
+	listRequests(last_requestlister,last_requestlisterflag); // refresh
+}
+
+// itype: 1=completed, 2=incomplete, 3=cancel-request
+void requestStatusUpdate(int itype)
+{
+	if(selected_request.equals("")) return;
+
+	iworkitnotes = replaceSingleQuotes(workitnotes.getValue());
+	iairwaybill = replaceSingleQuotes(airwaybill.getValue());
+	icompletedate = getDateFromDatebox(completedate);
+	
+	irequeststatus = "COMPLETED";
+	
+	switch(itype)
+	{
+		case 2: irequeststatus = "INCOMPLETE";
+			break;
+		case 3: irequeststatus = "CANCEL";
+			break;
+	}
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "update requesttrack set workitnotes='" + iworkitnotes + "', airwaybill='" + iairwaybill + "', completedate='" + icompletedate + "', " +
+	"requeststatus='" + irequeststatus + "' where origid=" + selected_request;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listRequests(last_requestlister,last_requestlisterflag); // refresh
+}
+
+void deleteRequest()
+{
+	if(selected_request.equals("")) return;
+	if (Messagebox.show("This is a hard delete..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "delete from requesttrack where origid=" + selected_request;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listRequests(last_requestlister,last_requestlisterflag); // refresh
+}
+
+void autorequest_EmailNotification()
+{
+	subjstr = "NOTIFICATION: NEW REQUEST SUBMITTED";
+	topeople = convertStringArrayToString(requestworker);
+	msgtext = "Load the request-tracker page to view what has been added.";
+	msgtext += "\n\n(THIS IS A NOTIFICATION - DO NOT REPLY TO EMAIL)";
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+}
+
+void request_EmailNotification()
+{
+	if(selected_request.equals("")) return;
+
+	dpi = getRequestTrackRec(selected_request);
+
+	subjstr = "NOTIFICATION: NEW REQUEST SUBMITTED #" + dpi.get("origid").toString();
+	topeople = convertStringArrayToString(requestworker);
+
+	msgtext  = "Request #" + dpi.get("origid").toString();
+	msgtext += "\nRequested by: " + dpi.get("requestby");
+	msgtext += "\nRequest created on: " + dpi.get("requestdate").toString().substring(0,10);
+	msgtext += "\nPriority: " + dpi.get("requestpriority");
+	msgtext += "\nType: " + dpi.get("requesttype");
+	msgtext += "\nComplete by: " + dpi.get("requestfinishby").toString().substring(0,10);
+	msgtext += "\n\n----- The request -----\n\n";
+	msgtext += dpi.get("requestabout");
+	msgtext += "\n\n-----\n\n";
+	msgtext += "PLEASE COMPLETE THIS REQUEST ASAP";
+	msgtext += "\n(THIS IS A NOTIFICATION - DO NOT REPLY TO EMAIL)";
+
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+	showMessageBox("Request notification-email sent..");
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="requestracker_panel" title="Request Tracker v.1" border="normal" collapsible="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<vbox>
+<groupbox mold="3d" width="450px">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Start" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load all requests" style="font-size:9px" onClick="listRequests(1,0)" />
+		</row>
+		<row spans="5">
+		<hbox>
+			<button label="Load incomplete" style="font-size:9px" onClick="listRequests(2,1)" />
+			<button label="Load canceled" style="font-size:9px" onClick="listRequests(2,3)" />
+			<label value="(Max. 200 requests per load)" style="font-size:8px" />
+		</hbox>
+		</row>
+	</rows>
+</grid>
+</groupbox>
+<groupbox mold="3d">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row spans=",3">
+			<label value="Request #" style="font-size:9px" />
+			<textbox id="requestorigid" disabled="true" />
+		</row>
+		<row>
+			<label value="Request by" style="font-size:9px" />
+			<listbox id="requestby" mold="select" style="font-size:9px" />
+			<label value="Type" style="font-size:9px" />
+			<listbox id="requesttype" mold="select" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Priority" style="font-size:9px" />
+			<listbox id="requestpriority" mold="select" style="font-size:9px" />
+			<label value="Finish by" style="font-size:9px" />
+			<datebox id="requestfinishby" format="yyyy-MM-dd" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Request" style="font-size:9px" />
+			<textbox id="requestabout" multiline="true" width="98%" height="80px" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+	<button id="newupdate_btn" label="New request" style="font-size:9px" onClick="newupdateRequest()" />
+	<button label="Clear" style="font-size:9px" onClick="clearInputBoxes()" />
+	<button id="notification_btn" label="Email notification" style="font-size:9px" onClick="request_EmailNotification()" />
+</hbox>
+</groupbox>
+
+<groupbox mold="3d" id="status_gb" visible="false">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Done notes" style="font-size:9px" />
+			<textbox id="workitnotes" multiline="true" width="98%" height="80px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Airwaybill#" style="font-size:9px" />
+			<textbox id="airwaybill" style="font-size:9px" width="98%" />
+		</row>
+		<row>
+			<label value="Status" style="font-size:9px" />
+			<textbox id="requeststatus" style="font-size:9px" width="98%" disabled="true" />
+		</row>
+		<row>
+			<label value="Status dated" style="font-size:9px" />
+			<hbox>
+				<datebox id="completedate" format="yyyy-MM-dd" style="font-size:9px" disabled="true" />
+				<label value="(Auto today's date)" style="font-size:8px" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+	<button id="completed_btn" label="COMPLETED" style="font-size:9px" onClick="requestStatusUpdate(1)" />
+	<button id="incomplete_btn" label="INCOMPLETE" style="font-size:9px" onClick="requestStatusUpdate(2)" />
+	<button id="cancelrequest_btn" label="Cancel request" style="font-size:9px" onClick="requestStatusUpdate(3)"/>
+</hbox>
+</groupbox>
+
+</vbox>
+
+<vbox>
+<div id="requests_holder" />
+
+<groupbox id="adminstuff" visible="false" style="background:#ff1111;padding:2px">
+<button label="Delete request" style="font-size:9px" onClick="deleteRequest()" />
+</groupbox>
+
+</vbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(requestfinishby);
+
+populateDropdownListbox(requestby, requestbypeople);
+populateDropdownListbox(requesttype, requestTypes);
+populateDropdownListbox(requestpriority, requestPriority);
+
+if(adminflag != null)
+{
+	if(adminflag.equals("1"))
+	{
+		adminstuff.setVisible(true);
+	}
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

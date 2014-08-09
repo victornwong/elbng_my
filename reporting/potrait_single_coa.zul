@@ -1,0 +1,560 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="potrait_single_coa"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE="COA - Potrait (Sample per Page)";
+MYVERSION = "v1.63";
+/*
+Purpose		: For all users generate COA template - single sample single page
+Developer	: Victor Wong
+
+**NOTES**
+11/09/2012: popup to change contact-person / some optimization
+12/08/2011: store generate-COA date as jobfolders.coaprintdate - generateCOA_clicker(String ilogono, int lilref)
+06/05/2011: added 2nd signator drop-down and print_potraitsingle_coa.zul modded accordingly to use the param
+28/03/2012: ported to byte-compiled funcs
+28/05/2012: add choiyuk signator details
+16/07/2012: added BS report template with MDL and pre-conditioning method - req by Zakiah
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+
+WITHLOGO_FLAG = "YES";
+WITHOUTLOGO_FLAG = "NO";
+INCOMPLETERESULTS_COA = "INCOMP";
+
+last_foldersearch_type = 0;
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// Useful database util func
+// ifolderno = just the origid, not the whole string
+// return false if number of results no equal to number of tests in samples
+/*
+boolean checkForComplete_Results(String ifolderno)
+{
+	retval = false;
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstm = "select jobsamples.origid as jsorigid, jobtestparameters.origid as jtporigid, " +
+		"jobtestparameters.mysoftcode, elb_chemistry_results.chemcode from " +
+		"jobsamples left join jobtestparameters " +
+		"on jobsamples.origid = jobtestparameters.jobsamples_id " +
+		"left join elb_chemistry_results " +
+		"on elb_chemistry_results.mysoftcode = jobtestparameters.mysoftcode " +
+		"where jobsamples.jobfolders_id=" + ifolderno +
+		" and jobsamples.deleted = 0";
+		
+	samprecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(samprecs.size() > 0)
+	{
+		mecount = 0;
+		
+		for(smrec : samprecs)
+		{
+			if(smrec.get("chemcode") != null)
+				mecount++;
+		}
+		
+		if(mecount == samprecs.size())
+			retval = true;
+	}
+	return retval;
+}
+*/
+
+// 27/05/2011: added itype = 1 = normal no lil-method-ref , 2 = lil-method-references template, 3=with specs
+// 12/08/2011: store generate-COA date as jobfolders.coaprintdate
+// 20/02/2012: itype 4 = general FOOD template, 5=general Food - single customer-info block
+void generateCOA_clicker(String ilogono, int itype)
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+	jfold = folderjobs_lb.getSelectedItem().getLabel();
+	extfold = samphand.extractFolderNo(jfold);
+	extfold = Integer.parseInt(extfold).toString();
+
+	// 12/08/2011: store coaprintdate
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "update jobfolders set coaprintdate='" + todaydate + "' where origid=" + extfold;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	// 1/7/2010: check if there're any results, otherwise BIRT won't run proper - no resultset error
+	/*
+	if(checkForComplete_Results(extfold) == false)
+	{
+		guihand.showMessageBox("Incomplete results for this folder - generating empty template");
+		ilogono = INCOMPLETERESULTS_COA;
+	}
+	*/
+
+	signatorr = signator_lb.getSelectedItem().getLabel();
+	signator2 = signator2_lb.getSelectedItem().getLabel();
+	theparam = "folder_no=" + extfold + "&signator=" + signatorr + "&signator2=" + signator2 + "&logo=" + ilogono;
+	uniqwindowid = kiboo.makeRandomId("pca");
+
+	runmestr = "reporting/print_potraitsingle_coa.zul";
+
+	newrflag = false;
+	newity = "1";	
+
+	switch(itype)
+	{
+		case 2:
+			runmestr = "reporting/printPotraitCOA_lilref.zul";
+			break;
+
+		case 3:
+			runmestr = "reporting/print_potraitsingle_coa_withspecs.zul";
+			break;
+
+		case 4:
+			newrflag = true;
+			break;
+
+		case 5:
+			newrflag = true;
+			newity = "2";
+			break;
+
+		case 6:
+			newrflag = true;
+			newity = "3";
+			break;
+
+		case 7:
+			newrflag = true;
+			newity = "4";
+			break;
+
+		case 8: // BS report template
+			newrflag = true;
+			newity = "5";
+			break;
+	}
+
+	if(newrflag) // 12/05/2012: extend use other formats (NO LOR)
+	{
+		runmestr = "reporting/foodgeneralcoa_v1.zul";
+		theparam += "&ity=" + newity;
+	}
+
+	guihand.globalActivateWindow(mainPlayground,"miscwindows",runmestr, uniqwindowid, theparam, useraccessobj);
+
+/*	
+	if(lilref == 1)	
+		globalActivateWindow("miscwindows","reporting/print_potraitsingle_coa.zul", uniqwindowid, theparam, useraccessobj);
+	else
+		globalActivateWindow("miscwindows","reporting/printPotraitCOA_lilref.zul", uniqwindowid, theparam, useraccessobj);
+		*/
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+	}
+}
+
+Object[] folders_lb_headers = {
+	new listboxHeaderWidthObj("FolderNo",true,"50px"),
+	new listboxHeaderWidthObj("RecvDate",true,"60px"),
+	new listboxHeaderWidthObj("TAT",true,"40px"),
+	new listboxHeaderWidthObj("DueDate",true,"60px"),
+	new listboxHeaderWidthObj("Samples",true,"40px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Status",true,"60px"),
+	new listboxHeaderWidthObj("Lab.Stat",true,"60px"),
+	new listboxHeaderWidthObj("Brnch",true,"40px"),
+	new listboxHeaderWidthObj("arcode",false,"10px"),
+	new listboxHeaderWidthObj("PKD",true,"40px"),
+	new listboxHeaderWidthObj("Share",true,"70px"),
+	};
+
+// Do the search and populate listbox
+// 25/10/2010: added pkd_samples flag display
+void startFolderJobsSearch(Datebox startd, Datebox endd, Textbox icustomer_tb, int itype)
+{
+	sdate = kiboo.getDateFromDatebox(startd);
+    edate = kiboo.getDateFromDatebox(endd);
+	cnm = icustomer_tb.getValue();
+	last_foldersearch_type = itype;
+
+	if(sdate == null || edate == null)
+    {
+		guihand.showMessageBox("Please specify start and end date for search");
+		return;
+    }
+
+    sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	// 29/3/2010: check branch
+	branch_str = "";
+
+	ibranch = useraccessobj.branch;
+	// user with ALL or SA for branch can see evertything..
+	if(!ibranch.equals("ALL") && !ibranch.equals("SA"))
+	{
+		branch_str = "and branch='" + ibranch + "' ";
+	}
+
+	sqlstatem = "select top 200 origid,branch,datecreated,tat,duedate,ar_code,folderstatus,folderno_str,labfolderstatus,pkd_samples,share_sample from JobFolders " + 
+	"where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str + " order by datecreated desc";
+
+	// 25/3/2010: new select cmd to search based on s.date, e.date and customer-name - req by Zainab
+	if(!cnm.equals(""))
+	{
+		xcnm = kiboo.replaceSingleQuotes(cnm); // play safe
+		sqlstatem = "select top 200 jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," + 
+			"jobfolders.duedate, jobfolders.tat, jobfolders.folderno_str, jobfolders.labfolderstatus, " + 
+			"jobfolders.pkd_samples, jobfolders.share_sample, customer.ar_code,customer.customer_name " +
+			"from jobfolders left join customer " +
+			"on customer.ar_code = jobfolders.ar_code where " +
+			"jobfolders.datecreated between '" + sdate + "' and '" + edate + "'" + 
+			"and customer.customer_name like '%" + xcnm + "%' " +
+			"and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " +
+			branch_str;
+	}
+	
+	// 30/9/2010: search by folder number
+	if(itype == 2)
+	{
+		flst = kiboo.replaceSingleQuotes(byfolder_tb.getValue());
+		if(!flst.equals(""))
+		{
+			sqlstatem = "select top 200 origid,branch,datecreated,duedate,ar_code,folderstatus,folderno_str,tat,labfolderstatus,pkd_samples,share_sample from JobFolders " + 
+				"where deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str + 
+				" and folderno_str like '%" + flst + "%' order by datecreated desc";
+		}
+	}
+
+	// 1/10/2010: by sample-ID - underscore in select = match any 1 char (9 in total, ALSM12345)
+	if(itype == 3)
+	{
+		smpid = kiboo.replaceSingleQuotes(bysampleid_tb.getValue());
+		if(!smpid.equals(""))
+		{
+			sqlstatem = "select top 10 count(jobfolders.origid) as jobcount, jobfolders.origid,jobfolders.branch,jobfolders.datecreated,jobfolders.duedate," + 
+			"jobfolders.ar_code,jobfolders.folderstatus,jobfolders.folderno_str,jobfolders.tat,jobfolders.labfolderstatus,jobfolders.pkd_samples, jobfolders.share_sample from JobFolders " + 
+			"left join jobsamples on jobsamples.jobfolders_id = jobfolders.origid " +
+			"where jobfolders.deleted=0 and jobfolders.folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str + 
+			" and jobsamples.sampleid_str like '_________%" + smpid + "%' " +
+			"group by jobfolders.origid,jobfolders.branch,jobfolders.datecreated,jobfolders.duedate," + 
+			"jobfolders.ar_code,jobfolders.folderstatus,jobfolders.folderno_str,jobfolders.tat,jobfolders.labfolderstatus,jobfolders.pkd_samples, jobfolders.share_sample " +
+			"order by jobfolders.datecreated desc";
+		}
+	}
+
+	// 29/11/2010: by share-sample thing
+	if(itype == 4)
+	{
+		shsmp = share_sample.getSelectedItem().getLabel();
+		sqlstatem = "select top 200 origid,branch,datecreated,duedate,ar_code,folderstatus,folderno_str,tat,labfolderstatus,pkd_samples,share_sample from JobFolders " + 
+			"where deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str +
+			" and datecreated between '" + sdate + "' and '" + edate + "'" + 
+			" and share_sample='" + shsmp + "' order by datecreated desc";
+	}
+
+	// 29/11/2010: by PKD sample
+	if(itype == 5)
+	{
+		sqlstatem = "select top 200 origid,branch,datecreated,duedate,ar_code,folderstatus,folderno_str,tat,labfolderstatus,pkd_samples,share_sample from JobFolders " + 
+			"where deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str +
+			" and datecreated between '" + sdate + "' and '" + edate + "'" + 
+			" and pkd_samples=1 order by datecreated desc";
+	}
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	reccount = tlist.size();
+	Listbox newlb = lbhand.makeVWListbox_Width(folders_searchdiv, folders_lb_headers, "folderjobs_lb", 10);
+	newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	if(tlist.size() == 0) return;
+
+	newlb.setRows(25);
+	total_numsamples = 0;
+
+	for(ilist : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+
+		ifolderno = ilist.get("origid");
+		db_folderno_str = ilist.get("folderno_str");
+
+		kabom.add(db_folderno_str);
+		kabom.add(ilist.get("datecreated").toString().substring(0,10));
+
+		kabom.add(ilist.get("tat") + " day(s)");
+		kabom.add(ilist.get("duedate").toString().substring(0,10));
+
+		// 27/2/2010: get number of samples for this folder
+		numsamples = samphand.getNumberOfSamples_InFolder(ifolderno);
+		kabom.add(numsamples.toString());
+
+		total_numsamples = total_numsamples + numsamples;
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = ilist.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				csrec = samphand.getCashSalesCustomerInfo_Rec(db_folderno_str); // get rec based on folder no
+				icompanyname = "CshAct: Undefined";
+				if(csrec != null) icompanyname = "CshAct: " + csrec.get("customer_name");
+			}
+			else
+				icompanyname = sqlhand.getCompanyName(iar_code);
+		}
+
+		kabom.add(lbhand.trimListitemLabel(icompanyname,45));
+		kabom.add(ilist.get("folderstatus"));
+		kabom.add(ilist.get("labfolderstatus"));
+		kabom.add(ilist.get("branch"));
+		kabom.add(iar_code);
+
+		pkdwop = "---";
+		if(ilist.get("pkd_samples") != null) pkdwop = (ilist.get("pkd_samples") == 0) ? "---" : "-Y-";
+		kabom.add(pkdwop);
+
+		sharesmp = kiboo.checkNullString_RetWat(ilist.get("share_sample"),"-----");
+		if(sharesmp.equals("")) sharesmp = "-----";
+		kabom.add(sharesmp);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,JOBFOLDERS_PREFIX,"");
+	}
+
+	// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+	numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+
+} // end of startFolderJobsSearch()
+
+// 11/09/2012: consolidate them general funcs here
+// itype: 1=view folder-details window, 2=change contact person, 3=populate chg-contact-person popup
+// 4=view attached docs
+void generalFuncs(int itype)
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv, "folderjobs_lb")) return;
+	ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+	iforigid = samphand.extractFolderNo(ifolderno);
+
+	switch(itype)
+	{
+		case 1:
+			theparam = "folderno=" + ifolderno;
+			uniqwindowid = kiboo.makeRandomId("vd");
+			guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul",
+				uniqwindowid, theparam, useraccessobj);
+			break;
+
+		case 2:
+			modcp = kiboo.replaceSingleQuotes(mod_contactperson.getValue());
+			sqlstm = "update jobfolders set attention='" + modcp + "' where folderno_str='" + ifolderno + "'";
+			sqlhand.gpSqlExecuter(sqlstm);
+			guihand.showMessageBox("Contact person changed..");
+			break;
+			
+		case 3: // show contact-person in popup for case 2
+			jfr = samphand.getFolderJobRec(iforigid);
+			if(jfr != null) mod_contactperson.setValue( kiboo.checkNullString(jfr.get("attention")) );
+			break;
+
+		case 4:
+			documentLinkProp.global_eq_origid = ifolderno;
+			documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+			// show CRUD buttons for admin
+			if(useraccessobj.accesslevel == 9)
+			{
+				documentLinkProp.refreshListbox.showCrudButtons();
+				documentLinkProp.refreshListbox.showAdminButtons();
+			}
+			doculink_popup.open(viewdoculinks_btn);
+			break;
+
+	}
+}
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<!-- change contact-person popup -->
+<popup id="changecontact_popup">
+<groupbox mold="3d" width="300px">
+	<label style="font-size:9px">
+	(Modify contact-person which will appear in the report)
+	</label>
+	<separator height="3px" />
+	<hbox>
+		<label value="Contact person" style="font-size:9px" />
+		<textbox id="mod_contactperson" style="font-size:9px" width="200px" />
+	</hbox>
+	<separator height="3px" />
+	<hbox>
+		<button label="Change" style="font-size:9px" onClick="generalFuncs(2)" />
+		<button label="Close" style="font-size:9px" onClick="changecontact_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- ENDOF change contact-person popup -->
+
+<div width="1200px">
+<panel id="potrait_single_coa_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<groupbox mold="3d" width="99%" style="padding:3px" >
+<hbox>
+
+<!-- search-boxes and report-buttons -->
+<vbox>
+	<grid>
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				<label value="End date" style="font-size:9px" />
+				<hbox>
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+					<button label="Search/Refresh" style="font-size:9px" onClick="startFolderJobsSearch(startdate,enddate,customer_tb,1)" />
+				</hbox>
+			</row>
+			<row spans=",3">
+				<label value="Customer" style="font-size:9px" />
+				<textbox id="customer_tb" width="99%" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+
+	<grid>
+		<rows>
+			<row>
+				<label value="By folder" style="font-size:9px" />
+				<hbox>
+					<textbox id="byfolder_tb" style="font-size:9px" />
+					<button label="Dig" onClick="startFolderJobsSearch(startdate,enddate,customer_tb,2)" style="font-size:9px" />
+				</hbox>
+			</row>
+			<row>
+				<label value="By sample.ID" style="font-size:9px" />
+				<hbox>
+					<textbox id="bysampleid_tb" style="font-size:9px" />
+					<button label="Dig" onClick="startFolderJobsSearch(startdate,enddate,customer_tb,3)" style="font-size:9px" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+
+<separator bar="true" />
+
+	<grid>
+		<rows>
+			<row>
+				<label value="Signator" style="font-size:9px" />
+				<listbox id="signator_lb" mold="select" style="font-size:9px" />
+				<label value="2nd Signator" style="font-size:9px" />
+				<listbox id="signator2_lb" mold="select" style="font-size:9px" />
+			</row>
+			<row spans="2,2">
+				<button label="General template (WITH LOR/SPEC)" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,4)" />
+				<button label="General template (NON-ACCRED) (WITH LOR/SPEC)" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,5)" />	
+			</row>
+			<row spans="2,2">
+				<button label="General template (NO LOR/SPEC)" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,6)" />
+				<button label="General template (NON-ACCRED) (NO LOR/SPEC)" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,7)" />
+			</row>
+			<row spans="4">
+				<button label="Banned-Substance template" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,8)" />
+			</row>
+		</rows>
+	</grid>
+
+	<hbox id="adminrepo" visible="false">
+		<button label="FOOD General type-5" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG,5)" />
+	</hbox>
+
+</vbox>
+<!-- ENDOF search-boxes and report-buttons -->
+
+<!-- found folders holder -->
+<vbox>
+	<hbox>
+		<button label="Folder details" style="font-size:9px" onClick="generalFuncs(1)" />
+		<button id="viewdoculinks_btn" label="View COC/PO/Documents" style="font-size:9px" onClick="generalFuncs(4)" />
+		<button id="chgcont_btn" style="font-weight:bold" label="Change contact person" onClick="generalFuncs(3); changecontact_popup.open(chgcont_btn);" />
+	</hbox>
+	<div id="folders_searchdiv" />
+	<label id="numofsamples_lbl" style="font-size:9px" />
+</vbox>
+<!-- ENDOF found folders holder -->
+
+</hbox>
+
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(signator2_lb, "dd_signators", 2);
+luhand.populateListbox_ByLookup(signator_lb, "dd_signators", 2);
+
+signator_lb.setSelectedIndex(1); // set to 2nd name in the signatories list.. 1st name is "nobody"
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminrepo.setVisible(true);
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

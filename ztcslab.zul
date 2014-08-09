@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="ztc_slab_mod"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobalfuncs.zs" />
+<zscript src="alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal/securityfuncs.zs" />
+<zscript src="alsglobal/doculink_funcs.zs" />
+<zscript src="alsglobal/emailfuncs.zs" />
+<zscript src="alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+/*
+Title: ZTC slab
+Written by: Victor Wong
+Date: 25/10/2010
+
+*NOTES*
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+selected_ztc_arcode = "";
+selected_ztc_customername = "";
+
+selected_custcat_id = "";
+selected_custcatcode = "";
+selected_custcatdesc = "";
+
+global_selected_folder = "";
+
+void showDocumentsList(String ifolderno)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+	duclink = "DOCS" + ifolderno;
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == null) return;
+
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can see everything..
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable where docu_link='" + duclink + "' ";
+
+	Listbox newlb = makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	ds_sql.close();
+}
+
+// onSelect for showZTC_Folders()
+class folderslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_folder = getListcellItemLabel(selitem,1);
+		showDocumentsList(global_selected_folder);
+	}
+}
+
+// List all the folders between today and 30 days ago.. should be enuf
+//getDateFromDatebox(hiddendatebox);
+void showZTC_Folders()
+{
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("#.Smp",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Created",true),
+	new listboxHeaderObj("Due",true),
+	new listboxHeaderObj("COA.PrnDate",true),
+	new listboxHeaderObj("COA.Date",true),
+};
+
+	rawtdate = hiddendatebox.getValue(); // get today's date
+	Calendar ikabomdate = Calendar.getInstance();
+	ikabomdate.setTime(rawtdate);
+	DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+	startdate = dateFormat.format(ikabomdate.getTime());
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, -31);
+	enddate = dateFormat.format(ikabomdate.getTime());
+	
+	Listbox newlb = makeVWListbox(folders_holder, folders_lb_headers, "folders_lb", 5);
+	jobfolder_lbl.setLabel("Job Folders : " + selected_ztc_customername);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select JobFolders.origid, JobFolders.folderno_str, JobFolders.folderstatus, JobFolders.datecreated, " +
+			"JobFolders.duedate, JobFolders.coadate, JobFolders.coaprintdate, Customer.ar_code, Customer.customer_name " +
+			"from JobFolders left join Customer " +
+			"on customer.ar_code = jobfolders.ar_code " +
+			"where datecreated between '" + enddate + "' and '" + startdate + "' and deleted=0 " + 
+			"and Customer.ar_code='" + selected_ztc_arcode + "' " +
+			"and folderstatus<>'DRAFT' order by JobFolders.datecreated desc";
+
+	jobrecs = sql.rows(sqlstm);
+	sql.close();
+	recsize = jobrecs.size();
+	if(recsize == 0 || jobrecs == null) return;
+
+	if(recsize > 5) { newlb.setRows(15); newlb.invalidate(); }
+
+	newlb.addEventListener("onSelect", new folderslb_Listener());
+
+	for(jrec : jobrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		iorigid = jrec.get("origid");
+		kabom.add(iorigid.toString());
+		folderno = jrec.get("folderno_str");
+		kabom.add(folderno);
+
+		numsamples = getNumberOfSamples_InFolder(iorigid);
+		kabom.add(numsamples.toString());
+
+		kabom.add(jrec.get("folderstatus"));
+
+		kabom.add(jrec.get("datecreated").toString().substring(0,10));
+		kabom.add(jrec.get("duedate").toString().substring(0,10));
+
+		coaprintdate = jrec.get("coaprintdate").toString().substring(0,10);
+		if(coaprintdate.equals("1900-01-01")) coaprintdate = "-----";
+		kabom.add(coaprintdate);
+
+		coadate = jrec.get("coadate").toString().substring(0,10);
+		if(coadate.equals("1900-01-01")) coadate = "-----";
+		kabom.add(coadate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// onSelect for showZTC_List()
+class ztcsLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_ztc_arcode = getListcellItemLabel(selitem,0);
+		selected_ztc_customername = getListcellItemLabel(selitem,1);
+		showZTC_Folders();
+	}
+}
+// Show ZTC list by customer-category selected
+void showZTC_List()
+{
+	Object[] ztc_lb_headers = {
+	new dblb_HeaderObj("AR.Code",false,"ar_code",1),
+	new dblb_HeaderObj("Customer.Name",true,"customer_name",1),
+	new dblb_HeaderObj("Salesman",true,"salesman",1),
+	};
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select ar_code,customer_name,salesman from zerotoleranceclients where customer_category='" + selected_custcatcode + "' order by customer_name";
+	Listbox newlb = makeVWListbox_onDB(ztcs_holder,ztc_lb_headers,"ztcs_lb",5,sql,sqlstm);
+	sql.close();
+	if(newlb.getItemCount() > 10) { newlb.setRows(15); newlb.invalidate(); }
+	newlb.addEventListener("onSelect", new ztcsLB_Listener());
+}
+
+// onSelect for showCustomerCategories()
+class custcatsLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_custcat_id = getListcellItemLabel(selitem,0);
+		selected_custcatcode = getListcellItemLabel(selitem,1);
+		selected_custcatdesc = getListcellItemLabel(selitem,2);
+		showZTC_List();
+	}
+}
+// Show stuff from customercategory table
+void showCustomerCategories()
+{
+	Object[] custcats_lb_headers = {
+	new dblb_HeaderObj("catid",false,"id",2),
+	new dblb_HeaderObj("Cat.Code",false,"category",1),
+	new dblb_HeaderObj("",true,"cat_desc",1),
+	};
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select id,category,cat_desc from customercategory";
+	Listbox newlb = makeVWListbox_onDB(customercategories_holder,custcats_lb_headers,"custcats_lb",10,sql,sqlstm);
+	sql.close();
+
+	if(newlb.getItemCount() > 10) { newlb.setRows(15); newlb.invalidate(); }
+
+	newlb.addEventListener("onSelect", new custcatsLB_Listener());
+	/*
+	dc_obj = new custcatsDoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+	*/
+}
+
+void viewDocument()
+{
+	if(!check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vd");
+	globalActivateWindow("miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+]]>
+</zscript>
+
+<window id="ztc_slab_win" width="900px" height="560px" title="ZERO TOLERANCE CLIENTS" position="center" mode="overlapped" border="normal" closable="true" sizable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<button label="X Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+<separator height="3px" />
+
+<hbox>
+<groupbox mold="3d" width="300px" style="padding:2px">
+	<caption label="Customer Categories" />
+	<div id="customercategories_holder" />
+</groupbox>
+<groupbox mold="3d" style="padding:2px">
+	<caption label="ZTC List" />
+	<div id="ztcs_holder" />
+</groupbox>
+</hbox>
+
+<hbox>
+
+<groupbox mold="3d" style="padding:3px" width="550px">
+	<caption id="jobfolder_lbl" label="Job Folders" />
+	<label value="Listing job-folders from last 31 days to today" style="font-size:9px" />
+	<separator height="3px" />
+	<div id="folders_holder" />
+</groupbox>
+
+<vbox>
+<groupbox mold="3d" style="paddinig:3px" >
+<caption label="Documents" />
+<div id="doculist_holder" />
+<separator height="3px" />
+<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+</groupbox>
+
+<zscript>
+void showExcuses()
+{
+	showMessageBox("Awaiting approval.. please wait");
+}
+</zscript>
+
+<separator height="5px" />
+<groupbox visible="false">
+<caption label="Action buttons - use with care" />
+<button label="Send COA DEMAND-EMAIL to lab" />
+<button label="Send random-excuses DELAY-APOLOGY e-mail to client" style="font-size:9px" onClick="showExcuses()" />
+<button label="Send the ULTIMATE DELAY-APOLOGY e-mail to client" style="font-size:9px" onClick="showExcuses()" />
+<button label="WORST CASE - disintegrate all traces " style="font-size:9px" onClick="showExcuses()" />
+</groupbox>
+
+</vbox>
+
+</hbox>
+
+</div>
+
+<zscript>
+<![CDATA[
+setTodayDatebox(hiddendatebox);
+
+showCustomerCategories();
+
+]]>
+</zscript>
+</window>
+</zk>

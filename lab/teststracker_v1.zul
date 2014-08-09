@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="teststracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title		: Tests tracker
+Written by	: Victor Wong
+
+Let lab users track tests and also assign chemist/technician
+
+Revisions:
+
+13/10/2011: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+
+/*
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+*/
+
+selected_mysoftcode = "";
+
+// show tests details - assigned-to, released-by and so on
+void showTestDrillin(String imysoftcode)
+{
+//testdrill_holder
+	sdate = getDateFromDatebox(startdate);
+	edate = getDateFromDatebox(enddate);
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlstm = "select js.origid,js.sampleid_str,jtp.assignedto,jtp.assignedto,jtp.assigndate," + 
+	"customer.customer_name,csci.customer_name as cashcustomer " +
+	"from jobtestparameters jtp " +
+	"left join jobsamples js on jtp.jobsamples_id = js.origid " + 
+	"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"left join stockmasterdetails smd on smd.id = jtp.mysoftcode where " +
+	"jf.deleted=0 and js.deleted=0 " +
+	"and jf.datecreated between '" + sdate + "' and '" + edate + "' " +
+	//"and (jtp.assignedto is null or jtp.assignedto='') " +
+	"and jtp.mysoftcode=" + imysoftcode;
+
+	trecs = sql.rows(sqlstm);
+
+	if(trecs.size() == 0) { sql.close(); return; }
+
+	sqlstm = "select smd.description, smd.description2 from stockmasterdetails smd where id=" + imysoftcode;
+	smdrec = sql.firstRow(sqlstm);
+
+	testdesc_grid.setVisible(false);
+	if(smdrec != null)
+	{
+		testname_lbl.setValue(smdrec.get("description"));
+		testmethod_lbl.setValue(smdrec.get("description2"));
+		testdesc_grid.setVisible(true);
+	}
+
+	sql.close();
+
+	if(testdrill_holder.getFellowIfAny("testdrill_grid") != null) testdrill_grid.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("testdrill_grid");
+	gridrows = new Rows();
+	gridrows.setParent(thegrid);
+	
+	headrow = new Row();
+	headrow.setParent(gridrows);
+	makeLabelToParent("No.","",headrow);
+	makeLabelToParent("Folder","",headrow);
+	makeLabelToParent("Samp.ID","",headrow);
+	makeLabelToParent("Customer","",headrow);
+	makeLabelToParent("AsgnTo","",headrow);
+	makeLabelToParent("AsgnDate","",headrow);
+
+	smcount = 1;
+
+	for(dpi : trecs)
+	{
+		sampidrow = new Row();
+
+		// row color for ass/unass sample		
+		rowstyle = "background:#D7FA5A";
+		textstyle = "font-size:9px;color:#000000";
+		if(dpi.get("assignedto") == null || dpi.get("assignedto").equals("")) { rowstyle="background:#BF0D22"; textstyle = "font-weigth=bold;font-size:9px;color:#ffffff"; }
+		sampidrow.setStyle(rowstyle);
+
+		sampidrow.setParent(gridrows);
+		makeLabelToParent(smcount.toString()+".",textstyle,sampidrow);
+		makeLabelToParent(dpi.get("sampleid_str"),textstyle,sampidrow);
+		makeLabelToParent(dpi.get("origid").toString(),textstyle,sampidrow);
+
+		custname = (dpi.get("customer_name") == null) ? dpi.get("cashcustomer") : dpi.get("customer_name");
+		makeLabelToParent(custname,textstyle,sampidrow);
+
+		makeLabelToParent(checkNullString(dpi.get("assignedto")),textstyle,sampidrow);
+
+		assdate = (dpi.get("assigndate") == null) ? "" : dpi.get("assigndate").toString().substring(0,10);
+		makeLabelToParent(assdate,textstyle,sampidrow);
+
+		smcount++;
+	}
+	
+	thegrid.setParent(testdrill_holder);
+
+}
+
+class drillTestsOnClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		theid = event.getTarget().getId();
+		selected_mysoftcode = theid.substring(2,theid.length());
+
+		showTestDrillin(selected_mysoftcode);
+	}
+}
+
+// Show distinct tests from cat and group
+void showTestsByCatGroup()
+{
+	sdate = getDateFromDatebox(startdate);
+	edate = getDateFromDatebox(enddate);
+	stockcat = stockcategory_lb.getSelectedItem().getLabel();
+	groupcode = groupcode_lb.getSelectedItem().getLabel();
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct jtp.mysoftcode,smd.stock_cat,smd.groupcode,smd.description,smd.description2 " +
+	"from jobtestparameters jtp " + 
+	"left join jobsamples js on jtp.jobsamples_id = js.origid " + 
+	"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+	"left join stockmasterdetails smd on smd.id = jtp.mysoftcode where " +
+	"jf.deleted=0 and js.deleted=0 " +
+	"and jf.datecreated between '" + sdate + "' and '" + edate + "' " +
+	"and smd.stock_cat='" + stockcat + "' " +
+	"and smd.groupcode='" + groupcode + "' " +
+	"group by smd.stock_cat,smd.groupcode,jtp.mysoftcode,smd.description,smd.description2 " +
+	"order by smd.groupcode,smd.description";
+
+	therecs = sql.rows(sqlstm);
+	if(therecs.size() == 0) { sql.close(); return; }
+
+	if(testslist_holder.getFellowIfAny("testslist_grid") != null) testslist_grid.setParent(null);
+	
+	thegrid = new Grid();
+	thegrid.setId("testslist_grid");
+	gridrows = new Rows();
+	gridrows.setParent(thegrid);
+
+	for(dpi : therecs)
+	{
+		testnamerow = new Row();
+		testnamerow.setStyle("background:#DDDDDD");
+		testnamerow.setParent(gridrows);
+		makeLabelToParent(dpi.get("description"),"",testnamerow);
+		
+		// calc samples for this test - by date
+		sqlstm = "select count(jtp.origid) as samplecount " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " + 
+			"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode where " +
+			"jf.deleted=0 and js.deleted=0 " +
+			"and jf.datecreated between '" + sdate + "' and '" + edate + "' " +
+			"and (jtp.assignedto is null or jtp.assignedto='') " +
+			"and jtp.mysoftcode=" + dpi.get("mysoftcode");
+
+		smco = sql.firstRow(sqlstm);
+		smcountstr = "";
+		if(smco != null) smcountstr = smco.get("samplecount").toString();
+
+		makeLabelToParent("U.Samples: " + smcountstr,"",testnamerow);
+
+		drillbutt = new Button();
+		drillbutt.setLabel("Check");
+		drillbutt.setStyle("font-size:9px");
+		drillbutt.setId("CB" + dpi.get("mysoftcode").toString());
+		drillbutt.setParent(testnamerow);
+		drillbutt.addEventListener("onClick", new drillTestsOnClick());
+
+		testmethodrow = new Row();
+		testmethodrow.setSpans("3");
+		testmethodrow.setParent(gridrows);
+		makeLabelToParent(trimListitemLabel(dpi.get("description2"),93),"font-size:8px",testmethodrow);
+	}
+	
+	sql.close();
+	thegrid.setParent(testslist_holder);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="teststracker_panel" title="Tests Tracker/Checklist v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<grid width="450px">
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Division" style="font-size:9px" />
+			<div id="userstockcat_holder" />
+			<label value="Section" style="font-size:9px" />
+			<div id="usergroupcode_holder" />
+			<button label="Load" style="font-size:9px" onClick="showTestsByCatGroup()" />
+		</row>
+	</rows>
+</grid>
+
+<grid id="testdesc_grid" width="500px" visible="false">
+	<rows>
+		<row>
+			<label value="Test" style="font-size:9px" />
+			<label id="testname_lbl" />
+		</row>
+		<row>
+			<label value="Method" style="font-size:9px" />
+			<label id="testmethod_lbl" />
+		</row>
+	</rows>
+</grid>
+
+</hbox>
+
+<hbox>
+<div id="testslist_holder" width="450px" />
+<div id="testdrill_holder" />
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+populateStockCat_dropdown(userstockcat_holder);
+populateGroupCode_dropdown(usergroupcode_holder);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

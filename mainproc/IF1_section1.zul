@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="IF1_section1_page"?>
+
+<!--
+
+IF1 form section 1
+
+Developed by: Victor Wong
+
+-->
+
+<zk>
+
+<zscript src="mirisDb_API.zs" />
+<!-- include LookupTree class -->
+<zscript src="lookuptree.zs" />
+
+<zscript>
+import groovy.sql.Sql;
+
+void fillIncidentTypeBox()
+{
+	// if1_sect1_incidenttype
+
+}
+
+</zscript>
+
+<popup id="incid_popup" width="500px" >
+<tree id="if1_sect1_incidtree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="incidtree_childrens" />
+</tree>
+
+<zscript fulfill="incid_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class getincidtype_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect1_incidtree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect1_incidenttype_dp.setValue(disptext);
+		if1_sect1_incidenttype.setValue("[" + doname + "]");
+		incid_popup.close();
+	}    
+}
+
+// LookupTree in lookuptree.zs
+LookupTree incd_lu_tree = new LookupTree(incidtree_childrens,"INCIDENTTYPE",false);
+
+// set eventlistener for the tree.
+if1_sect1_incidtree.addEventListener("onSelect", new getincidtype_event());
+
+</zscript>
+</popup>
+
+<popup id="incd_tooltip">
+Click to select incident type
+</popup>
+
+<tabbox  mold="accordion">
+ <tabs>
+  <tab label="A. Patient particulars" />
+  <tab label="B. Incident particulars" />
+  <tab label="C. Incident description" />
+  <tab label="D. Immediate corrective action" />
+  <tab label="Official use only" />
+ </tabs>
+ 
+ <tabpanels>
+ 
+ <!-- patient particulars, huge huge form this is -->
+ 
+  <tabpanel>
+	<grid>
+		<columns width="100px,">
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row height="35px">
+                <!-- first/last name input boxes -->
+				<label value="Name"/>
+				<hbox>
+					First <separator /> <textbox cols="30" id="firstname" /> <separator />
+					Last <separator /> <textbox cols="30" />
+				</hbox>
+			</row>
+			<row>
+				<label value="Sex" />
+
+				<hbox>
+				<radiogroup>
+					<grid>
+					 <rows>
+						<row><radio label="Male" /></row>
+						<row><radio label="Female" /></row>
+					 </rows>
+					</grid>
+				</radiogroup>
+				<separator width="50px" />
+				
+				<label value="Patient status" />
+				<radiogroup>
+					<grid>
+					 <rows>
+						<row><radio label="Inpatient" /></row>
+						<row><radio label="Outpatient" /></row>
+					 </rows>
+					</grid>
+				</radiogroup>
+				
+				</hbox>
+
+			</row>
+
+			<row>
+				<label value="ID/Passport No." />
+				<textbox cols="30" />
+			</row>
+			
+			<row>
+				<label value="Date of birth" />
+                <hbox>
+				<datebox format="yyyy-MM-dd" />
+                (year-month-day)
+                </hbox>
+			</row>
+			
+			<row>
+				<label value="Admission diagnosis" />
+				<textbox cols="50" />
+			</row>
+			
+			<row>
+				<label value="Race" />
+				
+				<listbox id="if1_sect1_race" mold="select" />
+				<zscript>
+				populateListBox(if1_sect1_race,"RACE",0);
+				</zscript>
+			</row>
+			
+			<row>
+				<label value="Communication problem" />
+				
+				<radiogroup>
+					<grid>
+					 <rows>
+						<row><radio label="No" /></row>
+						<row><radio label="Yes" /></row>
+					 </rows>
+					</grid>
+				</radiogroup>
+			</row>
+			
+			<row>
+				<label value="Native language" />
+				
+				<listbox id="if1_sect1_natlang" mold="select" />
+				<zscript>
+				populateListBox(if1_sect1_natlang,"NATIVELANG",0);
+				</zscript>
+			</row>
+			
+			<row>
+				<label value="Language used to communicate" />
+				<listbox id="if1_sect1_langused" mold="select" />
+				<zscript>
+				populateListBox(if1_sect1_langused,"COMMLANG",0);
+				</zscript>
+			</row>
+		</rows>
+	</grid>
+  
+  </tabpanel>
+  
+<!-- incident particulars -->  
+  <tabpanel>
+	<grid>
+		<columns width="100px,">
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row height="35px">
+				<label value="Incident type"/>
+				
+			<hbox>
+			<label id="if1_sect1_incidenttype" value="[NONE]" />
+			<label id="if1_sect1_incidenttype_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="incid_popup" tooltip="incd_tooltip"/>
+			</hbox>
+
+            </row>
+			
+			<row>
+				<label value="Date of incident" />
+
+				<hbox>
+                <datebox format="yyyy-MM-dd" />
+                (year-month-day)
+				 
+				 <separator width="40px" />
+				 
+				 <label value="Time of incident" />
+				 
+				 <separator width="20px" />
+				 
+				 <timebox id="timeincident" />
+				
+				<!--
+				 <hbox>
+					<spinner id="incid_hour" step="1" value="0" constraint="min 0 max 12" width="20px" />
+						
+						onChanging="pm.setValue(Integer.parseInt(event.value))"
+						onChange="pm.value = sp.value" cols="2" />
+						
+						
+					<label value=" : " />
+					<spinner id="incid_minute" step="1" value="0" constraint="min 0 max 59" width="20px" />
+					
+					<combobox width="20px">
+						<comboitem label="am" />
+						<comboitem label="pm" />
+					</combobox>
+				 </hbox>
+				 -->
+				</hbox>
+
+				</row> <!-- date of incident -->
+			
+			<row>
+				<label value="Date of reporting" />
+                <hbox>
+				<datebox format="yyyy-MM-dd" />
+                (year-month-day)
+                </hbox>
+			</row> <!-- date of reporting -->
+			
+			<row>
+				<label value="Unit / Department" />
+				
+				<hbox>
+				<listbox id="if1_sect1_unitdepart" mold="select" />
+				<zscript>
+				populateListBox(if1_sect1_unitdepart,"UNITSDEPARTMENT",0);
+				</zscript>
+				
+				<separator width="40px" />
+				 
+				<label value="Ward / Clinic" />
+				 
+				<separator width="20px" />
+				
+				<listbox id="if1_sect1_wardclinic" mold="select" />
+				<zscript>
+				populateListBox(if1_sect1_wardclinic,"WARDCLINIC",0);
+				</zscript>
+				
+				</hbox>
+				
+			</row> <!-- unit/department -->
+			
+			<row>
+				<label value="Specialties involved" />
+				<textbox cols="45" />
+			</row> <!-- specialties involved -->
+
+		</rows>
+		
+	</grid>
+
+  </tabpanel>
+  
+<!-- incident description -->
+  <tabpanel>
+   Provide a brief description of the incident, the people involved(including staff), any harm suffered by patient
+   and any immediate staff response. Please state facts and not opinion.
+   
+   <separator width="20px" />
+
+ <fckeditor id="inciddesc" customConfigurationsPath="fckconfig.js" toolbarSet="Basic"
+		height="300px" />
+
+	</tabpanel>
+  
+<!-- immediate corrective action -->
+  <tabpanel>
+Provide a brief description of any corrective action taken immediately following the event. 
+ 
+ <separator width="20px" />
+
+ <fckeditor id="immedaction" customConfigurationsPath="fckconfig.js" toolbarSet="Basic"
+		height="300px" />
+  
+  </tabpanel>
+  
+<!-- official use only -->
+  <tabpanel>
+  <grid>
+		<columns width="100px,">
+			<column label="Field"/>
+			<column label="Entry"/>
+		</columns>
+		
+		<rows>
+			<row>
+				<label value="Date received" />
+				<datebox />
+			</row>
+			
+			<row>
+				<label value="Incident reference" />
+				<textbox cols="60" />
+			</row>
+		</rows>
+
+   </grid>
+  </tabpanel>
+  
+ </tabpanels>
+
+</tabbox>
+
+</zk>

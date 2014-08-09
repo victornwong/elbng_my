@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customer_search_popup"?>
+<!--
+Version				: 
+Coding began date	:
+Developers			: victor
+-->
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+/*
+To show search-box to search mysoft.customer table
+Written by : Victor Wong
+Dated : way back 2009
+
+02/04/2012: ported to byte-compl
+
+*/
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+guihand = new GuiFuncs();
+
+]]>
+</zscript>
+
+<window id="customersearch_window" width="460px" title="Search customer" position="center" mode="overlapped" border="normal" closable="true">
+<div>
+	<div id="localcustomerdiv" />
+	<zscript>
+		guihand.localActivateWindow(localcustomerdiv, "dispatch/customer_searchbox.zul", "cd8", "sampreg=1",useraccessobj);
+	</zscript>
+	<separator height="5px" />
+	<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+</div>
+</window>
+</zk>
+

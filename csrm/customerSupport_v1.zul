@@ -1,0 +1,599 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customersupport_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Customer Support";
+MYVERSION = "v0.1";
+/*
+Title		: Customer Support
+Written by	: Victor Wong
+Dated		: 15/12/2012
+
+Show everything for customer -- jobs,invoice,quotations,complaints,request
+Easier management by customer-support staff
+
+*/
+/*
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+global_selected_folderno = "";
+global_selected_foldorigid = "";
+global_selected_invoiceno = "";
+global_selected_qt = "";
+
+DecimalFormat nf2 = new DecimalFormat("##.00");
+DecimalFormat nf0 = new DecimalFormat("##");
+
+//--- to be used in searchSelectCustomer_v1.zs
+class CallMeObject
+{
+	public Object companyrec;
+	public Object callme;
+
+	void doSomething()
+	{
+		if(companyrec == null) return;
+		// codes knock-off from pickCustomerDi() - change job-folder customer ar-code by admin
+		if(!lbhand.check_ListboxExist_SelectItem(foundcustomer_holder,"customers_lb")) return;
+		selectcustomer_popup.close();
+		
+		arcode_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("ar_code"),""));
+		company_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("customer_name"),"---UNDEFINED---"));
+		address1_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("address1"),""));
+		address2_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("address2"),""));
+		address3_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("address3"),""));
+		address4_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("Address4"),""));
+		tel_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("telephone_no"),""));
+		fax_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("fax_no"),""));
+		contact_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("contact_person1"),""));
+		email_lbl.setValue(kiboo.checkNullString_RetWat(companyrec.get("E_mail"),""));
+	}
+}
+
+local_callme = new CallMeObject();
+//---
+
+class jfonclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_foldorigid = lbhand.getListcellItemLabel(selitem,0);
+	}
+}
+
+class jfdclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget();
+		global_selected_folderno = lbhand.getListcellItemLabel(selitem,2);
+		theparam = "folderno=" + global_selected_folderno;
+		guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul",
+			kiboo.makeRandomId("ix"), theparam, useraccessobj);
+	}
+}
+
+// itype: 1=all, 2=7 days, 3=30 days
+void loadFolders(int itype)
+{
+Object[] jflb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("SC",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Lab",true),
+	new listboxHeaderObj("Bill",true),
+	};
+
+	arcode = local_callme.companyrec.get("ar_code");
+
+	sqlstm = "select top 200 jf.origid,jf.folderno_str,jf.datecreated,jf.folderstatus,jf.labfolderstatus,jf.uploadtomysoft, " +
+	"(select count(origid) from jobsamples where jobfolders_id=jf.origid) as samplecount " +
+	"from jobfolders jf where jf.ar_code='" + arcode + "' and jf.deleted=0 ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "and jf.datecreated between '2012-01-01' and getdate() ";
+			break;
+		case 2:
+			sqlstm += "and jf.datecreated between dateadd(dd,-7,getdate()) and getdate() ";
+			break;
+		case 3:
+			sqlstm += "and jf.datecreated between dateadd(dd,-30,getdate()) and getdate() ";
+			break;
+	}
+
+	sqlstm += " order by jf.folderno_str";
+
+	jfrecs = sqlhand.gpSqlGetRows(sqlstm);
+	Listbox newlb = lbhand.makeVWListbox(folders_holder, jflb_headers, "folders_lb", 5);
+
+	if(jfrecs.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new jfonclick_Listener());
+
+	for(dpi : jfrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("samplecount").toString());
+		kabom.add(dpi.get("folderstatus"));
+		kabom.add(dpi.get("labfolderstatus"));
+		kabom.add( (dpi.get("uploadtomysoft") == 1) ? "Y" : "N" );
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	lbhand.setDoubleClick_ListItems(newlb, new jfdclick_Listener());
+}
+
+void showInvoiceDetails(Component iwhere, String tinvno, String tinvamt)
+{
+Object[] invdet_headers = {
+	new listboxHeaderObj("StkCode",true),
+	new listboxHeaderObj("StkDesc",true),
+	new listboxHeaderObj("Item",true),
+	new listboxHeaderObj("Unit",true),
+	new listboxHeaderObj("Qty",true),
+	new listboxHeaderObj("Amt",true),
+	};
+
+	p_invoiceno.setValue(tinvno);
+	p_invoicetotal.setValue(tinvamt);
+
+	sqlstm = "select stockcode,description,itemdescription,unitprice,quantity,netamount from invoicedetail " +
+	"where invoiceno='" + tinvno + "'";
+
+	invdrecs = sqlhand.gpSqlGetRows(sqlstm);
+	Listbox newlb = lbhand.makeVWListbox(invoicedetails_holder, invdet_headers, "invdets_lb", 5);
+
+	if(invdrecs.size() == 0) return;
+	newlb.setRows(15);
+	//newlb.addEventListener("onSelect", new jfonclick_Listener());
+
+	for(dpi : invdrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("stockcode"));
+		kabom.add(sqlhand.clobToString(dpi.get("description")));
+		kabom.add(sqlhand.clobToString(dpi.get("itemdescription")));
+		kabom.add(nf2.format(dpi.get("unitprice")));
+		kabom.add(nf0.format(dpi.get("quantity")));
+		kabom.add(nf2.format(dpi.get("netamount")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	invoicedetails_popup.open(iwhere);
+}
+
+class invonclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_invoiceno = lbhand.getListcellItemLabel(selitem,1);
+	}
+}
+
+class invdclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget();
+		global_selected_invoiceno = lbhand.getListcellItemLabel(selitem,1);
+		invamt = lbhand.getListcellItemLabel(selitem,2);
+		showInvoiceDetails(selitem,global_selected_invoiceno, invamt);
+	}
+}
+
+void loadInvoices(int itype)
+{
+Object[] invlb_headers = {
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Inv.No#",true),
+	new listboxHeaderObj("Amount",true),
+	};
+
+	arcode = local_callme.companyrec.get("ar_code");
+	if(arcode == null || arcode.equals("")) return;
+
+	sqlstm = "select invoiceno, invoicedate, curcode, total from invoice where " + 
+	"code='" + arcode + "' and cancel=0 ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "and invoicedate between '2012-01-01' and getdate() ";
+			break;
+		case 2:
+			sqlstm += "and invoicedate < '2012-01-01' ";
+			break;
+	}
+
+	sqlstm += "order by invoicedate";
+	invrecs = sqlhand.gpSqlGetRows(sqlstm);
+	Listbox newlb = lbhand.makeVWListbox(invoices_holder, invlb_headers, "invoices_lb", 5);
+
+	if(invrecs.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new invonclick_Listener());
+
+	for(dpi : invrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("invoicedate").toString().substring(0,10));
+		kabom.add(dpi.get("invoiceno"));
+		itotstr = dpi.get("curcode") + " " + nf2.format(dpi.get("total"));
+		kabom.add(itotstr);
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	lbhand.setDoubleClick_ListItems(newlb, new invdclick_Listener());
+}
+
+void showQuotationDetails(Component iwhere, String iqtnum, String iqttotal)
+{
+	Object[] qtdet_headers = {
+	new listboxHeaderObj("No.",true),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method.Ref",true),
+	new listboxHeaderObj("Unit",true),
+	new listboxHeaderObj("Qty",true),
+	};
+
+	p_qtno.setValue("QT" + iqtnum);
+	p_quote_net.setValue(iqttotal);
+
+	sqlstm = "select description,description2,unitprice,quantity from elb_quotation_items " +
+	"where quote_parent=" + iqtnum;
+
+	qtdrecs = sqlhand.gpSqlGetRows(sqlstm);
+	Listbox newlb = lbhand.makeVWListbox(quotedetails_holder, qtdet_headers, "quotedets_lb", 5);
+
+	if(qtdrecs.size() == 0) return;
+	newlb.setRows(15);
+	//newlb.addEventListener("onSelect", new jfonclick_Listener());
+	
+	lncnt = 1;
+
+	for(dpi : qtdrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(lncnt.toString() + ".");
+		kabom.add(dpi.get("description"));
+		kabom.add(dpi.get("description2"));
+		kabom.add(nf2.format(dpi.get("unitprice")));
+		kabom.add(nf0.format(dpi.get("quantity")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+		lncnt++;
+	}
+
+	quotedetails_popup.open(iwhere);
+}
+
+class qtonclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_qt = lbhand.getListcellItemLabel(selitem,0);
+	}
+}
+
+class qtdclick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget();
+		global_selected_qt = lbhand.getListcellItemLabel(selitem,0);
+		qtamt = lbhand.getListcellItemLabel(selitem,3);
+		showQuotationDetails(selitem,global_selected_qt,qtamt);
+	}
+}
+
+void loadQuotations(int itype)
+{
+Object[] qtlb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("QT#",true),
+	new listboxHeaderObj("Amount",true),
+	new listboxHeaderObj("User",true),
+	};
+
+	arcode = local_callme.companyrec.get("ar_code");
+	if(arcode == null || arcode.equals("")) return;
+
+	sqlstm = "select origid,quote_net,datecreated,curcode,username from elb_quotations where " + 
+	"ar_code='" + arcode + "' order by origid";
+
+	qtrecs = sqlhand.gpSqlGetRows(sqlstm);
+	Listbox newlb = lbhand.makeVWListbox(quotations_holder, qtlb_headers, "quotes_lb", 5);
+
+	if(qtrecs.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new qtonclick_Listener());
+
+	for(dpi : qtrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add("QT" + dpi.get("origid").toString());
+		qtto = (dpi.get("quote_net") == null) ? 0 : dpi.get("quote_net");
+		itotstr = dpi.get("curcode") + " " + nf2.format(qtto);
+		kabom.add(itotstr);
+		kabom.add(dpi.get("username"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	lbhand.setDoubleClick_ListItems(newlb, new qtdclick_Listener());
+}
+
+]]>
+</zscript>
+
+<!-- quotation details popup -->
+<popup id="quotedetails_popup">
+<groupbox mold="3d" width="650px">
+<grid>
+	<rows>
+		<row style="background:#888a85">
+			<label id="p_qtno" style="font-size:9px" />
+			<label value="Amount" style="font-size:9px" />
+			<label id="p_quote_net" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<div id="quotedetails_holder" />
+<button label="Close" style="font-size:9px" onClick="quotedetails_popup.close()" />
+</groupbox>
+</popup>
+<!-- ENDOF quotation details popup -->
+
+<!-- invoice details popup -->
+<popup id="invoicedetails_popup">
+<groupbox mold="3d" width="650px">
+<grid>
+	<rows>
+		<row style="background:#888a85">
+			<label value="Invoice No." style="font-size:9px" />
+			<label id="p_invoiceno" style="font-size:9px" />
+			<label value="Amount" style="font-size:9px" />
+			<label id="p_invoicetotal" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<div id="invoicedetails_holder" />
+<button label="Close" style="font-size:9px" onClick="invoicedetails_popup.close()" />
+</groupbox>
+</popup>
+<!-- ENDOF invoice details popup -->
+
+<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers(local_callme)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<div width="1200px">
+<panel id="checklist_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<groupbox mold="3d">
+<hbox>
+	<button label="Lookup customer" style="font-size:9px" onClick="selectcustomer_popup.open(self)" />
+</hbox>
+</groupbox>
+
+<div id="workarea">
+
+<hbox>
+	<groupbox id="customerarea" mold="3d" width="350px">
+		<div style="background:#2e3436;padding:2px">
+			<label style="color:#eeeeee">
+			Customer Details
+			</label>
+		</div>
+		<separator height="3px" />
+
+	<grid>
+		<rows>
+		<row>
+			<label value="AR_CODE" style="font-size:9px" />
+			<label id="arcode_lbl" style="text-weight:bold" />
+		</row>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<textbox id="company_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<textbox id="address1_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<textbox id="address2_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<textbox id="address3_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Address4" style="font-size:9px" />
+			<textbox id="address4_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<textbox id="contact_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<textbox id="email_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<textbox id="tel_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<textbox id="fax_lbl" style="font-size:9px" width="99%" />
+		</row>
+		<row spans="2">
+			<button label="Update details.." style="font-size:9px" />
+		</row>
+		</rows>
+	</grid> <!-- ENDOF customer-details -->
+
+	</groupbox>
+</hbox>
+
+<hbox>
+	<groupbox id="quotationsarea" mold="3d" width="350px">
+		<div style="background:#2e3436;padding:2px">
+			<label style="color:#eeeeee">
+			Quotations
+			</label>
+		</div>
+		<separator height="3px" />
+		<hbox>
+			<button label="All quotations" style="font-size:9px" onClick="loadQuotations(1)" />
+		</hbox>
+		<separator height="3px" />
+		<div id="quotations_holder" />
+	</groupbox>
+
+	<groupbox id="foldersarea" mold="3d" width="350px">
+		<div style="background:#2e3436;padding:2px">
+			<label style="color:#eeeeee">
+			Job Folders
+			</label>
+		</div>
+		<separator height="3px" />
+		<hbox>
+			<button label="All folders" style="font-size:9px" onClick="loadFolders(1)" />
+			<button label="Last 7 days" style="font-size:9px" onClick="loadFolders(2)" />
+			<button label="Last 30 days" style="font-size:9px" onClick="loadFolders(3)" />
+		</hbox>
+		<separator height="3px" />
+		<div id="folders_holder" />
+	</groupbox>
+
+	<groupbox id="invoicesarea" mold="3d" width="350px">
+		<div style="background:#2e3436;padding:2px">
+			<label style="color:#eeeeee">
+			Invoices
+			</label>
+		</div>
+		<separator height="3px" />
+		<hbox>
+			<button label="Invoices todate" style="font-size:9px" onClick="loadInvoices(1)" />
+			<button label="Old invoices(pre2012)" style="font-size:9px" onClick="loadInvoices(2)" />
+		</hbox>
+		<separator height="3px" />
+		<div id="invoices_holder" />
+	</groupbox>
+
+</hbox>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customer_addaddress_wind"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+/*
+02/04/2012: optimize and port to byte-compl
+
+*/
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+Object whathuh;
+
+Object getExtraAddressRec(String iwhichrec)
+{
+	iextid = kiboo.strip_PrefixID(iwhichrec);
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstatem = "select * from CustomerAdditionalAddress where origid=" + iextid;
+	retval = sql.firstRow(sqlstatem);
+	sql.close();
+	return retval;
+}
+
+class extraAddressInput
+{
+	public Textbox ea_address1;
+	public Textbox ea_address2;
+	public Textbox ea_zip;
+	public Textbox ea_city;
+	public Textbox ea_state;
+	public Textbox ea_country;
+	public Textbox ea_primaryphone;
+	public Textbox ea_primaryfax;
+	public Textbox ea_contactperson;
+	public Textbox ea_email;
+	public Textbox ea_extranotes;
+	public Textbox ea_newaddr_recno;
+
+	public extraAddressInput(Textbox iaddress1, Textbox iaddress2, Textbox izip, Textbox icity,
+		Textbox istate, Textbox icountry, Textbox iprimaryphone, Textbox iprimaryfax, Textbox icontactperson,
+		Textbox iemail, Textbox iextranotes, Textbox inewaddr_recno)
+	{
+		ea_address1 = iaddress1;
+		ea_address2 = iaddress2;
+		ea_zip = izip;
+		ea_city = icity;
+		ea_state = istate;
+		ea_country = icountry;
+		ea_primaryphone = iprimaryphone;
+		ea_primaryfax = iprimaryfax;
+		ea_contactperson = icontactperson;
+		ea_email = iemail;
+		ea_extranotes = iextranotes;
+		ea_newaddr_recno = inewaddr_recno;
+	}
+	
+	void clearTextBox()
+	{
+		ea_address1.setValue("");
+		ea_address2.setValue("");
+		ea_zip.setValue("");
+		ea_city.setValue("");
+		ea_state.setValue("");
+		ea_country.setValue("");
+		ea_primaryphone.setValue("");
+		ea_primaryfax.setValue("");
+		ea_contactperson.setValue("");
+		ea_email.setValue("");
+		ea_extranotes.setValue("");
+		ea_newaddr_recno.setValue("");
+		
+		if(custextaddr_lb != null)
+		{
+			custextaddr_lb.clearSelection();
+			updateornewbutton.setLabel("Save address");
+		}
+	}
+
+	// whatever
+	void showDetails()
+	{
+		therec = getExtraAddressRec(ea_newaddr_recno.getValue());
+		if(therec == null)
+		{
+			guihand.showMessageBox("Sorry, cannot get new address record");
+			return;
+		}
+
+		// put values into inputboxes
+		ea_address1.setValue(therec.get("address_1"));
+		ea_address2.setValue(therec.get("address_2"));
+		ea_zip.setValue(therec.get("zip"));
+		ea_city.setValue(therec.get("city"));
+		ea_state.setValue(therec.get("state"));
+		ea_country.setValue(therec.get("country"));
+		ea_primaryphone.setValue(therec.get("primaryphone"));
+		ea_primaryfax.setValue(therec.get("primaryfax"));
+		ea_contactperson.setValue(therec.get("contactperson"));
+		ea_email.setValue(therec.get("email"));
+		ea_extranotes.setValue(therec.get("extranotes").toString());
+
+		updateornewbutton.setLabel("Update address");
+	} // end of showDetails()
+
+	// Update/Store customer additional address into table mysoft.CustomerAdditionalAddress
+	void updateExtraAddress()
+	{
+		iaddress1 = ea_address1.getValue();
+		iaddress2 = ea_address2.getValue();
+
+		// must have at least 1 line of address before saving.
+		if(iaddress1.equals("")) return;
+
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+
+		izip = ea_zip.getValue();
+		icity = ea_city.getValue();
+		istate = ea_state.getValue();
+		icountry = ea_country.getValue();
+		iprimaryphone = ea_primaryphone.getValue();
+		iprimaryfax = ea_primaryfax.getValue();
+		icontactperson = ea_contactperson.getValue();
+		iemail = ea_email.getValue();
+		iextranotes = ea_extranotes.getValue();
+
+		inewaddr_recno = kiboo.strip_PrefixID(ea_newaddr_recno.getValue());
+
+		// if no origid(newaddr_recno) .. should be a new entry
+
+		if(inewaddr_recno.equals(""))
+		{
+			sqlstatem = "insert into CustomerAdditionalAddress (ar_code,address_1,address_2,city,zip,state,country," + 
+			"primaryphone,primaryfax,contactperson,email,extranotes) values (" +
+			"'" + the_arcode + "'," +
+			"'" + iaddress1 + "'," +
+			"'" + iaddress2 + "'," +
+			"'" + icity + "'," +
+			"'" + izip + "'," +
+			"'" + istate + "'," +
+			"'" + icountry + "'," +
+			"'" + iprimaryphone + "'," +
+			"'" + iprimaryfax + "'," +
+			"'" + icontactperson + "'," +
+			"'" + iemail + "'," +
+			"'" + iextranotes + "'" +
+			")" ;
+		}
+		else
+		{
+			sqlstatem = "update CustomerAdditionalAddress set " +
+			"address_1='" + iaddress1 + "'," +
+			"address_2='" + iaddress2 + "'," +
+			"city='" + icity + "'," +
+			"zip='" + izip + "'," +
+			"state='" + istate + "'," +
+			"country='" + icountry + "'," +
+			"primaryphone='" + iprimaryphone + "'," +
+			"primaryfax='" + iprimaryfax + "'," +
+			"contactperson='" + icontactperson + "'," +
+			"email='" + iemail + "'," +
+			"extranotes='" + iextranotes + "' " +
+			"where origid=" + inewaddr_recno;
+		}
+		
+		// ival5 =	f5_recipientname.getValue();
+		// docstat.getSelectedItem().getLabel()
+		// alert(sqlstatem);
+
+		sql.execute(sqlstatem);
+		sql.close();
+		clearTextBox();
+		populateCustomerExtraAddressBox();
+	} // end of updateExtraAddress()
+
+	void deleteExtraAddress()
+	{
+		// if nothing selected, don't proceed
+		irecno = ea_newaddr_recno.getValue();
+		if(irecno.equals("")) return;
+		
+		irecno = kiboo.strip_PrefixID(irecno);
+
+		if (Messagebox.show("Delete extra address", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+		{
+			sql = sqlhand.als_mysoftsql();
+			if(sql == null) return;
+			sqlstatem = "delete from CustomerAdditionalAddress where origid=" + irecno;
+			sql.execute(sqlstatem);
+			sql.close();
+			clearTextBox();
+			populateCustomerExtraAddressBox();
+		}
+	}
+
+} // end of class extraAddressInput
+
+// populate primary address and phones
+void populateWindowsTitle(Window thiswindow)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstatem = "select ar_code,customer_name from customer where ar_code='" + the_arcode + "'";
+	therec = sql.firstRow(sqlstatem);
+	sql.close();
+	if(therec == null)
+	{
+		guihand.showMessageBox("Error! Cannot retrieve customer details");
+		return;
+	}
+	wtitles = " [" + therec.get("ar_code") + "] " + therec.get("customer_name");
+	thiswindow.setTitle(wtitles);
+}
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// put new address rec-no into hidden textbox
+		irecno = custextaddr_lb.getSelectedItem().getLabel();
+		whathuh.ea_newaddr_recno.setValue(irecno);
+		whathuh.showDetails();
+	}
+}
+
+// Populate the listbox of all extra addresses for this customer
+// uses global-var the_arcode
+void populateCustomerExtraAddressBox()
+{
+Object[] custexadd_lb_headers = {
+	new listboxHeaderWidthObj("Code",true,"80px"),
+	new listboxHeaderWidthObj("Address",true,""),
+	new listboxHeaderWidthObj("Contact",true,""),
+};
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+	sqlstatem = "select * from CustomerAdditionalAddress where ar_code='" + the_arcode + "' order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist.size() == 0) return;
+
+	newlb = lbhand.makeVWListbox_Width(extra_addr_div,custexadd_lb_headers,"custextaddr_lb",15);
+	newlb.addEventListener("onSelect", new MyListener());
+
+	String[] strarray = new String[3];
+	for(ilist : tlist)
+	{
+		t_origid = EXTADR_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		t_addr = ilist.get("address_1") + ", " + ilist.get("address_2");
+		strarray[1] = t_addr;
+		t_phonefax = ilist.get("primaryphone");
+		strarray[2] = t_phonefax;
+		lbhand.insertListItems(newlb,strarray,EXTADR_PREFIX,"");
+	}
+			
+} // end of populateCustomerExtraAddressBox()
+
+]]>
+</zscript>
+
+<window id="custaddaddressswin" title="-" width="600px" height="550px" position="center" mode="overlapped" border="normal" closable="true">
+<div>
+<textbox id="newaddr_recno" visible="false" />
+
+<groupbox mold="3d" width="100%">
+	<caption label="Additional addresses" />
+	<div id="extra_addr_div" />
+</groupbox>
+
+<hbox>
+	<button label="Refresh" style="font-size:9px" onClick="populateCustomerExtraAddressBox()" />
+	<button label="Delete" style="font-size:9px" onClick="tNewAddressInput.deleteExtraAddress()" />
+</hbox>
+
+<groupbox mold="3d" width="100%">
+	<grid>
+	<rows>
+		<row spans=",3">
+			<label value="Address 1" style="font-size:9px" />
+			<textbox id="newaddress1" style="font-size:9px" width="99%" />
+		</row>
+		<row spans=",3">
+			<label value="Address 2" style="font-size:9px" />
+			<textbox id="newaddress2" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="City" style="font-size:9px" />
+			<textbox id="newcity" style="font-size:9px" />
+			<label value="Postcode" style="font-size:9px" />
+			<textbox id="newzip" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="State" style="font-size:9px" />
+			<textbox id="newstate" style="font-size:9px" />
+			<label value="Country" style="font-size:9px" />
+			<textbox id="newcountry" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Telephone" style="font-size:9px" />
+			<textbox id="newprimaryphone" style="font-size:9px" />
+			<label value="Fax" style="font-size:9px" />
+			<textbox id="newprimaryfax" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact person" style="font-size:9px" />
+			<textbox id="newcontactperson" style="font-size:9px" />
+			<label value="Email" style="font-size:9px" />
+			<textbox id="newemail" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Extra notes" style="font-size:9px" />
+			<textbox id="newextranotes" multiline="true" style="font-size:9px" width="99%" height="50px" />
+		</row>
+	</rows>
+	</grid>
+</groupbox>
+
+<separator height="3px" />
+<hbox>
+	<button id="updateornewbutton" label="Add address" style="font-size:9px" onClick="tNewAddressInput.updateExtraAddress()" />
+	<button label="Clear fields" style="font-size:9px" onClick="tNewAddressInput.clearTextBox()" />
+	<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+</hbox>
+</div>
+
+<zscript>
+<![CDATA[
+
+populateWindowsTitle(custaddaddressswin);
+populateCustomerExtraAddressBox();
+
+tNewAddressInput = new extraAddressInput(newaddress1, newaddress2, newzip, newcity, newstate, newcountry,
+	newprimaryphone, newprimaryfax, newcontactperson, newemail, newextranotes, newaddr_recno);
+
+whathuh = tNewAddressInput;
+
+/*
+tDocumentDetails = new docDetailsInput(recname,consnum,delmethod_dd,dedate,docutype_dd);
+tDocumentDetails.showDetails();
+
+*/
+
+]]>
+</zscript>
+
+</window>
+</zk>
+

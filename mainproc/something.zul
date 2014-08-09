@@ -1,0 +1,18 @@
+<?page id="something"?>
+
+<zk>
+	<hbox>
+		<label value="thing thong incidents" id="tingtong" />
+		<separator />
+		
+		<button id="thebutton" label="dummamamma" onClick="tingtong.value = &quot; Dumaaa... &quot;" />
+		
+		
+	</hbox>
+
+	<zscript>
+
+	</zscript>
+	
+	
+</zk>

@@ -1,0 +1,1143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="resultentry_byfolder_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: lab result entry by folder
+Written by: Victor Wong
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+LEVEL_TOBEABLETO_UPDATE = 4;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/* check sampleid everyone can check
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// global var for this module
+previous_tree_folderno = "";
+
+global_folderno = "";
+
+global_selected_sampleid = ""; // both of these having the same value - some prev codes uses sampleid_fromtree
+sampleid_fromtree = "";
+
+global_folderstatus = "";
+global_labfolderstatus = "";
+
+global_selected_testorigid = "";
+global_selected_mysoftcode = "";
+
+void clearSampleMarking_Inputs()
+{
+	sampmark_tb.setValue("");
+	sampnotes_tb.setValue("");
+}
+
+void clearFolderMetadata()
+{
+	metadata_customername.setValue("");
+	metadata_extranotes.setValue("");
+	metadata_date_created.setValue("");
+	metadata_due_date.setValue("");
+	metadata_folderstatus.setValue("");
+	metadata_labfolderstatus.setValue("");
+}
+
+void clearResultInputs()
+{
+	analyte_tb.setValue("");
+	result_tb.setValue("");
+	units_tb.setValue("");
+
+	reported_check.setChecked(true); // 2/9/2010: always set reported flag as true - so no need to mod result after every entry
+	qa_flag_check.setChecked(false);
+
+	saveresult_btn.setVisible(false);
+}
+
+void showResultInputs()
+{
+	saveresult_btn.setVisible(true);
+}
+
+// clear whatever fluff carried from last dig
+void clearFluff()
+{
+	// clear sampleid -> tests listbox
+	// makeTestParametersListbox(sampleid_testparameters_div);
+	
+	if(sampleid_testparameters_div.getFellowIfAny("tests_description_lb") != null) tests_description_lb.setParent(null);
+	//makeVWListbox(sampleid_testparameters_div, testparameters_lb_headers, "tests_description_lb", 10);
+	
+	sampleid_holder_lbl.setValue("");
+}
+
+void showFolderMetadata(String ifolderno)
+{
+	therec = getFolderJobRec(ifolderno);
+	iar_code = therec.get("ar_code");
+	
+	fldtitle = therec.get("folderno_str") + " : ";
+
+	if(!iar_code.equals(""))
+	{
+		icompname = getCompanyName(iar_code);
+		fldtitle += icompname;
+	}
+
+	metadata_customername.setValue(fldtitle);
+
+	metadata_extranotes.setValue(therec.get("extranotes"));
+
+	metadata_date_created.setValue(therec.get("datecreated").toString().substring(0,10));
+	metadata_due_date.setValue(therec.get("duedate").toString().substring(0,10));
+
+	metadata_folderstatus.setValue(therec.get("folderstatus"));
+
+	metadata_labfolderstatus.setValue(therec.get("labfolderstatus"));
+
+	// save folderstatus and labfolderstatus for usage later
+	global_folderstatus = therec.get("folderstatus");
+	global_labfolderstatus = therec.get("labfolderstatus");
+	
+	metadata_labfolderstatus.setStyle("font-size:12px; font-weight:bold; background:#404040; color:#ffffff"); // default lab folderstatus style
+	
+	// if lab folderstatus = released , change background color
+	if(global_labfolderstatus.equals(FOLDERRELEASED))
+		metadata_labfolderstatus.setStyle("background:#00dd22; font-weight:bold");
+		
+	// disable all sample-marking editing and clear inputs
+	clearSampleMarking_Inputs();
+	
+	sampmark_tb.setDisabled(true);
+	sampnotes_tb.setDisabled(true);
+	updatesamplemarking_btn.setVisible(false);
+	
+	checkAllowUpdateSampleMarking();
+}
+
+// onSelect listener for showTestParametersFor_SampleID
+class testlistbox_onSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		
+		clearResultInputs();
+		
+		iorigid = getListcellItemLabel(lbitem,0);
+		imysoftcode = getListcellItemLabel(lbitem,1);
+		itestdesc = getListcellItemLabel(lbitem,2);
+
+		// show test-parameter description - testdescription_lbl def in UI
+		// toshowdesc = trimListitemLabel(itestdesc, 42 );
+		testdescription_lbl.setLabel(itestdesc);
+
+		// save JobTestParameter.origid and mysoftcode for later use
+		global_selected_testorigid = iorigid;
+		global_selected_mysoftcode = imysoftcode;
+		
+		// show test desc in analyte_tb for input - or user can enter a new analyte name, eg. QCstd3 or QC3 - analyte_tb def in UI
+		// get StockMasterDetails.description
+		stockrec = getStockMasterDetails(imysoftcode);
+		analyte_tb.setValue(stockrec.get("Description"));
+		
+		showResultInputs();
+		
+		// some some result-trails
+		populateResultTrails();
+		
+		//folderno_str = Integer.parseInt(extractFolderNo_FromSampleID(isampleid)).toString();
+
+		//alert("origid: " + iorigid + " | sampleid: " + isampleid + " | folderno_str: " + folderno_str);
+
+		//populateSamplesTestParameters(sampletests_tree,folderno_str);
+		
+		// show also the folder metadata
+		//showFolderMetadata(folderno_str);
+
+	}
+}
+
+void showTestParametersFor_SampleID(Div idiv, String isampleid)
+{
+	Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("jobtestparameter_origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+	};
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sampleidno = Integer.parseInt(extractSampleNo(isampleid)).toString();
+
+	sqlstatem2 = "select jobtestparameters.origid,jobtestparameters.mysoftcode,stockmasterdetails.description, stockmasterdetails.description2 " +
+	"from jobtestparameters left join stockmasterdetails on jobtestparameters.mysoftcode=stockmasterdetails.id " +
+	"where jobtestparameters.jobsamples_id=" + sampleidno;
+
+	teststosampleid = sql.rows(sqlstatem2);
+	sql.close();
+
+	// Listbox newlb = makeTestParametersListbox(idiv);
+	Listbox newlb = makeVWListbox(idiv, testparameters_lb_headers, "tests_description_lb", 5);
+
+	// clear global vars
+	testdescription_lbl.setLabel(""); // clear test-description label
+	global_selected_testorigid = "";
+	global_selected_mysoftcode = "";
+
+	if(teststosampleid == null || teststosampleid.size() == 0) return;
+
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new testlistbox_onSelect_Listener()); // do the onSelect listener
+
+	for(testp : teststosampleid)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(testp.get("origid").toString());
+
+		mysoftcode = testp.get("mysoftcode").toString();
+		kabom.add(mysoftcode);
+
+		testdesc = trimListitemLabel(testp.get("description"),40);
+		testmethod = trimListitemLabel(testp.get("description2"),40);
+
+		kabom.add(testdesc);
+		kabom.add(testmethod);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"true");
+	}
+}
+
+// onSelect for tree - to show sample-id for editing and whatever later
+class SampleIDSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		boolean okme = false;
+
+		clearResultInputs(); // clear result inputs
+
+		lbitem = event.getReference();
+		itemchildren = lbitem.getChildren();
+		sampleid = itemchildren.get(0).getChildren().get(0).getLabel(); // get the sample id or whatever text SM: or test-parameters
+
+		// 16/4/2010: make sure branches can see the data
+		chkbranch = useraccessobj.branch;
+		folderprefix = JOBFOLDERS_PREFIX; // default folder prefix
+		kkb = "";
+
+		// If label got from tree is > 5 chars and first 4 chars = "ALSM" .. can assume it's the sample-id
+		if(sampleid.length() > 5)
+		{
+			kkb = sampleid.substring(0,4);
+
+			if(chkbranch.equals("JB"))
+				folderprefix = JB_JOBFOLDERS_PREFIX;
+
+			if(chkbranch.equals("KK"))
+				folderprefix = KK_JOBFOLDERS_PREFIX;
+
+			// folder-prefix and admin-level check
+			if(kkb.equals(folderprefix))
+			{
+				sampleid_fromtree = sampleid;
+				okme = true;
+			}
+
+			// if something else got selected .. check here
+
+			grandparent = lbitem.getParent().getParent();
+
+			if(grandparent instanceof Tree)
+				metom = 0;
+			else
+			{
+				sampleid_fromtree = grandparent.getLabel();
+				// alert(sampleid + " | children:" + itemchildren + " | grandparent: " + grandparent_lbl);			
+				okme = true;
+			}
+
+			if(okme)
+			{
+				global_selected_sampleid = sampleid_fromtree; // save to global var
+				sampleid_holder_lbl.setValue(sampleid_fromtree); // show the sample id in Label def in UI
+
+				// show the test parameters for selected sampleid in sampleid_testparameters_div
+				showTestParametersFor_SampleID(sampleid_testparameters_div, sampleid_fromtree);
+
+				// get sample marking and notes.. can be edited now
+				sampno = Integer.parseInt(extractSampleNo(sampleid_fromtree)).toString();
+				therec = getFolderSampleRec(sampno);
+				if(therec != null)
+				{
+					// alert(sampleid_fromtree + " : " + therec);
+					sampmark_tb.setValue(therec.get("samplemarking"));
+					kkb = therec.get("extranotes");
+					if(kkb.equals(""))
+						sampnotes_tb.setValue("One sample");
+					else
+						sampnotes_tb.setValue(therec.get("extranotes"));
+				}
+
+				// clear result-trails listbox
+				if(result_trails_div.getFellowIfAny("resulttrails_lb") != null) resulttrails_lb.setParent(null);
+
+				// 26/4/2010: put in codes for document linking
+				documentLinkProp.global_eq_origid = global_folderno;
+				documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+				if(useraccessobj.accesslevel == 9)
+				{
+					documentLinkProp.refreshListbox.showCrudButtons();
+					documentLinkProp.refreshListbox.showAdminButtons();
+				}
+			}
+		}
+	}
+}
+
+// Populate tree with sampleID -> tests
+populateSamplesTestParameters(Tree itree, String ifolderno)
+{
+	// if previously loaded the same folderno.. need not reload, wasting bandwidth
+	// need to refresh - save result and such need it
+	// if(previous_tree_folderno.equals(ifolderno)) return;
+
+	previous_tree_folderno = ifolderno;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	// get all sample IDs for folderno
+	// 4/3/2010: sql statement for admin login - can see even deleted samples
+
+	sqlstatem = "select * from " + JOBSAMPLES_TABLE + " where jobfolders_id=" + ifolderno + " and deleted=0 order by sampleid_str asc";
+
+	if(useraccessobj.accesslevel > 8)
+		sqlstatem = "select * from " + JOBSAMPLES_TABLE + " where jobfolders_id=" + ifolderno + " order by sampleid_str asc";
+
+	allsampleids = sql.rows(sqlstatem);
+
+	Treechildren tocheck = itree.getTreechildren();
+	if(tocheck != null)	tocheck.setParent(null);
+
+	if(allsampleids != null && allsampleids.size() != 0)
+	{
+		// create a new treechildren for the tree
+		Treechildren mychildren = new Treechildren();
+		mychildren.setParent(itree);
+
+		String[] strarray = new String[2];
+
+		// loop through each sample IDs and get tests
+		for(eachsampleid : allsampleids)
+		{
+			sdelstr = (eachsampleid.get("deleted") == 1) ? " [del]" : "";
+
+			sampleidstr = eachsampleid.get("sampleid_str") + sdelstr;
+			//sampleidstr = padZeros5(eachsampleid.get("origid"));
+			sampleidno = eachsampleid.get("origid");
+			samplemark = eachsampleid.get("samplemarking");
+
+			// if sample id str in table ain't set.. set it. old codes didn't update the sample id str properly
+			if(sampleidstr.equals(""))
+			{
+				sampleidstr = param_folderno + padZeros5(sampleidno); // param_folderno is global, def at top
+
+				// 27/2/2010: update sampleid_str field incase of old codes never do it
+				sqls3 = "update " + JOBSAMPLES_TABLE + " set sampleid_str='" + sampleidstr + "' where origid=" + sampleidno.toString();
+				sql.execute(sqls3);
+			}
+
+			Treeitem titem = insertTreeLeaf(mychildren, sampleidstr, "font-weight:bold; background:#AACC66; color:#333333");
+
+			// get tests assigned for the sample-id
+
+			sqlstatem2 = "select * from " + JOBTESTPARAMETERS_TABLE + " where jobsamples_id=" + sampleidno.toString();
+			teststosampleid = sql.rows(sqlstatem2);
+
+			if(teststosampleid != null)
+			{
+				Treechildren newone = new Treechildren();
+				newone.setParent(titem);
+
+				// insert sample marking as leaf if available
+				if(!samplemark.equals(""))
+					insertTreeLeaf(newone, "SM: " + samplemark, "font-size:9px; background:#4466bb; color:#ffffff");
+
+				// loop through all the tests assigned and put them as leafs
+				for(eacht2s : teststosampleid)
+				{
+					mysoftcode = eacht2s.get("mysoftcode").toString();
+
+					stockrec = getStockMasterDetails(mysoftcode);
+					testdesc = "-Undefined-";
+
+					if(stockrec != null)
+						//testdesc = stockrec.get("Description") + " (" + stockrec.get("Description2") + ")" ;
+						testdesc = stockrec.get("Description");
+
+					testdesc = trimListitemLabel(testdesc, 45 );
+
+					// insertTreeLeaf(newone,testdesc,"font-size:9px");
+					strarray[0] = testdesc;
+
+					// get result from Chemistry_Results
+					resrec = getLatestResult(sampleidstr, mysoftcode);
+					finalresult = "WIP";
+
+					restyle = "font-size:9px";
+
+					if(resrec != null)
+					{
+						finalres = resrec.get("Final");
+						if(finalrec != null)
+						{
+							if(!resrec.get("Final").equals(""))
+							{
+								resunit = resrec.get("Result_Unit");
+								resunit = (resunit == null) ? "" : resunit;
+								finalresult = resrec.get("Final") + " " + resunit;
+							}
+							//finalresult = "RES";
+						}
+					}
+
+					strarray[1] = finalresult;
+					insertTreeLeaf_Multi(newone, strarray, restyle);
+				}
+			}
+		}
+	}
+
+	sql.close();
+
+} // end of populateSamplesTestParameters()
+
+// Check user's access level.. see whether can update sample markings or not.. CRUCIAL!!!
+// codes copied over from folderjobs_driller.zul
+void checkAllowUpdateSampleMarking()
+{
+	// 12/3/2010: if folder already COMMITTED or RELEASED, should not be able to change sample marking no more
+	// only allow sample marking updates if folderstatus not above
+	// god-mode level 9 access will be able to update sample marking
+	// fstatus = global_folderstatus;
+
+	lfstatus = global_labfolderstatus;
+
+	if(lfstatus.equals(FOLDERWIP) || useraccessobj.accesslevel == 9)
+	{
+		sampmark_tb.setDisabled(false);
+		sampnotes_tb.setDisabled(false);
+		updatesamplemarking_btn.setVisible(true);
+	}
+
+} // end of checkAllowUpdateSampleMarking()
+
+// Update sample marking and extra notes
+void updateSampleMarking(Textbox isampmark, Textbox isampnotes)
+{
+	if(sampleid_fromtree.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql != null)
+	{
+		sampno = Integer.parseInt(extractSampleNo(sampleid_fromtree));
+
+		isampm = replaceSingleQuotes(isampmark.getValue());
+		isampn = replaceSingleQuotes(isampnotes.getValue());
+
+		sqlstatem = "update " + JOBSAMPLES_TABLE + " set samplemarking='" + isampm + "',extranotes='" + isampn + "' where origid=" + sampno.toString();
+		sql.execute(sqlstatem);
+		sql.close();
+	}
+} // end of updateSampleMarking()
+
+void showFolderDrillerBox(String iwhich)
+{
+	if(iwhich.equals("")) return;
+
+	folderno_str = Integer.parseInt(extractFolderNo(iwhich)).toString();
+
+	therec = getFolderJobRec(folderno_str);
+
+	if(therec == null) return;
+
+	foldbranch = therec.get("branch");
+	ibranch = useraccessobj.branch;
+
+	folddeleted = therec.get("deleted");
+
+	if(folddeleted == 1)
+	{
+		showMessageBox("Folder you're searching is no longer available..");
+		return;
+	}
+
+	// only user with branch equ to folder's or admin can view them data
+	if(foldbranch.equals(ibranch) || useraccessobj.accesslevel == 9)
+	{
+		populateSamplesTestParameters(sampletests_tree,folderno_str);
+		showFolderMetadata(folderno_str);
+		clearFluff();
+		
+		global_folderno = therec.get("folderno_str"); // save a copy of the folderno_str from database
+		
+	}
+	else
+		showMessageBox("Folder you've entered is from a different branch. Access denied..");
+}
+
+void showFolderDrillerBox_NumOnly(String inum)
+{
+	if(inum.equals("")) return;
+
+	kkb = Integer.parseInt(inum);
+	samprec = getFolderSampleRec(kkb.toString());
+
+	if(samprec != null)
+	 {
+		tempfoldn = samprec.get("sampleid_str");
+		foldn = extractFolderString_FromSampleID(tempfoldn);
+		folderno_str = Integer.parseInt(extractFolderNo(foldn)).toString();
+		therec = getFolderJobRec(folderno_str);
+
+		if(therec == null) return;
+
+		foldbranch = therec.get("branch");
+		ibranch = useraccessobj.branch;
+
+		folddeleted = therec.get("deleted");
+
+		if(folddeleted == 1)
+		{
+			showMessageBox("Sample you're searching is no longer available..");
+			return;
+		}
+
+		// only user with branch equ to folder's or admin can view them data
+		if(foldbranch.equals(ibranch) || useraccessobj.accesslevel == 9)
+		{
+			populateSamplesTestParameters(sampletests_tree,folderno_str);
+			showFolderMetadata(folderno_str);
+			clearFluff();
+
+			global_folderno = therec.get("folderno_str"); // save a copy of the folderno_str from database
+		}
+		else
+			showMessageBox("Folder you've entered is from a different branch. Access denied..");
+	 }
+}
+
+class resulttrails_lb_onSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+
+		resultowner = getListcellItemLabel(lbitem,6);
+
+		res_trails_mod_btn.setDisabled(true);
+		res_trails_rem_btn.setDisabled(true);
+
+		theusername = useraccessobj.username;
+
+		// if the result trail belongs to this user.. enable the buttons or admin
+		if(resultowner.equals(theusername) || useraccessobj.accesslevel == 9)
+		{
+			res_trails_mod_btn.setDisabled(false);
+			res_trails_rem_btn.setDisabled(false);
+		}
+
+		// admin can mod any results --
+		/*
+		if(theusername.equals("toymaker") || useraccessobj.accesslevel == 9)
+		{
+			res_trails_mod_btn.setDisabled(false);
+			res_trails_rem_btn.setDisabled(false);
+		}
+		*/
+	}
+}
+
+// Populate result-trails listbox.. whatelse
+// result_trails_div
+void populateResultTrails()
+{
+	Object[] resulttrails_lb_headers = {
+	new listboxHeaderObj("chemresult_origid",false),
+	new listboxHeaderObj("#",true),
+	new listboxHeaderObj("Analyte",true),
+	new listboxHeaderObj("Result",true),
+	new listboxHeaderObj("Rpt",true),
+	new listboxHeaderObj("QC",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Date",true)
+	};
+
+	Listbox newlb = makeVWListbox(result_trails_div, resulttrails_lb_headers, "resulttrails_lb", 4);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select origid,OriginalChemName,Final,Result_Unit,reported,QA_Flag,username,Analysed_Date from " + CHEMISTRY_RESULTS_TABLE + 
+	" where SampleCode='" + global_selected_sampleid + 
+	"' and (deleted=0 or deleted is null) and mysoftcode=" + global_selected_mysoftcode +
+	" order by origid desc";
+
+	resrows = sql.rows(sqlstatem);
+	sql.close();
+
+	if(resrows == null || resrows.size() == 0) return;
+
+	newlb.setRows(8);
+	newlb.addEventListener("onSelect", new resulttrails_lb_onSelect_Listener()); // do the onSelect listener
+	numcount = 1;
+
+	for(resrec : resrows)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(resrec.get("origid").toString());
+		kabom.add(numcount.toString());
+		kabom.add(resrec.get("OriginalChemName"));
+		kabom.add(resrec.get("Final") + " " + resrec.get("Result_Unit"));
+		kkbl = (resrec.get("reported") == 1) ? "YES" : "NO";
+		kabom.add(kkbl);
+		kkbk = (resrec.get("QA_Flag").equals("1")) ? "QC" : "--";
+		kabom.add(kkbk);
+
+		kabom.add(resrec.get("username"));
+		kabom.add(resrec.get("Analysed_Date").toString().substring(0,10));
+
+		numcount++;
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// save result entry into Chemistry_Results
+void saveResult()
+{
+	// check if everything inplace
+	if(global_selected_testorigid.equals("")) return;
+	if(global_selected_mysoftcode.equals("")) return;
+
+	tanalyte = analyte_tb.getValue();
+	tresult = result_tb.getValue();
+	tunits = units_tb.getValue();
+
+	treported = (reported_check.isChecked()) ? "1" : "0";
+	tqaflag = (qa_flag_check.isChecked()) ? "1" : "0";
+
+	stockrec = getStockMasterDetails(global_selected_mysoftcode);
+
+	tmethod = stockrec.get("Description2");
+
+	// if analyte is empty, use back the old analyte name
+	if(tanalyte.equals(""))
+	{
+		tanalyte = stockrec.get("Description");
+	}
+
+	equipname = "-nada-";
+
+	chemcode = stockrec.get("NewField7"); // stockmasterdetails.newfield7 = CAS#
+	chemcode = (chemcode == null) ? "" : chemcode;
+
+	String[] resultarray = new String[16];
+
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	resultarray[0] = global_folderno;
+	resultarray[1] = global_selected_sampleid;
+	resultarray[2] = chemcode;
+	resultarray[3] = tresult;
+	resultarray[4] = tunits;
+	resultarray[5] = tresult; // finalresult using the same as result for now 19/4/2010
+	resultarray[6] = tmethod;
+	resultarray[7] = todaydate;
+
+	resultarray[8] = equipname;
+	resultarray[9] = tqaflag;
+	resultarray[10] = useraccessobj.username;
+	resultarray[11] = "RESULT";
+	resultarray[12] = global_selected_testorigid;
+	resultarray[13] = treported;
+	resultarray[14] = global_selected_mysoftcode;
+	resultarray[15] = tanalyte;
+
+	insertChemistryResult(resultarray);
+
+	// refresh the tree
+	folderno_str = Integer.parseInt(extractFolderNo(global_selected_sampleid)).toString();
+	// folderno_str = Integer.parseInt(extractFolderNo_FromSampleID(isampleid)).toString();
+	populateSamplesTestParameters(sampletests_tree,folderno_str);
+
+	populateResultTrails();
+}
+
+// Get result-trail rec and update the popup's inputs
+void ownerModifyResult()
+{
+	if(!check_ListboxExist_SelectItem(result_trails_div, "resulttrails_lb")) return;
+	
+	// 2/9/2010: check if folder already been released
+	labstat = metadata_labfolderstatus.getValue();
+
+	if(labstat.equals(FOLDERRELEASED))
+	{
+		// Admin can change results -- use with care
+		if(useraccessobj.accesslevel != 9)
+		{
+			showMessageBox("Folder was released, cannot modify result");
+			return;
+		}
+	}
+
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	resrec = getChemResult_Rec(iori);
+
+	if(resrec != null)
+	{
+		modres_origid.setValue(iori);
+
+		modres_analyte_tb.setValue(resrec.get("OriginalChemName"));
+		modres_result_tb.setValue(resrec.get("Final"));
+		modres_units_tb.setValue(resrec.get("Result_Unit"));
+
+		qaflg = Integer.parseInt(resrec.get("QA_Flag"));
+		repflg = resrec.get("reported");
+
+		modres_reported_check.setChecked((repflg==1) ? true : false);
+		modres_qa_flag_check.setChecked((qaflg==1) ? true : false);
+
+		modres_user_tb.setValue(resrec.get("username"));
+
+		modifyResult_popup.open(popupholder);
+	}
+}
+
+void modifyTheResult()
+{
+	tryuser = modres_user_tb.getValue();
+
+	if(tryuser.equals("")) return;
+
+	if(!tryuser.equals(useraccessobj.username))
+	{
+		showMessageBox("You're not the owner of this result entry");
+		return;
+	}
+
+	String[] resultarray = new String[7];
+
+	resultarray[0] = modres_analyte_tb.getValue();
+	resultarray[1] = modres_result_tb.getValue();
+	resultarray[2] = modres_units_tb.getValue();
+
+	resultarray[3] = (modres_qa_flag_check.isChecked()) ? "1" : "0";	
+	resultarray[4] = (modres_reported_check.isChecked()) ? "1" : "0";
+
+	resultarray[5] = getDateFromDatebox(hiddendatebox);
+
+	resultarray[6] = modres_origid.getValue();
+
+	updateResultTrail(resultarray);
+
+	//alert("result modified...");
+	// AUDIT
+	populateResultTrails(); // refresh result trails
+	modifyResult_popup.close(); // close the popup
+}
+
+// Allow owner to remove result-trail - keep audit-trail when it's done
+void ownerRemoveResult()
+{
+	if(!check_ListboxExist_SelectItem(result_trails_div, "resulttrails_lb")) return;
+	
+	// 2/9/2010: check if folder already been released
+	labstat = metadata_labfolderstatus.getValue();
+
+	if(labstat.equals(FOLDERRELEASED))
+	{
+		// Admin can remove results -- use with care
+		if(useraccessobj.accesslevel != 9)
+		{
+			showMessageBox("Folder was released, cannot delete result");
+			return;
+		}
+	}
+
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	resrec = getChemResult_Rec(iori);
+	remok = false;
+
+	if(resrec != null)
+	{
+		resowner = resrec.get("username");
+
+		// if it's owner of the result-trail, allow removal
+		if(resowner.equals(useraccessobj.username))
+			remok = true;
+
+		// if it's admin.. allow removal too
+		if(useraccessobj.accesslevel == 9)
+			remok = true;
+
+		// set the delete flag
+		if(remok)
+		{
+			if (Messagebox.show("Remove this result..", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+					return;
+
+			sql = als_mysoftsql();
+			if(sql == null) return;
+
+			sqlst = "update " + CHEMISTRY_RESULTS_TABLE + " set deleted=1 where origid=" + iori;
+			sql.execute(sqlst);
+			sql.close();
+
+			// AUDIT
+
+			// refresh result-trails listbox
+			populateResultTrails();
+
+		}
+		else
+			showMessageBox("Not owner.. cannot remove result trail");
+	}
+}
+
+void doSampleMarkingPopup()
+{
+	udpateSampleMarking_popup.open(updatesm_btn);
+}
+
+void doViewDoculinkPopup()
+{
+	// make sure we've some sampleid selected before showing the worksheet list
+	if(global_folderno.equals("")) return;
+	documentLinkProp.global_eq_origid = global_folderno;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+	resultworksheet_popup.open(viewdoculinks_btn);
+}
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="resultworksheet_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="resultworksheet_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<!-- allow owner of results to modify result -->
+<popup id="modifyResult_popup">
+<groupbox>
+	<caption label="Modify result" />
+	
+	<textbox id="modres_user_tb" visible="false" />
+	<textbox id="modres_origid" visible="false" />
+	
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Analyte" style="font-size:9px"/>
+				<textbox id="modres_analyte_tb" width="320px" />
+			</row>
+			<row>
+				<label value="Result" style="font-size:9px"/>
+				<hbox>
+				<textbox id="modres_result_tb" />
+				<label value="Units" style="font-size:9px"/>
+				<textbox id="modres_units_tb" />
+				</hbox>
+			</row>
+			<row>
+				<checkbox id="modres_reported_check" label="Reported" style="font-size:9px" />
+				<checkbox id="modres_qa_flag_check" label="Is QC" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Mod" style="font-size:9px" onClick="modifyTheResult()" />
+	<button label="Close" style="font-size:9px" onClick="modifyResult_popup.close()" />
+</hbox>
+</popup>
+<!-- end of popup -->
+
+<!-- allow owner of results to remove result -->
+<popup id="removeResult_popup">
+<groupbox>
+	<caption label="Remove result" />
+	<hbox>
+		<button label="Remove" />
+		<button label="Close" onClick="removeResult_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<popup id="udpateSampleMarking_popup" >
+<groupbox>
+<caption label="Update sample marking" />
+<vbox>
+	<label value="Sample marking" style="font-size:9px" />
+	<textbox id="sampmark_tb" multiline="true" width="250px" height="30px" disabled="true" style="font-size:9px" />
+	<label value="Sample description" style="font-size:9px" />
+	<textbox id="sampnotes_tb" multiline="true" height="40px" width="250px" disabled="true" style="font-size:9px" value="One sample" />
+	<hbox>
+		<button id="updatesamplemarking_btn" label="Update" onClick="updateSampleMarking(sampmark_tb,sampnotes_tb)" visible="false" style="font-size:9px" />
+		<button label="Close" onClick="udpateSampleMarking_popup.close()" style="font-size:9px" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="resultentry_byfolder_panel" title="Result entry by folder" border="normal" collapsible="true" closable="true">
+<panelchildren>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="650px">
+<north title="Find folder" collapsible="true" height="50px" >
+<div>
+	<separator height="2px" />
+	<hbox>
+		<separator width="3px" />
+		<label value="Full SampleID" style="font-size:9px" />
+		<separator width="23px" />
+		<textbox id="sampleid_tb" style="font-size:9px" />
+		<button label="Get folder" style="font-size:9px" onClick="showFolderDrillerBox(sampleid_tb.getValue())" />
+		<label value="(eg. ALSM00001 or ALSM0000100106)" style="font-size:9px" />
+
+		<button id="admintesto_btn" label="A.Test" style="font-size:9px" onClick='showFolderDrillerBox("ALSM00001") ' visible="false" />
+		<zscript>
+		if(useraccessobj.accesslevel == 9) admintesto_btn.setVisible(true);
+		</zscript>
+
+		<separator width="5px" />
+		<label value="SampleID number" style="font-size:9px" />
+		<separator width="4px" />
+		<textbox id="sampleid_num_tb" style="font-size:9px" />
+		<button label="Get folder" style="font-size:9px" onClick="showFolderDrillerBox_NumOnly(sampleid_num_tb.getValue())" />
+		<label value="(eg. 106 or 00106)" style="font-size:9px" />
+	</hbox>
+</div>
+</north>
+
+<center>
+	<borderlayout height="600px">
+		<west title="Folder details" size="35%" splittable="true" collapsible="true">
+			<div>
+			<div>
+				<label id="metadata_customername" style="font-size:10px; font-weight:bold" />
+				<grid>
+					<columns>
+						<column label="" />
+						<column label="" />
+						<column label="" />
+						<column label="" />
+					</columns>
+					<rows>
+						<row>
+							<label value="Date created" style="font-size:9px" />
+							<label id="metadata_date_created" style="font-size:9px; font-weight:bold; background:#404040; color:#ffffff" />
+							<label value="Due" style="font-size:9px" />
+							<label id="metadata_due_date" style="font-size:9px; font-weight:bold; background:#404040; color:#ffffff" />
+						</row>
+						<row>
+							<label value="FolderStat" style="font-size:9px" />
+							<label id="metadata_folderstatus" style="font-size:9px; font-weight:bold; background:#404040; color:#ffffff" />					
+							<label value="LabStat" style="font-size:9px" />
+							<label id="metadata_labfolderstatus" style="font-size:9px; font-weight:bold; background:#404040; color:#ffffff" />
+						</row>
+						<row>
+							<label value="Notes" style="font-size:9px" />
+							<textbox id="metadata_extranotes" multiline="true" height="40px" width="180px" style="font-size:9px" />
+						</row>
+					</rows>
+				</grid>
+			</div>
+				<tree id="sampletests_tree" zclass="z-dottree" rows="21" width="100%" >
+					<treecols>
+						<treecol label="SampleID/Sample Marking/Tests" />
+						<treecol label="Results" />
+					</treecols>
+				</tree>		
+			</div>
+		</west>
+		<center>
+			<borderlayout height="600px">
+				<north height="180px" >
+					<div>
+						<separator height="3px" />
+						<hbox>
+							<vbox>
+								<hbox>
+									<separator width="5px" />
+									<label value="SampleID" />
+									<label id="sampleid_holder_lbl" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+								</hbox>
+								<hbox>
+									<separator width="3px" />
+									<div id="sampleid_testparameters_div" width="550px" />
+								</hbox>
+							</vbox>
+							<vbox>
+								<button id="updatesm_btn" label="Update sample marking" onClick="doSampleMarkingPopup()" style="font-size:9px" />
+								<button id="viewdoculinks_btn" label="View/upload results worksheets" onClick="doViewDoculinkPopup()" style="font-size:9px" />
+							</vbox>
+						</hbox>
+					</div>
+				</north>
+
+				<center>
+					<borderlayout height="500px">
+						<center>
+							<div>
+								<separator height="3px" bar="true" />
+
+
+
+
+								<groupbox>
+									<caption id="testdescription_lbl" />
+									<grid>
+									<columns>
+									<column label="" />
+									<column label="" />
+									<column label="" />
+									<column label="" />
+									</columns>
+									<rows>
+									<row>
+										<label value="Analyte" style="font-size:9px"/>
+										<textbox id="analyte_tb" width="320px" />
+										<checkbox id="reported_check" label="Reported" style="font-size:9px" />
+										<checkbox id="qa_flag_check" label="Is QC" style="font-size:9px" />
+									</row>
+									<row>
+										<label value="Result" style="font-size:9px"/>
+										<textbox id="result_tb" />
+										<label value="Units" style="font-size:9px"/>
+										<combobox id="units_tb" style="font-size:9px" >
+											<comboitem label="mg/100g" />
+											<comboitem label="g/100g" />
+											<comboitem label="g/100ml" />
+											<comboitem label="mg/kg" />
+											<comboitem label="mg/100ul" />
+											<comboitem label="mg/100ml" />
+											<comboitem label="ml/100ml" />
+											<comboitem label="Percent" />
+											<comboitem label="cfu/ml" />
+											<comboitem label="cfu/100ml" />
+											<comboitem label="MPN/100ml" />
+											<comboitem label="Absent/Present" />
+											<comboitem label="Eu/ml" />
+											<comboitem label="cfu/m3" />
+											<comboitem label="cfu/cm2" />
+											<comboitem label="cfu/hand" />
+											<comboitem label="cfu/device" />
+											<comboitem label="Eu/device"/>
+											<comboitem label="Growth/No growth observed" />
+											<comboitem label="cfu/g" />
+											<comboitem label="MPN/g" />
+											<comboitem label="PN/g" />
+										</combobox>
+									</row>
+									<row>
+										<button id="saveresult_btn" label="Insert new result" visible="false" onClick="saveResult()" style="font-size:9px" />
+									</row>
+									</rows>
+									</grid>
+								</groupbox>
+
+								<separator height="3px" />
+
+								<groupbox>
+									<caption label="Result trails" />
+									<div id="result_trails_div" />
+									<separator height="3px" />
+
+									<label value="*NOTES* Latest result with Rpt=YES will be reported in the COA" style="font-size:9px;font-weight:bold" />
+									<separator height="3px" />									
+									<hbox>
+										<separator width="3px" />
+										<button id="res_trails_mod_btn" label="Modify" style="font-size:9px" onClick="ownerModifyResult()" />
+										<button id="res_trails_rem_btn" label="Remove" style="font-size:9px" onClick="ownerRemoveResult()" />
+									</hbox>
+								</groupbox>
+
+								<label id="popupholder" />
+							</div>
+						</center>
+					</borderlayout>
+				</center>
+
+			</borderlayout>
+		</center>
+	</borderlayout>
+</center>
+</borderlayout>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+setTodayDatebox(hiddendatebox);
+sampletests_tree.addEventListener("onSelect", new SampleIDSelect_Listener());
+
+documentLinkProp.document_idprefix = "WSHT";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+</zscript>
+
+</zk>

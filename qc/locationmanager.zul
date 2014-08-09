@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="locationmanager_wind"?>
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/als_lookuptree.zs" />
+
+<zscript>
+<![CDATA[
+import java.io.*;
+import org.zkoss.image.*;
+
+/*
+**NOTES**
+
+6/7/2010: added imagemap feature - hope this will work
+uses fileupload func to get something - save into server file-system ./fluff/*.jpg
+
+*/
+
+FLUFF_LOCATION = "fluff/";
+
+String[] mapper_shape_type = {"rect","poly","circ"};
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, QCOFFICER_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalCloseWindow(myincludeid);
+}
+
+String global_location_tree = "";
+lookupInputs dpInputBoxes;
+
+global_selected_location = "";
+global_selected_mapper = "";
+
+void showDepartmentDetails(Tree wTree)
+{
+	global_selected_location = wTree.getSelectedItem().getLabel();
+	sql = als_mysoftsql();
+
+	sqlstatem = "select * from lookups where name='" + global_selected_location + "'";
+	therec = sql.firstRow(sqlstatem);
+	sql.close();
+	
+	// 24/2/2010: store the lookup rec no.
+	dpInputBoxes.idlookups = therec.get("idlookups");
+
+	dpInputBoxes.name.setValue(therec.get("name"));
+	dpInputBoxes.disptext.setValue(therec.get("disptext"));
+	
+	iexpired = therec.get("expired");
+	wexpi = false;
+	if(iexpired == 1) wexpi = true;
+	
+	dpInputBoxes.expired.setChecked(wexpi);
+	
+	zzval = 0;
+
+	if(therec.get("intval") != null)
+	zzval = (int)therec.get("intval");
+
+	dpInputBoxes.intvalue.setValue(zzval);
+
+	dpInputBoxes.value1.setValue(therec.get("value1"));
+	dpInputBoxes.value2.setValue(therec.get("value2"));
+	dpInputBoxes.value3.setValue(therec.get("value3"));
+	dpInputBoxes.value4.setValue(therec.get("value4"));
+
+	mapfilename = therec.get("value5");
+	dpInputBoxes.value5.setValue(mapfilename); // 7/7/2010: to store the map/pic filename
+
+	// try to load the map/picture
+	if(!mapfilename.equals(""))
+	{
+		img = loadShowImage(mapfilename);
+		myimage.setContent(img);
+	}
+	else
+	{
+		img = loadShowImage("img/defender.gif"); // show whatever to user if no map/picture uploaded
+		myimage.setContent(img);
+	}
+
+} // end of showDepartmentDetails()
+
+void verifyDelete(Tree itypetree, lookupInputs winputs)
+{
+    if (Messagebox.show("This is a hard-delete, you know what you are doing right? You sure you want to do it?", "Delete",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) == Messagebox.YES)
+	{
+		// play safe - if expired = false, set to true, won't delete completely at first
+		if(winputs.expired.isChecked() == false)
+		{
+			winputs.expired.setChecked(true);
+			updateLookupItem(itypetree,winputs);
+		}
+		else
+		{
+			// if already checked as expired, do a hard-delete
+			deleteLookupItem(itypetree,winputs);
+			winputs.clearValues();
+		}
+	}
+}
+
+// Let user upload a map/picture
+void mapUploader_clicker()
+{
+	// make sure user selected a lookup item
+	idthing = dpInputBoxes.name.getValue();
+	if(idthing.equals("")) return;
+
+	Object media = Fileupload.get();
+	if(media instanceof org.zkoss.image.Image)
+	{
+		org.zkoss.image.Image img = (org.zkoss.image.Image) media;
+		myimage.setContent(img);
+		//imagegrid.setWidth(""+(img.getWidth()+10)+"px");
+
+		rawfilename = media.getName();
+		thefilename = FLUFF_LOCATION + rawfilename; // fluff_location def at top
+
+		// check if file exist
+		if(realPath_FileExist(thefilename))
+		{
+			thefilename = FLUFF_LOCATION + makeRandomId("v") + rawfilename; // add a random prefix for filename
+		}
+
+		dpInputBoxes.value5.setValue(thefilename); // save filename
+
+		FileOutputStream foutstream = new FileOutputStream(session.getWebApp().getRealPath(thefilename));
+		wopee = img.getByteData();
+		foutstream.write(wopee);
+		foutstream.close();
+	}
+	else if (media != null)
+	{
+		Messagebox.show("Not an image: "+media, "Error", Messagebox.OK, Messagebox.ERROR);
+	}
+}
+
+Object[] mapperpos_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Area.ID",true),
+	new listboxHeaderObj("Shape",true),
+	new listboxHeaderObj("Coords",true),
+};
+
+// onSelect listener for showMapperPositions(String imana)
+class mapper_pos_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// populate the mapper popup input boxes and set global var
+		global_selected_mapper = mapperpos_lb.getSelectedItem().getLabel(); // first col is the Mapper_Pos.origid
+		maprec = getMapperPos_Rec(global_selected_mapper);
+		
+		if(maprec != null)
+		{
+			mapper_areaid_tb.setValue(maprec.get("area_id"));
+			mapper_coords_tb.setValue(maprec.get("coords"));
+			shapey = maprec.get("shape");
+			matchListboxItemsColumn(mapper_shape_lb,shapey,0);
+		}
+	}
+}
+
+// Populate popup div with whatever mapper-positions stored
+// uses Mapper_Pos table
+void showMapperPositions(String imana)
+{
+	Listbox newlb = makeVWListbox(mapper_pos_div, mapperpos_lb_headers, "mapperpos_lb", 5);
+	
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select * from Mapper_Pos where parent_id='" + imana + "'";
+	mappos = sql.rows(sqlstm);
+	sql.close();
+
+	if(mappos.size() < 1) return;
+
+	newlb.addEventListener("onSelect", new mapper_pos_Listener());
+	newlb.setRows(15);
+
+	for(mpi : mappos)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(mpi.get("origid").toString());
+		kabom.add(mpi.get("area_id"));
+		kabom.add(mpi.get("shape"));
+
+		coords = mpi.get("coords");
+		if(coords.length() > 30)
+			coords = trimListitemLabel(coords,30) + "...";
+			
+		if(coords.equals("")) coords = "----------";
+		kabom.add(coords);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Do abit of map/picture imagemap thing
+void mapper_clicker()
+{
+	mapfn = dpInputBoxes.value5.getValue();
+	if(mapfn.equals("")) return;
+	
+	if(global_selected_location.equals("")) return;
+	
+	mapper_where_lbl.setLabel(global_selected_location);
+	
+	mapperClearFields_clicker(); // clear all mapper input boxes
+
+	kipe = loadShowImage(mapfn);
+	popupimage.setContent(kipe);
+	
+	// show whatever mapper positions stored in db
+	showMapperPositions(global_selected_location);
+
+	viewmap_popup.open(expired_lbl);
+}
+
+// Just clear the mapper input boxes
+void mapperClearFields_clicker()
+{
+	global_selected_mapper = ""; // reset selected mapper origid too
+	mapper_areaid_tb.setValue("");
+	mapper_shape_lb.setSelectedIndex(0);
+	mapper_coords_tb.setValue("");
+}
+
+// Add new imagemap coordinates to Mapper_Pos
+void mapperAdd_clicker()
+{
+	if(global_selected_location.equals("")) return;
+
+	mareaid = replaceSingleQuotes(mapper_areaid_tb.getValue());
+	mcoords = replaceSingleQuotes(mapper_coords_tb.getValue());
+	mshape = mapper_shape_lb.getSelectedItem().getLabel();
+
+	if(mareaid.equals("")) return;
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "insert into Mapper_Pos (area_id,shape,coords,parent_id) values ('" + mareaid + "','" + mshape + "','" + mcoords + "','" + global_selected_location + "')";
+	sql.execute(sqlstm);
+	sql.close();
+
+	showMapperPositions(global_selected_location); // refresh
+}
+
+void mapperUpdate_clicker()
+{
+	if(global_selected_mapper.equals("")) return;
+
+	mareaid = replaceSingleQuotes(mapper_areaid_tb.getValue());
+	mcoords = replaceSingleQuotes(mapper_coords_tb.getValue());
+	mshape = mapper_shape_lb.getSelectedItem().getLabel();
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update Mapper_Pos set area_id='" + mareaid + "',coords='" + mcoords + "',shape='" + mshape + "' where origid=" + global_selected_mapper;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	showMapperPositions(global_selected_location); // refresh
+}
+
+void mapperDelete_clicker()
+{
+	if(mapperpos_lb.getSelectedIndex() == -1) return;
+	maporigid = mapperpos_lb.getSelectedItem().getLabel(); // first col is origid
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "delete from Mapper_Pos where origid=" + maporigid;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	showMapperPositions(global_selected_location); // refresh
+	mapperClearFields_clicker(); // clear inputboxes
+}
+
+]]>
+</zscript>
+
+<popup id="viewmap_popup">
+<groupbox>
+<caption id="mapper_where_lbl" label="..." />
+<hbox>
+	<image id="popupimage" />
+	<groupbox>
+		<caption label="Mapper" />
+
+		<div id="mapper_pos_div" width="350px" />
+		<separator height="3px" />
+		
+		<hbox>
+			<label value="Area.ID" style="font-size:9px" />
+			<separator width="18px" />
+			<textbox id="mapper_areaid_tb" style="font-size:9px" />
+
+			<label value="Shape" style="font-size:9px" />
+			<listbox id="mapper_shape_lb" mold="select" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Coordinates" style="font-size:9px" />
+			<textbox id="mapper_coords_tb" multiline="true" height="50px" width="280px" style="font-size:9px" />
+		</hbox>
+		<separator height="3px" />
+		<hbox>
+			<button label="New" style="font-size:9px" onClick="mapperClearFields_clicker()" />
+			<button label="Add" style="font-size:9px" onClick="mapperAdd_clicker()" />
+			<button label="Update" style="font-size:9px" onClick="mapperUpdate_clicker()" />
+			<button label="Delete" style="font-size:9px" onClick="mapperDelete_clicker()" />
+			<button label="Close" onClick="viewmap_popup.close()" style="font-size:9px" />
+		</hbox>
+	</groupbox>
+</hbox>
+</groupbox>
+</popup>
+
+<window id="locationmanager_window" title="Locations Manager" width="770px" height="500px" position="top,left"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+<vbox>
+
+<label id="kkloca" />
+
+<hbox>
+
+<groupbox mold="3d" width="430px">
+<caption label="Locations Tree" />
+<tree id="location_tree" zclass="z-dottree" rows="20" onSelect="showDepartmentDetails(location_tree)" >
+	<treecols>
+		<treecol label="Location" />
+		<treecol label="Description" />
+	</treecols>
+</tree>
+</groupbox>
+
+<groupbox mold="3d" width="100%">
+<caption label="Location details" />
+
+<grid>
+<columns>
+	<column label="Field" />
+	<column label="Entry" />
+</columns>
+
+<rows>
+    <row>
+		<label value="Location code" style="font-size:9px" />
+		<textbox id="name" style="font-size:9px" />
+    </row>
+
+    <row>
+		<label value="Code Integer" style="font-size:9px" />
+		<intbox id="intval" style="font-size:9px" />
+    </row>
+
+
+    <row>
+		<label value="Description" style="font-size:9px" />
+		<textbox id="zzdisptext" style="font-size:9px" width="200px" />
+    </row>
+
+    <row>
+		<label id="expired_lbl" value="Expired" style="font-size:9px" />
+		<checkbox id="expired" />
+    </row>
+
+    <row>
+		<label value="HOD Name" style="font-size:9px" />
+		<textbox id="hodname_value1" style="font-size:9px" />
+    </row>
+
+    <row>
+		<label value="Ext No" style="font-size:9px" />
+		<textbox id="hodextno_value2" style="font-size:9px" />
+    </row>
+
+    <row>
+		<label value="Telephone" style="font-size:9px" />
+		<textbox id="hodtel_value3" style="font-size:9px" />
+    </row>
+
+    <row>
+		<label value="Email" style="font-size:9px" />
+		<textbox id="hodemail_value4" style="font-size:9px" width="200px" />
+
+		<textbox id="hiddenbox" visible="false" />
+    </row>
+	
+	<row>
+		<label value="Map/Picture" style="font-size:9px" />
+		<hbox>
+		<textbox id="mappicture_value5" style="font-size:9px" disabled="true" />
+		<button label="Upload" style="font-size:9px" onClick="mapUploader_clicker()" />
+		<button id="mapper_btn" label="Mapper" style="font-size:9px" onClick="mapper_clicker()" />
+		</hbox>
+    </row>
+	
+</rows>
+</grid>
+
+<separator />
+
+<div id="crubbuttons">
+    <hbox>
+        <button id="newthing_btn" label="New" style="font-size:9px" onClick="dpInputBoxes.clearValues()" />
+        <button label="Insert" style="font-size:9px" onClick="insertLookupItem(location_tree,dpInputBoxes)" />
+        <button label="Update" style="font-size:9px" onClick="updateLookupItem(location_tree,dpInputBoxes)" />
+        <button label="Delete" style="font-size:9px" onClick="verifyDelete(location_tree,dpInputBoxes)" />
+		<button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+    </hbox>
+</div>
+
+<separator height="2px" />
+
+<image id="myimage" height="100px" width="200px" />
+
+</groupbox>
+
+</hbox>
+</vbox>
+</div>
+
+<zscript>
+
+global_location_tree = LOCATIONS_TREE_SHAHALAM; // always default to SA
+mybranch = useraccessobj.branch;
+
+populateDropdownListbox(mapper_shape_lb, mapper_shape_type);
+
+kkloca.setValue(mybranch);
+
+if(mybranch.equals("JB")) global_location_tree = LOCATIONS_TREE_JB;
+if(mybranch.equals("KK")) global_location_tree = LOCATIONS_TREE_KK;
+
+dpInputBoxes = new lookupInputs(name,zzdisptext,expired,intval,
+    hodname_value1, hodextno_value2, hodtel_value3, hodemail_value4,
+    mappicture_value5, hiddenbox, hiddenbox, hiddenbox,
+    global_location_tree, location_tree);
+	
+showLookupTree(global_location_tree, location_tree);
+
+</zscript>
+
+</window>
+</zk>

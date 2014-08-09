@@ -1,0 +1,902 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="grn_maker_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Stock-In / GRN Maker
+Written by: Victor Wong
+
+**NOTES**
+
+tblstockinmaster.newfield10 = apcode
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+MINACCESSLEVEL_UNCOMMIT = 4;
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+selected_grn_id = "";
+selected_grn_supplier = "";
+selected_grn_vouchernumber = "";
+lastgrn_loadtype = 1;
+
+selected_grnitem_id = "";
+selected_grn_committed = "";
+
+//--- linking documents related
+void doViewDoculinkPopup()
+{
+	// make sure something to look-for in table - 20/10/2010: customize this for other linking-id
+	if(selected_grn_vouchernumber.equals("")) return;
+
+	documentLinkProp.global_eq_origid = selected_grn_vouchernumber;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+// List all documents linked to supplier
+void showDocumentsList(String selected_id)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("Description",true,"file_description",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + selected_id;
+
+	ds_sql = lgk_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+	{
+		sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+}
+
+void viewDocument()
+{
+	if(!check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vd");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+//--- ENDOF linking documents related
+
+//----------- Supplier picker
+
+// From supplier's listbox- return the selected item and which column (icol, zero-start)
+// make use of: supplier_picker_div and suppliers_lb
+String getSupplierListBoxItem(int icol)
+{
+	retval = "";
+
+	if(!check_ListboxExist_SelectItem(supplier_picker_div, "suppliers_lb")) return retval;
+	/*
+	if(supplier_picker_div.getFellowIfAny("suppliers_lb") == null) return retval;
+	if(suppliers_lb.getSelectedIndex() == -1) return retval;
+	*/
+	
+	supprec = suppliers_lb.getSelectedItem();
+	retval = getListcellItemLabel(supprec,icol);
+	return retval;
+}
+
+class supplierLB_DoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//selitem = suppliers_lb.getSelectedItem();
+		suppapcode = getSupplierListBoxItem(1);
+		suppname = getSupplierListBoxItem(2);
+
+		// this part customize for module
+		sim_newfield10.setValue(suppapcode);
+		suppliername_lbl.setValue(suppname);
+
+		suppliers_lb.clearSelection();
+		supplierpickerPopup.close();
+	}
+}
+
+// Populate supplier listbox
+// supplier_picker_div
+void populateSupplierPicker(String isupname)
+{
+Object[] supplierpicker_lb_headers = {
+
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("APCode",true),
+	new listboxHeaderObj("Supplier.Name",true),
+	new listboxHeaderObj("Cont.person",true),
+	new listboxHeaderObj("Phone",true),
+	new listboxHeaderObj("Fax",true),
+};
+
+	sqlstm = "select top 50 ID,APCode,SupplierName,Phone,Fax,CPerson1 from SupplierDetail where " + 
+	"SupplierName like '%" + isupname + "%' or APCode like '%" + isupname + "%' order by SupplierName";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	supprecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(supprecs.size() == 0)
+	{
+		showMessageBox("Cannot find supplier.. please try again");
+		return;
+	}
+
+	Listbox newlb = makeVWListbox(supplier_picker_div, supplierpicker_lb_headers, "suppliers_lb", 12);
+
+	for(supplier : supprecs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(supplier.get("ID").toString());
+		kabom.add(supplier.get("APCode"));
+		kabom.add(supplier.get("SupplierName"));
+
+		cperson1 = (supplier.get("CPerson1") == null) ? "-----" : supplier.get("CPerson1");
+		cperson1 = trimListitemLabel(cperson1,20);
+		kabom.add(cperson1);
+
+		phone = (supplier.get("Phone") == null) ? "-----" : supplier.get("Phone");
+		phone = trimListitemLabel(phone,15);
+		kabom.add(phone);
+
+		fax = (supplier.get("Fax") == null) ? "-----" : supplier.get("Fax");
+		fax = trimListitemLabel(fax,15);
+		kabom.add(fax);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+	dc_obj = new supplierLB_DoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// Search supplier clicker for popup
+void searchSupplier_Clicker()
+{
+	supnameinp = sp_name_tb.getValue();
+	if(supnameinp.equals("")) return;
+	populateSupplierPicker(supnameinp);
+}
+
+// Just populate the supplier-info popup with whatever supplier picked
+void populateViewSupplierInfo(String isuppid)
+{
+	supprec = getSupplier_Rec(isuppid);
+	if(supprec == null) return;
+	
+	//suppinfo_holder_lbl
+	
+	cperson1 = (supprec.get("CPerson1") == null) ? "-----" : supprec.get("CPerson1");
+	phone = (supprec.get("Phone") == null) ? "-----" : supprec.get("Phone");
+	fax = (supprec.get("Fax") == null) ? "-----" : supprec.get("Fax");
+	email = (supprec.get("Email") == null) ? "-----" : supprec.get("Email");
+	
+	
+	suppinfo = 	supprec.get("SupplierName") + "\n" +
+		supprec.get("Supadd1") + "\n" +
+		supprec.get("Supadd2") + "\n" +
+		supprec.get("SupAdd3");
+		
+	suppcontact = "Tel: " + phone + "\n" +
+		"Fax: " + fax + "\n" +
+		"Email: " + email + "\n" +
+		"Contact: " + cperson1;
+		
+	suppinfo_apcode_lbl.setValue("AP Code: " +  supprec.get("APCode"));
+	suppinfo_fulladdr_lbl.setValue(suppinfo);
+	suppinfo_contact_lbl.setValue(suppcontact);
+}
+
+// from popup clicker, show supplier info only
+void viewSupplierInfo_Clicker()
+{
+	suppid = getSupplierListBoxItem(0);
+	if(suppid.equals("")) return;
+	populateViewSupplierInfo(suppid);
+	supplierinfo_popup.open(suppsearch_btn);
+}
+//----------- end of supplier picker
+
+void toggleStuff(boolean iwhat)
+{
+	// admin no need to toggle anything.. access all!!!
+	//if(useraccessobj.accesslevel == 9) return;
+
+	// toggle the buttons
+	//commitgrn_btn.setDisabled(iwhat);
+	deletegrn_btn.setDisabled(iwhat);
+	additem_btn.setDisabled(iwhat);
+	updateitem_metadata_btn.setDisabled(iwhat);
+	removeitem_btn.setDisabled(iwhat);
+	savegrndetails_btn.setDisabled(iwhat);
+	linksupplier_btn.setDisabled(iwhat);
+	
+	sim_description.setDisabled(iwhat);
+}
+
+void clearGRN_inputs()
+{
+	// reset all global vars
+	selected_grn_id = "";
+	selected_grn_supplier = "";
+	selected_grn_vouchernumber = "";
+	selected_grnitem_id = "";
+	selected_grn_committed = "";
+
+	sim_newfield10.setValue("");
+	suppliername_lbl.setValue("");
+	sim_description.setValue("");
+
+	// remove listboxes - documents and grn-items
+	if(doculist_holder.getFellowIfAny("doculinks_lb") != null) doculinks_lb.setParent(null);
+	if(grn_items_holder.getFellowIfAny("grnitems_lb") != null) grnitems_lb.setParent(null);
+
+	// remove grn title label
+	grn_lbl.setValue("1. GRN Details");
+
+	toggleStuff(false); // enable all buttons
+}
+
+void showGRNMetadata()
+{
+	stkinmstrec = getStockInMaster_rec(selected_grn_id);
+	if(stkinmstrec == null) return;
+
+	sim_newfield10.setValue(stkinmstrec.get("NewField10"));
+	sim_description.setValue(stkinmstrec.get("Description"));
+
+	suppname = "";
+	supprec = getSupplier_Rec_ByCode(selected_grn_supplier);
+	if(supprec != null) suppname = supprec.get("SupplierName");
+
+	suppliername_lbl.setValue(suppname);
+
+	showDocumentsList(selected_grn_vouchernumber); // show linking documents
+}
+
+// onSelect for loadGRN()
+class grnlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_grn_id = getListcellItemLabel(selitem,0);
+		selected_grn_supplier = getListcellItemLabel(selitem,6);
+		selected_grn_vouchernumber = getListcellItemLabel(selitem,2);
+		selected_grn_committed = getListcellItemLabel(selitem,7);
+
+		// update vouchernumber
+		if(selected_grn_vouchernumber.equals("-U-"))
+		{
+			propvchnum = GRNPREFIX + padZeros5(Integer.parseInt(selected_grn_id));
+			sqlstm = "update tblstockinmaster set vouchernumber='" + propvchnum + "' where id=" + selected_grn_id;
+
+			sql = lgk_mysoftsql();
+			if(sql == null) return;
+			sql.execute(sqlstm);
+			sql.close();
+
+			selected_grn_vouchernumber = propvchnum;
+			setListcellItemLabel(selitem,2,propvchnum);
+		}
+
+		// show metadata
+		grn_lbl.setLabel("1. GRN Details :: " + selected_grn_vouchernumber);
+		showGRNMetadata();
+		showGRNItemsListbox(selected_grn_vouchernumber);
+
+		toggleStuff(false);
+		commitgrn_btn.setLabel("Commit");
+
+		// check if GRN already committed - disable some of the buttons and stuff
+		if(selected_grn_committed.equals("-Y-"))
+		{
+			commitgrn_btn.setLabel("Uncommit");
+			toggleStuff(true);
+		}
+	}
+}
+
+// Load GRN thing from tblStockInMaster
+// loadtype: 1=all, 2=incomplete, 3=completed
+// make use of tblstockinmaster.posted for COMMITTED status
+void loadGRN(int loadtype)
+{
+Object[] grnlb_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("Date.Crt",true),
+	new listboxHeaderObj("Trk.###",true),
+	new listboxHeaderObj("Ref.Code",true),
+	new listboxHeaderObj("Supplier",true),
+	new listboxHeaderObj("Notes",true),
+	new listboxHeaderObj("Recv.Date",true),
+	new listboxHeaderObj("apcode",false),
+	new listboxHeaderObj("CMT",true),
+	};
+	
+	Listbox newlb = makeVWListbox(stockins_holder,grnlb_headers,"stockin_lb",5);
+	lastgrn_loadtype = loadtype;
+
+	sqlstm = "select top 50 id,strdate,vouchernumber,reference,posted,newfield10,description,entrydate from tblstockinmaster ";
+
+	switch(loadtype)
+	{
+		case 2:
+			sqlstm += " where entrydate='1900-01-01'";
+			break;
+		case 3:
+			sqlstm += " where entrydate<>'1900-01-01' ";
+			break;
+	}
+	
+	sqlstm += " order by strdate desc";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	stkinrecs = sql.rows(sqlstm);
+
+	if(stkinrecs.size() == 0)
+	{
+		sql.close();
+		return;
+	}
+
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new grnlb_Listener());
+
+	for(dpi : stkinrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("strdate").toString().substring(0,10));
+		kabom.add(dpi.get("vouchernumber"));
+
+		refn = (dpi.get("reference") == null) ? "---" : dpi.get("reference");
+		kabom.add(refn);
+
+		// show supplier name from ap-code stored in newfield10
+		apcode = dpi.get("newfield10");
+		suppname = "--UNDEF--";
+		sqlstm = "select suppliername from supplierdetail where apcode='" + apcode + "'";
+		suprec = sql.firstRow(sqlstm);
+		if(suprec != null) suppname = suprec.get("suppliername");
+		kabom.add(suppname);
+
+		kabom.add(dpi.get("description"));
+		
+		recvdate = dpi.get("entrydate").toString().substring(0,10);
+		if(recvdate.equals("1900-01-01")) recvdate = "--BULUM--";
+		kabom.add(recvdate);
+
+		kabom.add(apcode);
+
+		posted = (dpi.get("posted")) ? "-Y-" : "---";
+		kabom.add(posted);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	sql.close();
+}
+
+// onSelect for showGRNItemsListbox()
+class grnitemslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_grnitem_id = getListcellItemLabel(selitem,0);
+	}
+}
+
+void showGRNItemsListbox(String grnvoucher)
+{
+Object[] grnitemslb_headers = {
+	new listboxHeaderObj("stkindet_id",false),
+	new listboxHeaderObj("stock_code",false),
+	new listboxHeaderObj("Item.Name",true),
+	new listboxHeaderObj("Qty",true),
+	};
+
+	Listbox newlb = makeVWListbox(grn_items_holder,grnitemslb_headers,"grnitems_lb",5);
+	sqlstm = "select id,stockcode,description,quantity from tblstockindetail where voucherno='" + grnvoucher + "'";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	grnitems = sql.rows(sqlstm);
+	sql.close();
+
+	if(grnitems.size() == 0) return;
+
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new grnitemslb_Listener());
+
+	for(dpi : grnitems)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("stockcode"));
+		kabom.add(dpi.get("description"));
+		kabom.add(dpi.get("quantity").toString());
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void makenewGRN_clicker()
+{
+	todaydate = getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into tblstockinmaster (strDate,posted,vouchernumber,documenttype,newfield10,description,entrydate) values " +
+	"('" + todaydate + "',0,'-U-','GI','','','')";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	loadGRN(2); // refresh
+}
+
+void insertGRNItem(String istkcode, String istkdesc)
+{
+	// if item exist, don't continue lor
+	if(ExistInListbox(grnitems_lb, istkcode, 1)) return;
+
+	sqlstm = "insert into tblstockindetail (voucherno,stockcode,description,quantity) values " +
+	"('" + selected_grn_vouchernumber + "','" + istkcode + "','" + istkdesc + "',1)";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showGRNItemsListbox(selected_grn_vouchernumber);
+}
+
+void removeGRNItem_clicker()
+{
+	if(!check_ListboxExist_SelectItem(grn_items_holder,"grnitems_lb")) return;
+	selitem = grnitems_lb.getSelectedItem();
+	grnitemid = getListcellItemLabel(selitem,0);
+	stkcod = getListcellItemLabel(selitem,1);
+
+	sqlstm = "delete from tblstockindetail where id=" + grnitemid;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+
+	// remove any unit-trackings too
+	sqlstm = "delete from stockunits_tracker where parent_stock_code='" + stkcod + "' and parent_stock_in='" + selected_grn_vouchernumber + "'";
+	sql.execute(sqlstm);
+	sql.close();
+
+	showGRNItemsListbox(selected_grn_vouchernumber); // refresh
+}
+
+// showItemsPicker picker doubleclicker - customizable for other modules
+class itemspickerLB_DoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = itemspicker_lb.getSelectedItem();
+		stkcode = getListcellItemLabel(selitem,0);
+		stkdesc = getListcellItemLabel(selitem,2);
+		insertGRNItem(stkcode,stkdesc);
+	}
+}
+
+// Pick items.. check ap-code and load items from this supplier
+void showItemsPicker()
+{
+	Object[] pickitemslb_headers = {
+	new listboxHeaderObj("stock_code",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Item.Name",true),
+	};
+
+	apcode = sim_newfield10.getValue();
+	if(apcode.equals("")) return;
+
+	Listbox newlb = makeVWListbox(pickitems_holder,pickitemslb_headers,"itemspicker_lb",5);
+	sqlstm = "select stock_code,description from stockmasterdetails where supplier_code='" + apcode + "' order by description";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	stkrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkrecs.size() == 0)
+	{
+		showMessageBox("No items from this supplier..");
+		return;
+	}
+
+	newlb.setRows(15);
+	lncount = 1;
+
+	for(dpi : stkrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("stock_code"));
+		kabom.add(lncount.toString());
+		kabom.add(dpi.get("description"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		lncount++;
+	}
+	
+	dc_obj = new itemspickerLB_DoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+
+	itempick_supp_lbl.setLabel("Items :: " + suppliername_lbl.getValue());
+	itemspicker_popup.open(additem_btn);
+}
+
+// Save GRN metadata.. watelse
+void saveGRNMetadata_clicker()
+{
+	if(selected_grn_id.equals("")) return;
+
+	apcode = replaceSingleQuotes(sim_newfield10.getValue());
+	descrip = replaceSingleQuotes(sim_description.getValue());
+
+	if(apcode.equals(""))
+	{
+		showMessageBox("Must assign a supplier for GRN..");
+		return;
+	}
+
+	sqlstm = "update tblstockinmaster set newfield10='" + apcode + "', description='" + descrip + "' where id=" + selected_grn_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	loadGRN(lastgrn_loadtype);
+	showMessageBox("GRN details saved..");
+}
+
+void showUpdateItemMetadata_clicker()
+{
+	if(selected_grnitem_id.equals("")) return;
+	stkinrec = getStockInDetail_Rec(selected_grnitem_id);
+	if(stkinrec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve item record..");
+		return;
+	}
+	itm_description.setValue(stkinrec.get("Description"));
+	itm_quantity.setValue(stkinrec.get("Quantity").toString());
+	itemmetadata_popup.open(updateitem_metadata_btn);
+}
+
+void updateItemMetadata_clicker()
+{
+	if(selected_grnitem_id.equals("")) return;
+	itemname = replaceSingleQuotes(itm_description.getValue());
+	quantity = Integer.parseInt(itm_quantity.getValue()).toString();
+	sqlstm = "update tblstockindetail set description='" + itemname + "', quantity=" + quantity + " where id=" + selected_grnitem_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return null;
+	sql.execute(sqlstm);
+	sql.close();
+	showGRNItemsListbox(selected_grn_vouchernumber); // refresh
+	itemmetadata_popup.close();
+}
+
+// Setup serial-numbers(barcode) from supplier for each item->units
+void doItemSerialNumbers_clicker()
+{
+	if(selected_grn_vouchernumber.equals("")) return;
+	theparam = "grnvn=" + selected_grn_vouchernumber + "&grnid=" + selected_grn_id;
+	uniqid = makeRandomId("gsn");
+	globalActivateWindow("miscwindows","lgk_acctmods/grnitems_sn_setup.zul", uniqid, theparam, useraccessobj);
+}
+
+// Commit the GRN so nothing can be changed.. only update serial-numbers
+void commitGRN_clicker()
+{
+	if(selected_grn_id.equals("")) return;
+
+	// already committed GRN.. only higher level user can uncommit
+	if(selected_grn_committed.equals("-Y-") && useraccessobj.accesslevel < MINACCESSLEVEL_UNCOMMIT)
+	{
+		showMessageBox("Need higher level user to uncommit this GRN..");
+		return;
+	}
+
+	if (Messagebox.show("Commit/Uncommit this GRN..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	cmttog = (selected_grn_committed.equals("-Y-")) ? "0" : "1";
+	sqlstm = "update tblstockinmaster set posted=" + cmttog + " where id=" + selected_grn_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return null;
+	sql.execute(sqlstm);
+	sql.close();
+
+	// toggle buttons and stuff if commit GRN - for the selected GRN
+	toggleStuff((cmttog.equals("1")) ? true : false);
+	loadGRN(lastgrn_loadtype); // refresh
+
+}
+
+void printGRN_clicker(int printgrntype)
+{
+	showMessageBox("..template to be finalized..");
+}
+
+void deleteGRN_clicker()
+{
+	if(selected_grn_id.equals("")) return;
+	if (Messagebox.show("Delete this GRN..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return null;
+
+	// delete unit-trackings if any
+	sqlstm = "delete from stockunits_tracker where parent_stock_in='" + selected_grn_vouchernumber + "'";
+	sql.execute(sqlstm);
+	// delete items in tblstockindetail
+	sqlstm = "delete from tblstockindetail where voucherno='" + selected_grn_vouchernumber + "'";
+	sql.execute(sqlstm);
+	// lastly delete from tblstockinmaster
+	sqlstm = "delete from tblstockinmaster where id=" + selected_grn_id;
+	sql.execute(sqlstm);
+	sql.close();
+	loadGRN(lastgrn_loadtype); // refresh
+	clearGRN_inputs();
+}
+
+]]>
+</zscript>
+
+<popup id="itemmetadata_popup">
+<groupbox width="400px" style="padding:3px">
+<caption label="Item Metadata" />
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+	<row>
+		<label value="Item.Name" style="font-size:9px" />
+		<textbox id="itm_description" width="300px" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="Quantity" style="font-size:9px" />
+		<textbox id="itm_quantity" style="font-size:9px" />
+	</row>
+	</rows>
+</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Update" style="font-size:9px" onClick="updateItemMetadata_clicker()" />
+	<button label="Close" style="font-size:9px" onClick="itemmetadata_popup.close()" />
+</hbox>
+</popup>
+
+<popup id="itemspicker_popup">
+<groupbox width="400px" style="padding:3px">
+	<caption id="itempick_supp_lbl" label="Items" />
+	<div id="pickitems_holder" />
+</groupbox>
+<separator height="3px" />
+<button label="Close" style="font-size:9px" onClick="itemspicker_popup.close()" />
+</popup>
+
+<!-- document management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="lgkglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_grn_vouchernumber); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of document management popup -->
+
+<!-- supplier-picker / info popup -->
+<popup id="supplierpickerPopup">
+<groupbox width="600px">
+<caption id="supplierpickerpopup_lbl" label="Pick a supplier" />
+<vbox>
+	<hbox>
+		<label value="Supplier name" style="font-size:9px" />
+		<textbox id="sp_name_tb" style="font-size:9px" />
+		<button id="suppsearch_btn" label="Search" style="font-size:9px" onClick="searchSupplier_Clicker()" />
+	</hbox>
+
+	<div id="supplier_picker_div" />
+
+	<hbox>
+		<button id="viewsuppinfo_btn" label="View supplier info" style="font-size:9px" onClick="viewSupplierInfo_Clicker()" />
+		<button label="Close" style="font-size:9px" onClick="supplierpickerPopup.close()" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+<popup id="supplierinfo_popup">
+<groupbox>
+	<caption label="Supplier info" />
+	<vbox>
+		<label id="suppinfo_apcode_lbl" style="background:#909090" />
+		<label id="suppinfo_fulladdr_lbl" multiline="true" width="300px" height="100px" value="-address-" />
+		<label id="suppinfo_contact_lbl" multiline="true" width="300px" height="100px" style="background:#909090" value="-contact-" />
+		<separator height="3px" />
+		<button label="Close" style="font-size:9px" onClick="supplierinfo_popup.close()" />
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of supplier-picker / info popup -->
+
+<div width="1200px">
+<panel id="grn_maker_panel" title="Stock-In / Goods Received Note (GRN)" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<div width="500px" style="padding:2px" >
+<button label="Load all" style="font-size:9px" onClick="loadGRN(1)" />
+<button label="Load incomplete" style="font-size:9px" onClick="loadGRN(2)" />
+<button label="View completed" style="font-size:9px" onClick="loadGRN(3)" />
+<label value="(Max. 50 recs per click)" style="font-size:9px" />
+<separator height="5px" />
+<groupbox mold="3d">
+	<caption label="GRN List" />
+	<div id="stockins_holder" />
+</groupbox>
+<separator height="5px" />
+<hbox>
+	<button label="New GRN" style="font-size:9px" onClick="makenewGRN_clicker()" />
+	<button id="commitgrn_btn" label="Commit" style="font-size:9px" onClick="commitGRN_clicker()" />
+	<button id="deletegrn_btn" label="Delete" style="font-size:9px" onClick="deleteGRN_clicker()" />
+	<button label="Print GRN with S/N tracking" style="font-size:9px" onClick="printGRN_clicker(1)" />
+	<button label="Print GRN w/o S/N tracking " style="font-size:9px" onClick="printGRN_clicker(2)" />
+</hbox>
+</div>
+
+<div>
+<tabbox mold="accordion">
+	<tabs>
+		<tab id="grn_lbl" label="1. GRN Details" />
+		<tab label="2. Stock Items" />
+		<tab label="3. Documents" />
+	</tabs>
+	<tabpanels>
+		<!-- GRN details panel -->
+		<tabpanel>
+			<grid>
+				<columns>
+					<column label="" />
+					<column label="" />
+					<column label="" />
+					<column label="" />
+				</columns>
+				<rows>
+				<row>
+					<label value="AP.Code" width="60px" style="font-size:9px" />
+					<textbox id="sim_newfield10" style="font-size:9px" disabled="true" />
+					<button id="linksupplier_btn" label="Assign supplier" style="font-size:9px" onClick="supplierpickerPopup.open(linksupplier_btn)" />
+				</row>
+				<row spans=",3">
+					<label value="Supplier.Name" style="font-size:9px" />
+					<label id="suppliername_lbl" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Notes" style="font-size:9px" />
+					<textbox id="sim_description" multiline="true" height="80px" width="300px" style="font-size:9px" />
+				</row>
+				</rows>
+			</grid>
+		</tabpanel>
+
+		<!-- Stock items panel -->
+		<tabpanel>
+			<div id="grn_items_holder" width="400px" />
+			<separator height="5px" />
+			<hbox>
+				<button id="additem_btn" label="Add item" style="font-size:9px" onClick="showItemsPicker()" />
+				<button id="updateitem_metadata_btn" label="Update metadata" style="font-size:9px" onClick="showUpdateItemMetadata_clicker()" />
+				<button id="itemserailnumber_btn" label="Items serial-number" style="font-size:9px" onClick="doItemSerialNumbers_clicker()" />
+				<button id="removeitem_btn" label="Remove item" style="font-size:9px" onClick="removeGRNItem_clicker()" />
+			</hbox>
+		</tabpanel>
+
+		<!-- Documents panel -->
+		<tabpanel>
+			<div id="doculist_holder" />
+			<separator height="3px" />
+			<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+			<button id="viewdoculinks_btn" label="Upload document" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+		</tabpanel>
+	</tabpanels>
+</tabbox>
+<separator height="5px" />
+<button id="savegrndetails_btn" label="Save GRN details" style="font-size:9px" onClick="saveGRNMetadata_clicker()" />
+</div>
+
+</hbox>
+
+</panelchildren>
+</panel>
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOCS";
+lgk_setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+if(useraccessobj.accesslevel == 9)
+{
+}
+
+]]>
+</zscript>
+
+</div>
+</zk>

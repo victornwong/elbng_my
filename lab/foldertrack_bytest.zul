@@ -1,0 +1,671 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="foldertracker_by_tests_mod"?>
+<!--
+
+Title: Client tracking - all sorta tracking information here
+Coding began date	:
+Developers			: Victor
+
+**NOTES**
+
+-->
+
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+glob_mysoftcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,3);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+// global var for this module
+global_testselector_loaded = 0;
+global_mysoftcode = "";
+
+previous_tree_folderno = "";
+
+String[] samplestatus_lookup = { "ALL" , "WIP" , "RESULT", "RELEASED" , "RETEST" };
+
+void showmeparent(Component icompo)
+{
+	alert("parent=" + icompo.getParent());
+}
+
+// Populate tree with sampleID -> tests
+populateSamplesTestParameters(Tree itree, String ifolderno)
+{
+	// if previously loaded the same folderno.. need not reload, wasting bandwidth
+	if(previous_tree_folderno.equals(ifolderno)) return;
+
+	previous_tree_folderno = ifolderno;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+		
+	// get all sample IDs for folderno
+	// 4/3/2010: sql statement for admin login - can see even deleted samples
+
+	sqlstatem = "select * from JobSamples where jobfolders_id=" + ifolderno + " and deleted=0 order by sampleid_str asc";
+	
+	if(useraccessobj.accesslevel > 8)
+		sqlstatem = "select * from JobSamples where jobfolders_id=" + ifolderno + " order by sampleid_str asc";
+
+	allsampleids = sql.rows(sqlstatem);
+	
+	Treechildren tocheck = itree.getTreechildren();
+	if(tocheck != null)	tocheck.setParent(null);
+	
+	if(allsampleids != null && allsampleids.size() != 0)
+	{
+		// create a new treechildren for the tree
+		Treechildren mychildren = new Treechildren();
+		mychildren.setParent(itree);
+
+		String[] strarray = new String[2];				
+		
+		// loop through each sample IDs and get tests
+		for(eachsampleid : allsampleids)
+		{
+			sdelstr = (eachsampleid.get("deleted") == 1) ? " [del]" : "";
+
+			sampleidstr = eachsampleid.get("sampleid_str") + sdelstr;
+			sampleidno = eachsampleid.get("origid");
+			samplemark = eachsampleid.get("samplemarking");
+			
+			// if sample id str in table ain't set.. set it. old codes didn't update the sample id str properly
+			if(sampleidstr.equals(""))
+			{
+				sampleidstr = param_folderno + padZeros5(sampleidno); // param_folderno is global, def at top
+
+				// 27/2/2010: update sampleid_str field incase of old codes never do it
+				sqls3 = "update JobSamples set sampleid_str='" + sampleidstr + "' where origid=" + sampleidno.toString();
+				sql.execute(sqls3);
+			}
+			
+			Treeitem titem = insertTreeLeaf(mychildren, sampleidstr, "font-weight:bold; background:#898989; color:#ffffff");
+			
+			// get tests assigned for the sample-id
+
+			sqlstatem2 = "select * from JobTestParameters where jobsamples_id=" + sampleidno.toString();
+			teststosampleid = sql.rows(sqlstatem2);
+
+			if(teststosampleid != null)
+			{
+				Treechildren newone = new Treechildren();
+				newone.setParent(titem);
+
+				// insert sample marking as leaf if available
+				if(!samplemark.equals(""))
+					insertTreeLeaf(newone, "SM: " + samplemark, "font-size:9px; background:#4466bb; color:#ffffff");
+
+				// loop through all the tests assigned and put them as leafs
+				for(eacht2s : teststosampleid)
+				{
+					mysoftcode = eacht2s.get("mysoftcode");
+					
+					stockrec = getStockMasterDetails(mysoftcode.toString());
+					testdesc = "-Undefined-";
+					
+					if(stockrec != null)
+						testdesc = stockrec.get("Description") + " (" + stockrec.get("Description2") + ")" ;
+
+					// insertTreeLeaf(newone,testdesc,"font-size:9px");
+						strarray[0] = testdesc;
+						strarray[1] = "-WIP-";
+
+						insertTreeLeaf_Multi(newone, strarray, "font-size:9px");
+				}
+			}
+		}
+	}
+
+	sql.close();
+
+} // end of populateSamplesTestParameters()
+
+void clearFolderMetadata()
+{
+	metadata_customername.setValue("");
+	metadata_extranotes.setValue("");
+
+	metadata_date_created.setValue("");
+	metadata_due_date.setValue("");
+
+	metadata_folderstatus.setValue("");
+	metadata_labfolderstatus.setValue("");
+}
+
+void showFolderMetadata(String ifolderno)
+{
+	therec = getFolderJobRec(ifolderno);
+	
+	iar_code = therec.get("ar_code");
+	
+	if(!iar_code.equals(""))
+	{
+		icompname = getCompanyName(iar_code);
+		metadata_customername.setValue(icompname);
+	}
+	
+	metadata_extranotes.setValue(therec.get("extranotes"));
+	
+	metadata_date_created.setValue(therec.get("datecreated").toString().substring(0,10));
+	metadata_due_date.setValue(therec.get("duedate").toString().substring(0,10));
+	
+	metadata_folderstatus.setValue(therec.get("folderstatus"));
+	metadata_labfolderstatus.setValue(therec.get("labfolderstatus"));
+
+}
+
+class SampleIDSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		
+		iorigid = getListcellItemLabel(lbitem,0);
+		isampleid = getListcellItemLabel(lbitem,1);
+		
+		folderno_str = Integer.parseInt(extractFolderNo_FromSampleID(isampleid)).toString();
+
+		//alert("origid: " + iorigid + " | sampleid: " + isampleid + " | folderno_str: " + folderno_str);
+
+		populateSamplesTestParameters(sampletests_tree,folderno_str);
+		
+		// show also the folder metadata
+		showFolderMetadata(folderno_str);
+
+	}
+}
+
+Object[] sampleid_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Due",true),
+	new listboxHeaderObj("Created",true),
+	new listboxHeaderObj("LabStat",true)
+};
+
+void populateSampleID_onTestcode(String imysoftc)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sortbystatus = lb_samplesortbystatus.getSelectedItem().getLabel();
+	
+	samplestat_str = "";
+	if(!sortbystatus.equals("ALL")) // sort-by-status not equal to ALL, use whatever selected
+		samplestat_str = "and JobSamples.status='" + sortbystatus + "'";
+
+	ibranch = useraccessobj.branch;
+	branch_str = "";
+
+	if(!ibranch.equals("ALL"))
+		branch_str = "and JobFolders.branch='" + ibranch + "' ";
+
+	sqlst2 = "select JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking, JobSamples.uploadToLIMS, " + 
+				"JobTestParameters.uploadToLIMS, jobsamples.deleted, jobsamples.jobfolders_id, jobfolders.origid as jf_origid, jobfolders.duedate, jobfolders.branch, " +
+				"JobSamples.status, JobFolders.datecreated " +
+				"from JobTestParameters " + 
+				"left join JobSamples on JobTestParameters.jobsamples_id = JobSamples.origid " +
+				"left join JobFolders on  JobSamples.jobfolders_id = JobFolders.origid " +
+				"where JobTestParameters.mysoftcode=" + imysoftc + " and JobTestParameters.mysoftcode != 0 " +
+				// run-list make use of uploadToLIMS flag .. do not use it now
+				// "and JobTestParameters.uploadToLIMS = 0 and jobsamples.deleted = 0 " +
+				"and JobSamples.deleted=0 " +
+				branch_str +
+				samplestat_str +
+				"group by JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking, JobSamples.uploadToLIMS, " +
+				"JobTestParameters.uploadToLIMS, jobsamples.deleted, jobsamples.jobfolders_id, jobfolders.origid, jobfolders.duedate, jobfolders.branch, " +
+				"JobSamples.status, JobFolders.datecreated" ;
+
+	samples_recs = sql.rows(sqlst2);
+	
+	sql.close();
+	
+	// Listbox newlb = makeSampleID_Listbox(sampleid_div); // sampleid_div is def in UI
+	
+	Listbox newlb = makeVWListbox(sampleid_div, sampleid_lb_headers, "sampleid_lb", 28);
+	
+	if(samples_recs == null || samples_recs.size() == 0)
+	{
+		newlb.setRows(10);
+		return;
+	}
+	
+	newlb.addEventListener("onSelect", new SampleIDSelect_Listener());
+
+	String[] strarray = new String[5];
+
+	for(isamp : samples_recs)
+	{
+		strarray[0] = isamp.get("origid").toString();
+		strarray[1] = isamp.get("sampleid_str");
+		strarray[2] = isamp.get("duedate").toString().substring(0,10);
+		strarray[3] = isamp.get("datecreated").toString().substring(0,10);
+		
+		strarray[4] = isamp.get("status");
+
+		insertListItems_DragDrop(newlb, strarray,"runsampleid", 2);
+	}
+
+}
+
+// Drop listener for uniq test-parameter
+class testSelector_drop implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		Component dragged_parent = event.dragged.getParent();
+		
+		imysoftcode = getListcellItemLabel(dragged_parent,0);
+		itestname = getListcellItemLabel(dragged_parent,1);
+		// alert("mysoft: " + imysoftcode + " | testname: " + itestname);
+
+		if(ExistInListbox(tracktest_lb, imysoftcode,0)) return;
+
+		String[] strarray = new String[2];
+
+		strarray[0] = imysoftcode;
+		strarray[1] = itestname;
+		
+		insertListItems(tracktest_lb,strarray,"false"); // runlist_lb def below
+		tracktest_lb.setRows(20);
+
+	}
+}
+
+class testSelectSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+
+		imysoftcode = getListcellItemLabel(lbitem,0);
+		global_mysoftcode = imysoftcode;
+
+		itestdesc = getListcellItemLabel(lbitem,1);
+		
+		testname_lbl.setValue(itestdesc); // show what testname being selected
+
+		lb_samplesortbystatus.setSelectedIndex(0); // always default to sort-by-status ALL
+		populateSampleID_onTestcode(imysoftcode);
+
+		// clear folder-details tree
+		Treechildren tocheck = sampletests_tree.getTreechildren();
+		if(tocheck != null)	tocheck.setParent(null);
+		
+		// clear folder metadata
+		clearFolderMetadata();
+	}
+}
+
+Object[] testtracker_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Parameters",true)
+};
+
+void populateTest_Tracker()
+{
+	// Listbox newlb = makeTestTracker_Listbox(tracktest_div, "tracktest_lb"); // div def in UI
+	Listbox newlb = makeVWListbox(tracktest_div, testtracker_lb_headers, "tracktest_lb", 15);
+
+	newlb.addEventListener("onSelect", new testSelectSelect_Listener());
+	newlb.setDroppable("uniqtest");
+	newlb.addEventListener("onDrop", new testSelector_drop());
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	// get all client-trackers for username only and not deleted
+	sqlstate = "select * from LabTrack_ByTest where username='" + useraccessobj.username + "' and deleted=0"; 
+	
+	track_recs = sql.rows(sqlstate);
+	
+	sql.close();
+	
+	if(track_recs == null || track_recs.size() == 0 )
+	{
+		newlb.setRows(10);
+		return;
+	}
+	
+	
+	String[] strarray = new String[2];
+	
+	for( itracker : track_recs)
+	{
+		imysoftcode = itracker.get("mysoftcode").toString();
+		
+		mysoft_stockdet = getStockMasterDetails(imysoftcode);
+		
+		if(mysoft_stockdet != null)
+		{
+			// strarray[0] = itracker.get("origid").toString();
+			strarray[0] = imysoftcode;
+				
+			testdesc = mysoft_stockdet.get("Description");
+			testmethod = mysoft_stockdet.get("Description2");
+
+			strarray[1] = testdesc + " (" + testmethod + ") ";
+
+			insertListItems(newlb,strarray,"false");
+		}
+
+	}
+	
+} // end of populateTest_Tracker()
+
+Object[] uniqtestparams_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Parameters",true)
+};
+
+void populateTestSelector_Listbox(Div idiv)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlst1 = "select distinct mysoftcode from JobTestParameters where mysoftcode != 0";
+	testparams = sql.rows(sqlst1);
+	
+	sql.close();
+	
+	if(testparams != null)
+	{
+		Listbox newlb = makeVWListbox(idiv, uniqtestparams_lb_headers, "uniqtestparams_lb", 18);
+		
+		String[] strarray = new String[2];
+
+		// show test parameters;
+		// 		<group id="od_grouplabel" label="Test parameters" />
+		
+		for(itestp : testparams)
+		{
+			mysoftc = itestp.get("mysoftcode");
+			mysoftc_str = mysoftc.toString();
+			mysoft_stockdet = getStockMasterDetails(mysoftc_str);
+			
+			if(mysoft_stockdet != null)
+			{
+				strarray[0] = mysoftc_str;
+				
+				testdesc = mysoft_stockdet.get("Description");
+				testmethod = mysoft_stockdet.get("Description2");
+
+				strarray[1] = testdesc + " (" + testmethod + ") " + mysoftc_str;
+
+				insertListItems_DragDrop(newlb, strarray, "uniqtest", 2);
+
+			}
+		}
+	}
+}
+
+void addFolderTracker_Test()
+{
+	// update test-selector listbox with uniq test parameters from table jobtestparameters
+	// make use of global_testselector_loaded flag so the thing won't take forever to load
+	if(global_testselector_loaded == 0)
+	{
+		populateTestSelector_Listbox(testselector_div); // testselector_div def in testSelector_Popup
+		global_testselector_loaded = 1;
+	}
+
+	testSelector_Popup.open(testselector_placer);
+}
+
+void refresh_testSelector_Listbox()
+{
+	populateTestSelector_Listbox(testselector_div);
+}
+
+// Remove all test-tracker before saving new ones
+void removeAll_FolderTracker_Test()
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlst = "delete from LabTrack_ByTest where username='" + useraccessobj.username + "'";
+	sql.execute(sqlst);
+	
+	sql.close();
+}
+
+// Save test-tracker listbox items to database
+void saveFolderTracker_Test()
+{
+	icc = tracktest_lb.getItemCount();
+	if(icc == 0) return false; // nothing.. return
+	
+	removeAll_FolderTracker_Test();
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	iusername = useraccessobj.username;
+	todate = getDateFromDatebox(hiddendatebox);
+
+	for(i=0; i<icc; i++)
+	{
+		ilabel = tracktest_lb.getItemAtIndex(i);
+		imysoftcode = getListcellItemLabel(ilabel, 0);	// get mysoftcode to store
+
+		sqlst = "insert into LabTrack_ByTest values (" + imysoftcode + ",'" + iusername + "','" + todate + "', 0)";
+		sql.execute(sqlst);
+	}
+
+	sql.close();
+	showMessageBox("Tests tracker list saved");
+
+}
+
+// Remove a tracker from the test-tracker listbox
+void removeFolderTracker_Test()
+{
+	lbindex = tracktest_lb.getSelectedIndex();
+	
+	if(lbindex == -1 ) return;
+
+	tracktest_lb.removeItemAt(lbindex);
+}
+
+// to fresh sample-id listbox based on whatever sort-by selected
+void refreshSampleID_Listbox()
+{
+	populateSampleID_onTestcode(global_mysoftcode);
+}
+
+void playFolderDriller(String ifoldno)
+{
+		theparam = "folderno=" + ifoldno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void viewFolderDetails()
+{
+	if(sampleid_lb.getSelectedIndex() == -1) return;
+	
+	lbitm = sampleid_lb.getSelectedItem();
+	folderid = getListcellItemLabel(lbitm, 1);
+	
+	folderno = extractFolderString_FromSampleID(folderid);
+	playFolderDriller(folderno);
+}
+
+// export list of samples by sample-id - uses global_mysoftcode
+void exportSampleID_ByTest()
+{
+	alert("Not sure what to export: " + global_mysoftcode);
+
+}
+
+]]>
+</zscript>
+
+<!-- to show input boxes to get details for uploaded file popup -->
+<popup id="testSelector_Popup">
+
+<groupbox width="460px" >
+<caption label="Test selector" />
+
+	<div id="testselector_div" />
+
+	<hbox>
+		<button label="Refresh table" onClick="refresh_testSelector_Listbox()" />
+		<button label="Close" onClick="testSelector_Popup.close()" />
+	</hbox>
+
+</groupbox>
+
+</popup>
+<!-- end of popup -->
+
+<div width="1100px">
+<panel id="foldertracker_by_tests_panel" title="Folder/Jobs Tracker by Test Parameters" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="550px">
+	<west title="Test" size="30%" splittable="true" collapsible="true">
+	<div>
+		<div id="tracktest_div" />
+		
+		<hbox>
+			<button label="Add test tracker" onClick="addFolderTracker_Test()" />
+			<button label="Remove tracker" onClick="removeFolderTracker_Test()" />
+		</hbox>
+
+		<hbox>
+			<button label="Save tracker list" onClick="saveFolderTracker_Test()" />		
+		</hbox>
+
+	</div>
+	</west>
+	
+	<center>
+		<borderlayout height="550px">
+			<west title="SampleIDs" size="46%" splittable="true" collapsible="true">
+			<div>
+				<label id="testselector_placer" />
+
+				<label id="testname_lbl" style="background:#202020; color:#ffffff"/>
+				
+				<hbox>
+					<label value="Status" />
+					<listbox id="lb_samplesortbystatus" mold="select" rows="1" style="font-size:9px" />
+					<button id="refreshsampleidlistbox_btn" label="Refresh" onClick="refreshSampleID_Listbox()" />
+				</hbox>
+				
+				<label id="clientcode_lbl" />
+				<label id="clientname_lbl" />
+				
+				<div id="sampleid_div" />
+				
+				<hbox>
+					<button id="folderdet_btn" label="View folder details" onClick="viewFolderDetails()" />
+					<button id="exportsampleid_btn" label="Export list" onClick="exportSampleID_ByTest()" />
+				</hbox>
+				
+			</div>
+			</west>
+			
+			<center title="Folder details">
+				<div>
+					<label id="global_doculink_lbl" />
+					
+					<tree id="sampletests_tree" zclass="z-dottree" rows="16" width="100%" >
+						<treecols>
+							<treecol label="SampleID/Sample Marking/Tests" />
+							<treecol label="Results" />
+						</treecols>
+					</tree>
+					
+				<groupbox>
+					<vbox>
+						<label id="metadata_customername" style="font-size:13px; font-weight:bold" />
+					
+						<hbox>
+							<label value="Date created" />
+							<label id="metadata_date_created" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+							
+							<label value="Due" />
+							<label id="metadata_due_date" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+						</hbox>
+						
+						<hbox>
+							<label value="FolderStat" />
+							<label id="metadata_folderstatus" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+							
+							<label value="LabStat" />
+							<label id="metadata_labfolderstatus" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+						</hbox>
+					
+						<textbox id="metadata_extranotes" multiline="true" height="80px" width="350px" disabled="true" style="font-weight:bold" />
+						
+					</vbox>
+				</groupbox>
+					
+				</div>
+			</center>
+
+		</borderlayout>
+	</center>
+
+</borderlayout>
+
+</div>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+
+setTodayDatebox(hiddendatebox);
+
+populateTest_Tracker();
+
+populateDropdownListbox(lb_samplesortbystatus, samplestatus_lookup);
+
+</zscript>
+
+</zk>
+

@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="messageboard_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+
+<zscript>
+<![CDATA[
+MYTITLE = "Messageboard";
+MYVERSION = "v0.1";
+/*
+Title		: Messageboard for internal communication
+Written by	: Victor Wong
+
+Revisions:
+*/
+/*
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.util.*;
+import java.text.*;
+import org.victor.*;
+
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+TOREPLYTO_FORM = "13";
+SHOWMSG_FORM = "14";
+
+vicFormMaker toreplyto_Form = null;
+
+glob_selected_msgid = "";
+Component msgposobj = null;
+glob_replyto_msgid = "0";
+glob_replyto_user = "";
+glob_replyto_subj = "";
+
+Object last_showmsg_tab = null;
+
+Component newmsg_btn, msglist_tabbox, maintabbox;
+
+Object getMessageBoard_Rec(String iwhat)
+{
+	sqlstm = "select * from elb_messageboard where origid=" + iwhat;
+	return sqlhand.gpSqlFirstRow(sqlstm);
+}
+
+// Update combobox with usernames - easier than popup-select
+void updateUserCombobox(Combobox iwhat)
+{
+	sqlstm = "select username from portaluser where deleted=0 and locked=0 order by username";
+	urs = sqlhand.gpSqlGetRows(sqlstm);
+	if(urs == null) return;
+	for(dpi : urs)
+	{
+		iwhat.appendItem(dpi.get("username"));
+	}
+}
+
+class msgDClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		msgposobj = event.getTarget();
+		glob_selected_msgid = lbhand.getListcellItemLabel(msgposobj,0);
+		generalFuncs(3);
+	}
+}
+
+class msglb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		msgposobj = event.getReference();
+		glob_selected_msgid = lbhand.getListcellItemLabel(msgposobj,0);
+	}
+}
+
+Object[] msgb_lb_headers = {
+	new listboxHeaderWidthObj("MiD",true,"40px"),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("From",true,"70px"),
+	new listboxHeaderWidthObj("Subject",true,""),
+	new listboxHeaderWidthObj("RD",true,"30px"),
+	new listboxHeaderWidthObj("REP",true,"30px"),
+};
+
+// iholder: where to put the list, msgto: msg To who, itype: 1=today,2=yesterday,3=old
+void listMessages(Div iholder, String iboxid, String msgto, int itype)
+{
+	// reset global vars
+	glob_selected_msgid = "";
+
+	sqlstm = "select origid,datecreated,from_user,subject,readflag,replied from elb_messageboard ";
+	switch(itype)
+	{
+		case 1:
+		sqlstm += "where datecreated = convert(varchar(10),getdate(),120)";
+		break;
+
+		case 2:
+		sqlstm += "where datecreated = convert(varchar(10),dateadd(dd,-1,getdate()),120)";
+		break;
+		
+		case 3:
+		sqlstm += "where datecreated < convert(varchar(10),dateadd(dd,-1,getdate()),120)";
+		break;
+	}
+
+	sqlstm += " and to_user='" + useraccessobj.username + "' order by origid desc";
+
+	newlb = lbhand.makeVWListbox_Width(iholder,msgb_lb_headers,iboxid,5);
+
+	mrs = sqlhand.gpSqlGetRows(sqlstm);
+	if(mrs == null || mrs.size() == 0) return;
+	newlb.setRows(15);
+
+	newlb.addEventListener("onSelect", new msglb_Listener());
+
+	for(dpi : mrs)
+	{
+		try
+		{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(kiboo.checkNullString(dpi.get("from_user")));
+		kabom.add(kiboo.checkNullString(dpi.get("subject")));
+
+		rdflag = (dpi.get("readflag") == 0) ? "---" : "-Y-";
+		kabom.add(rdflag);
+
+		rpflag = (dpi.get("replied") == 0) ? "---" : "-Y-";
+		kabom.add(rpflag);
+		
+		kstyle = (dpi.get("readflag") == 0) ? "text-decoration:blink" : "";
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false",kstyle);
+		}
+		catch (NullPointerException e) {}
+	}
+
+	dc_obj = new msgDClick_Listener();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// onSelect for main tabbox - update msg-listbox
+void updateMessageTab(Object iwhat)
+{
+	//if(iwhat == null) { iwhat = msglist_tabbox.getSelectedTab(); alert(iwhat); }
+
+	try
+	{
+	iwhtab = Integer.parseInt(iwhat.getSelectedTab().getId().substring(3,4));
+	//iwhtab = Integer.parseInt(iwhat.getId().substring(3,4));
+	idiv = todaymsg_holder;
+	itid = "todaymsg_lb";
+	
+	switch(iwhtab)
+	{
+		case 2:
+			idiv = yesterdaymsg_holder;
+			itid = "yesterdaymsg_lb";
+			break;
+		case 3:
+			idiv = oldmsg_holder;
+			itid = "oldmsg_lb";
+			break;
+	}
+
+	last_showmsg_tab = iwhat; // save for use later
+	listMessages(idiv,itid,useraccessobj.username,iwhtab);
+	}
+	catch (NullPointerException e) { alert("updateMessageTab: NullPointer : " + iwhat + " :: " + last_showmsg_tab); }
+}
+
+void loadShowFormMaker(String iwhat, Div iwhere, String iformid)
+{
+	fmobj = sqlhand.getFormKeeper_rec(iwhat);
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	glob_formmaker = new vicFormMaker(iwhere,iformid,formxml);
+	glob_formmaker.generateForm();
+}
+
+void showUserMessage(String imsgid)
+{
+	msre = getMessageBoard_Rec(imsgid);
+	if(msre == null) { guihand.showMessageBox("ERR: Cannot access message-board database.."); return; }
+	
+	// populate 'em formmaker stuff
+	s_datecreated.setValue(msre.get("datecreated"));
+	s_from_user.setValue(msre.get("from_user"));
+	s_to_user.setValue(msre.get("to_user"));
+	s_subject.setValue(msre.get("subject"));
+	msgb = sqlhand.clobToString(msre.get("message_body"));
+	s_message_body.setValue(msgb);
+	
+	shwmsg_lbl.setValue("Message-ID: " + msre.get("origid").toString());
+}
+
+// itype: 1=new msg form-popup, 2=really send msg, 3=read msg, 4=reply msg, 5=set msg as unread,
+// 6=delete msg
+// isubtype: 
+void generalFuncs(int itype)
+{
+	todaydate = kiboo.todayISODateString();
+	refresh = false;
+
+	switch(itype)
+	{
+		case 1: // show new/reply-to msg form
+		loadShowFormMaker(TOREPLYTO_FORM,newmsg_holder,"toreplyto_form");
+
+		titstr = (glob_replyto_msgid.equals("0")) ? "New message" : "Reply message";
+		newreply_lbl.setValue(titstr);
+
+		if(!glob_replyto_msgid.equals("0")) showmsg_popup.close(); // close shw-msg popup before doing reply
+
+		updateUserCombobox(to_user);
+
+		if(!glob_replyto_user.equals(""))
+		{
+			to_user.setValue(glob_replyto_user);
+			glob_replyto_subj = glob_replyto_subj.replaceAll("Re:","");
+			subject.setValue("Re: " + glob_replyto_subj);
+			msgb = "\n** In-reply to **\n\n" + s_message_body.getValue();
+			message_body.setValue(msgb);
+		}
+
+		glob_replyto_user = ""; // reset
+		glob_replyto_subj = "";
+
+		newmsg_popup.open(newmsg_btn);
+		break;
+
+		case 2: // really send new msg
+		tostr = kiboo.replaceSingleQuotes(to_user.getValue());
+		subjstr = kiboo.replaceSingleQuotes(subject.getValue());
+		msgtext = kiboo.replaceSingleQuotes(message_body.getValue());
+
+		sqlstm = "insert into elb_messageboard (from_user,to_user,datecreated,subject,message_body," + 
+		"readflag,starred,replied,replyto_id,parent_folder) values ('" +
+		useraccessobj.username + "','" + tostr + "','" + todaydate + "','" + subjstr + "','" + msgtext + "'," +
+		"0,0,0," + glob_replyto_msgid + ",'SENT')";
+
+		alert(sqlstm);
+		sqlhand.gpSqlExecuter(sqlstm);
+
+		// update reply-flag if this is a reply-msg
+		if(!glob_replyto_msgid.equals("0"))
+		{
+			sqlstm = "update elb_messageboard set replied=1 where origid=" + glob_replyto_msgid;
+			sqlhand.gpSqlExecuter(sqlstm);
+		}
+
+		//glob_replyto_msgid = "0"; // always reset back to msg-id 0
+
+		newmsg_popup.close();
+		guihand.showMessageBox("Message sent..");
+
+		refresh = true;
+
+		break;
+
+		case 3: // read msg
+		if(glob_selected_msgid.equals("")) return;
+		loadShowFormMaker(SHOWMSG_FORM,shwmsg_holder,"yourmessage_form");
+		
+		//ggh = msgposobj.getParent().getParent().getParent().getParent().getParent().getSelectedTab();
+		//alert(ggh);
+		
+		showUserMessage(glob_selected_msgid);
+		// update msg read flag
+		sqlstm = "update elb_messageboard set readflag=1 where origid=" + glob_selected_msgid;
+		sqlhand.gpSqlExecuter(sqlstm);
+
+		lbhand.setListcellItemLabel(msgposobj,4,"-Y-");
+		//msgposobj.setStyle("font-size:9px;text-decoration:none");
+
+		showmsg_popup.open(msgposobj);
+		refresh = true;
+		break;
+
+		case 4: // reply msg
+		glob_replyto_msgid=glob_selected_msgid;
+		glob_replyto_user = s_from_user.getValue();
+		glob_replyto_subj = s_subject.getValue();
+		generalFuncs(1);
+		break;
+
+		case 5: // set msg as unread
+		if(glob_selected_msgid.equals("")) return;
+		sqlstm = "update elb_messageboard set readflag=0 where origid=" + glob_selected_msgid;
+		sqlhand.gpSqlExecuter(sqlstm);
+		lbhand.setListcellItemLabel(msgposobj,4,"---");
+		refresh = true;
+		break;
+
+		case 6: // delete msg
+		if(glob_selected_msgid.equals("")) return;
+		if (Messagebox.show("Delete message, permanently delete..", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+		sqlstm = "delete from elb_messageboard where origid=" + glob_selected_msgid;
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+		break;
+
+	} // ENDOF switch()
+
+	if(refresh) updateMessageTab(maintabbox);
+}
+
+]]>
+</zscript>
+
+<popup id="newmsg_popup">
+	<div style="background:#fcaf3e;padding:2px">
+	<label id="newreply_lbl" />
+	</div>
+	<separator height="3px" />
+	<div id="newmsg_holder" />
+	<separator height="3px" />
+	<button label="Send" style="font-size:9px" onClick="generalFuncs(2)" />
+	<button label="Close" style="font-size:9px" onClick="newmsg_popup.close()" />
+</popup>
+
+<popup id="showmsg_popup">
+	<div style="background:#fcaf3e;padding:2px">
+	<label id="shwmsg_lbl" />
+	</div>
+	<separator height="3px" />
+	<div id="shwmsg_holder" />
+	<separator height="3px" />
+	<button label="Reply" style="font-size:9px" onClick="generalFuncs(4)" />
+	<button label="Close" style="font-size:9px" onClick="showmsg_popup.close()" />
+</popup>
+
+<window id="staticlookup_win" width="650px" height="450px" title="${MYTITLE} ${MYVERSION}"
+position="center" mode="overlapped" border="normal" closable="true">
+
+<hbox>
+
+	<div style="background:#ce5c00;padding:3px" width="100px" height="400px">
+		<!-- <button id="readmsg_btn" label="Read message" style="font-size:9px" onClick="generalFuncs(3)" /> -->
+		<button id="btn1" label="New message" style="font-size:9px" onClick='glob_replyto_msgid="0"; generalFuncs(1)' />
+		<button id="btn2" label="Set unread" style="font-size:9px" onClick="generalFuncs(5)" />
+		<button id="btn3" label="Delete message" style="font-size:9px" onClick="generalFuncs(6)" />
+	</div>
+
+	<tabbox id="tabox1" mold="accordion" width="520px" onSelect="updateMessageTab(self)">
+		<tabs>
+			<tab id="tab1" label="Today" />
+			<tab id="tab2" label="Yesterday" />
+			<tab id="tab3" label="Old" />
+		</tabs>
+		<tabpanels>
+			<tabpanel> <!-- today -->
+				<div id="todaymsg_holder" />
+			</tabpanel>
+			<!-- <tabpanel fulfill="tab2.onSelect" > yesterday -->
+			<tabpanel>
+				<div id="yesterdaymsg_holder" />
+			</tabpanel>
+			<tabpanel> <!-- old -->
+				<div id="oldmsg_holder" />
+			</tabpanel>
+		</tabpanels>
+	</tabbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+// main start here --
+msglist_tabbox = tabox1;
+newmsg_btn = btn1;
+maintabbox = tabox1;
+//last_showmsg_tab = tab1;
+listMessages(todaymsg_holder,"todaymsg_lb",useraccessobj.username,1);
+
+]]>
+</zscript>
+</window>
+</zk>
+

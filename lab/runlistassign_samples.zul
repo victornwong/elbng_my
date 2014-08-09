@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="runlist_assign_samples"?>
+
+<!--
+Window to assign sample-id into runlist
+Developers			: victor
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+LEVEL_TOBEABLETO_UPDATE = 4;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_runorigid = Executions.getCurrent().getParameter("runno");
+param_mysoftcode = Executions.getCurrent().getParameter("mysoftcode");
+param_runstat = Executions.getCurrent().getParameter("runstat");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// Set JobTestParameter.uploadToLIMS flag .. general purpose for all
+void setJobTestParameter_uploadToLIMS_Flag(String iorigid, int flagy)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "update JobTestParameters set uploadToLIMS=" + flagy.toString() + " where origid=" + iorigid;
+	sql.execute(sqlst);
+	sql.close();
+
+}
+
+Object getSampleId_Test(String isampleid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = 
+	"select JobTestParameters.origid as jtp_origid, JobTestParameters.mysoftcode, JobTestParameters.jobsamples_id, " +
+	"JobTestParameters.uploadToLIMS, JobSamples.origid as jsorigid, JobSamples.sampleid_str " + 
+	"from JobTestParameters left join JobSamples on JobTestParameters.jobsamples_id = JobSamples.origid " +
+	"where JobTestParameters.mysoftcode=" + param_mysoftcode + 
+	" and JobSamples.sampleid_str = '" + isampleid + "' " +
+	"group by " +
+	"JobTestParameters.origid, JobTestParameters.mysoftcode, JobTestParameters.jobsamples_id, JobTestParameters.uploadToLIMS, " +
+	"JobSamples.origid, JobSamples.sampleid_str";
+	
+	retrec = sql.firstRow(sqlst);
+	
+	sql.close();
+	
+	return retrec;
+
+}
+
+// Drop listener for sampleid
+class RunlistSample_drop implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// if run-list status is not DRAFT, just return. no need to accept drop
+		if(!param_runstat.equals(RUNLIST_DRAFT))
+		{
+			showMessageBox("Run already committed/WIP, cannot add anymore samples");
+			return;
+		}
+
+		Component dragged = event.dragged;
+		// alert(dragged.getLabel());
+
+		sampleid = dragged.getLabel();
+		
+		// if already exist in listbox.. return
+		if(ExistInListbox(runlist_lb, sampleid,1)) return;
+
+		kre = getSampleId_Test(sampleid);
+		
+		// if already assigned a runlist (uses uploadToLIMS flag for now) ... just return
+		if(kre.get("uploadToLIMS") == 1) return;
+
+		String[] strarray = new String[2];
+		
+		jtp_oo = kre.get("jtp_origid").toString();
+		
+		strarray[0] = jtp_oo;
+		strarray[1] = sampleid;
+		
+		insertListItems(runlist_lb,strarray,"false"); // runlist_lb def below
+		
+		runlist_lb.setRows(20);
+
+	}
+}
+
+Object[] runlistsamples_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+};
+
+Listbox makeRunList_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("runlist_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("runlist_lb");
+    newlb.setVflex(true);
+	
+	newlb.setDroppable("runsampleid");
+	newlb.addEventListener("onDrop", new RunlistSample_drop());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd2 = new Listheader();
+    hd2.setLabel("origid");
+    hd2.setSort("auto");
+	// hd2.setVisible(false);
+    hd2.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    newlb.setRows(10);
+
+    return newlb;
+
+} // end of makeRunList_Listbox()
+
+void populate_SampleId_Listbox(Div idiv)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlsta = "select * from RunList_Items where RunList_id=" + param_runorigid;
+	runitem_recs = sql.rows(sqlsta);
+	sql.close();
+	
+	Listbox newlb = makeRunList_Listbox(idiv);
+	
+	if(runitem_recs.size() == 0) return;
+	
+	newlb.setRows(25);
+	
+	String[] strarray = new String[2];
+	
+	for(ritm : runitem_recs)
+	{
+		strarray[0] = ritm.get("jobtestparam_id").toString();
+		strarray[1] = ritm.get("sampleid_str");
+		
+		insertListItems(runlist_lb,strarray,"false"); // runlist_lb def above
+		
+	}
+
+}
+
+// Remove sample-id from listbox, have to do some database manipulation
+void removeSampleId()
+{
+	if(runlist_lb.getSelectedIndex() == -1) return;
+	
+	// alert(runlist_lb.getSelectedItem().getLabel());
+	kkb = runlist_lb.getSelectedItem().getLabel();
+	
+	// reset this sample-id 's JobTestParameters.uploadToLIMS flag, making it available for drag-drop in main
+	setJobTestParameter_uploadToLIMS_Flag(kkb,0);
+	remoteItemFromListBox(runlist_lb, kkb, 0);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "delete from runlist_items where jobtestparam_id=" + kkb;
+	sql.execute(sqlst);
+	sql.close();
+
+
+
+}
+
+void removeAll_RunlistItems(String iorigid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlst = "delete from RunList_Items where RunList_id=" + iorigid;
+	sql.execute(sqlst);
+	
+	sql.close();
+
+}
+
+// Update JobTestParameters.uploadToLIMS for each sample in the listbox - done in the drop-event
+// one lil prob, this is a separate source-file from runlist.zul, it won't be able to refresh the samples->listbox in runlist.zul .
+// maybe some cross source-file event injection, have to research on this.
+// param_runorigid
+// param_mysoftcode
+void saveSampleRunList()
+{
+	icc = runlist_lb.getItemCount();
+	if(icc == 0) return false; // nothing.. return
+	
+	// remove all items in the run-list
+	removeAll_RunlistItems(param_runorigid);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	for(i=0; i<icc; i++)
+	{
+		ilabel = runlist_lb.getItemAtIndex(i);
+		korigid = getListcellItemLabel(ilabel, 0);	// get origid for JobTestParameters , column 1
+		
+		ksd = getListcellItemLabel(ilabel,1); // get sample-id, need to chop though
+		ksampid = Integer.parseInt(extractSampleNo(ksd)).toString();
+
+		sqlst = "insert into RunList_Items values (" + param_runorigid + "," + ksampid + ",'" + ksd + "'," + korigid + ", 'WIP')" ;
+		sql.execute(sqlst);
+
+		// set uploadtoLIMS flag
+		sqlst2 = "update JobTestParameters set uploadToLIMS=1 where origid=" + korigid;
+		sql.execute(sqlst2);
+
+	}
+	
+	sql.close();
+	
+	showMessageBox("Run list saved");
+
+}
+
+// Just to update the window title and some labels
+void updateWindowTitle(Window iwin, Label ilabel, Label istatlabel)
+{
+	mysoft_stockdet = getStockMasterDetails(param_mysoftcode);
+	if(mysoft_stockdet == null) return;
+	
+	testdesc = "Test: " + mysoft_stockdet.get("Description") + " (" + mysoft_stockdet.get("Description2") + ")";
+	ilabel.setValue(testdesc);
+	
+	istatlabel.setValue("Run Status: " + param_runstat );
+	
+	iwin.setTitle("Samples > Run list #" + param_runorigid);
+}
+
+]]>
+</zscript>
+
+<window id="runlistassignsamples_win" width="300px" height="440px" title="Samples -> Run list"
+	position="center,right" mode="overlapped" border="normal" closable="true"
+    onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<vbox>
+<label id="runstatus_lbl" />
+<label id="testname_lbl" multiline="true" style="font-size:9px" />
+</vbox>
+
+<div id="sampleid_lb" />
+
+<separator height="5px" />
+
+<button id="save_btn" label="Save run list" onClick="saveSampleRunList()" disabled="true" />
+<button id="remove_btn" label="Remove sample" onClick="removeSampleId()" disabled="true" />
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />	
+
+<zscript>
+
+updateWindowTitle(runlistassignsamples_win,testname_lbl,runstatus_lbl);
+populate_SampleId_Listbox(sampleid_lb);
+
+// disable buttons if run status = WIP / RELEASED
+if(param_runstat.equals(RUNLIST_DRAFT))
+{
+	save_btn.setDisabled(false);
+	remove_btn.setDisabled(false);
+}
+
+</zscript>
+
+</div>
+</window>
+
+</zk>
+

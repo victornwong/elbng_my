@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="manageHospitalsPage"?>
+
+<!--
+
+Manage Hospitals
+
+Developer: Victor Wong
+(c)2009 Starlims Malaysia Sdn Bhd
+
+-->
+
+<zk>
+
+<zscript src="mirisglobal.zs" />
+<!-- include main database access functions -->
+<zscript src="mirisDb_API.zs" />
+
+<zscript>
+class hInputForm
+{
+    public Textbox hospitalid;
+    public Textbox hospitalname;
+    public Textbox headname;
+
+    public Textbox address1;
+    public Textbox address2;
+    public Textbox city;
+    public Textbox state;
+    public Textbox postcode;
+
+    public Textbox telephone;
+    public Textbox fax;
+    public Textbox email;
+
+    public Textbox website;
+
+    public hInputForm(Textbox ihospitalid, Textbox ihospitalname, Textbox iheadname,
+        Textbox iaddr1, Textbox iaddr2, Textbox icity, Textbox istate, Textbox ipostcode,
+        Textbox itel, Textbox ifax, Textbox iemail, Textbox iwebsite)
+    {
+        hospitalid = ihospitalid;
+        hospitalname = ihospitalname;
+        headname = iheadname;
+
+        address1 = iaddr1;
+        address2 = iaddr2;
+        city = icity;
+        state = istate;
+        postcode = ipostcode;
+
+        telephone = itel;
+        fax = ifax;
+        email = iemail;
+        website = iwebsite;
+    }
+
+}
+
+// Return true if hospitalid exist in database else false
+boolean hospitalExist(String ihospitalid)
+{
+    boolean retval = false;
+
+    try
+    {
+        sql = mirisSQL();
+        sqlstatem = "select hospitalname from hospitals where hospitalid='" + ihospitalid + "'";
+        subchild = sql.rows(sqlstatem);
+
+		if(subchild.size() > 0)
+			retval = true;
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+
+    return retval;
+
+}
+
+// Access database table to get hospital details and then populate
+void populateHospDetails(Listbox mListbox)
+{
+    hospname = mListbox.getSelectedItem().getLabel();
+    hospid = mListbox.getSelectedItem().getId();
+
+    // set groupbox caption
+    gb_hospname.setLabel("Selected: " + hospname);
+
+    hiBoxes.hospitalid.setValue(hospid);
+    hiBoxes.hospitalname.setValue(hospname);
+    
+    try
+    {
+
+    sql = mirisSQL();
+    sqlstatem = "select * from hospitals where hospitalid='" + hospid + "'";
+    therec = sql.firstRow(sqlstatem);
+
+    // super plumbing code to get data into entry-form
+    hiBoxes.headname.setValue(therec.get("headname"));
+    hiBoxes.address1.setValue(therec.get("address1"));
+    hiBoxes.address2.setValue(therec.get("address2"));
+    hiBoxes.city.setValue(therec.get("city"));
+    hiBoxes.state.setValue(therec.get("state"));
+    hiBoxes.postcode.setValue(therec.get("postcode"));
+
+    hiBoxes.telephone.setValue(therec.get("telephone"));
+    hiBoxes.fax.setValue(therec.get("fax"));
+    hiBoxes.email.setValue(therec.get("email"));
+    hiBoxes.website.setValue(therec.get("website"));
+
+    }
+    catch(SQLException se) {}
+
+    sql.close();
+}
+
+// Update details into database. update button onClick
+void updateHospitalDetails()
+{
+    // no hospital selected, just return
+    if(hiBoxes.hospitalid.getValue() == "")
+    {
+        showMessageBox("Please select a hospital");
+        return;
+    }
+
+    // Hospital must have name
+    if(hiBoxes.hospitalname.getValue() == "")
+    {
+        showMessagebox("Hospital must have a name");
+        return;
+    }
+	
+	// make sure hospital exists before doing update
+	if(!hospitalExist(hiBoxes.hospitalid.getValue()))
+		return;
+
+    try
+    {
+        sql = mirisSQL();
+        sqlstatem = "update hospitals set hospitalname='" + hiBoxes.hospitalname.getValue() + "'," +
+            "headname='" + hiBoxes.headname.getValue() + "'," +
+            "address1='" + hiBoxes.address1.getValue() + "'," +
+            "address2='" + hiBoxes.address2.getValue() + "'," +
+            "city='" + hiBoxes.city.getValue() + "'," +
+            "state='" + hiBoxes.state.getValue() + "'," +
+            "postcode='" + hiBoxes.postcode.getValue() + "'," +
+            "telephone='" + hiBoxes.telephone.getValue() + "'," +
+            "fax='" + hiBoxes.fax.getValue() + "'," +
+            "email='" + hiBoxes.email.getValue() + "'," +
+            "website='" + hiBoxes.website.getValue() + "' " +
+            " where hospitalid='" + hiBoxes.hospitalid.getValue() + "'";
+
+            sql.execute(sqlstatem);
+
+            showMessageBox("Update completed..");
+
+            //alert(sqlstatem);
+
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+}
+
+void deleteHospital(Listbox tlistbox)
+{
+    hospname = tlistbox.getSelectedItem().getLabel();
+    hospid = tlistbox.getSelectedItem().getId();
+	
+	if(hospname == "" || hospid == "") return;
+	
+    if(Messagebox.show("Are you sure?","Delete hospital",
+		Messagebox.YES|Messagebox.NO,Messagebox.QUESTION) == Messagebox.NO)
+	{
+		// need to put auditing codes here
+		return;
+	}
+	
+	try
+	{
+		sql = mirisSQL();
+		sqlstatem = "delete from hospitals where hospitalid='" + hospid + "'";
+		sql.execute(sqlstatem);
+		
+		Listitem torem = tlistbox.getFellow(hospid);
+		torem.setParent(null);
+		tlistbox.invalidate();
+		
+		showMessageBox("Hospital deleted..");
+		
+	}
+	catch (SQLException se) {}
+	
+	sql.close();
+
+}
+
+// Add new hospital to database. The rest of the fields to be handled by other section
+void addNewHospital(Textbox ihospitalid, Textbox ihospitalname)
+{
+    hospid = ihospitalid.getValue();
+    hospname = ihospitalname.getValue();
+
+    // Hospital name and id cannot be empty
+    if(hospname == "" || hospid == "") return;
+    
+    // make sure hospital id not exist in database
+    if(hospitalExist(hospid))
+    {
+        showMessageBox("Hospital ID exist in database");
+        return;
+    }
+
+    try
+    {
+        sql = mirisSQL();
+
+        sqlstatem = "insert into hospitals (hospitalid,hospitalname) values ('" +
+			hospid + "','" + hospname + "')";
+
+        sql.execute(sqlstatem);
+
+        showMessageBox("Hospital added to database");
+
+        //alert(ihospitalid.getValue() + " : " + ihospitalname.getValue());
+
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+	
+	Listitem mylistitem = new Listitem();
+	mylistitem.setLabel(hospname);
+	mylistitem.setId(hospid);
+	mylistitem.setParent(hospitals_list);
+
+    hospitals_list.invalidate();
+    
+}
+
+</zscript>
+
+<!-- tooltips -->
+<popup id="hospidnochange">
+Hospital ID cannot be changed
+</popup>
+
+<popup id="mustbeunique">
+Must be unique
+</popup>
+
+<!-- end of tooltips -->
+
+<!-- Add new hospital, we use popup instead of creating extra window -->
+<popup id="addHospital">
+
+<groupbox mold="3d" width="350px">
+    <caption label="Add new hospital" style="font-weight:bold" />
+    <grid>
+        <columns>
+            <column label=""/>
+            <column label=""/>
+        </columns>
+        <rows>
+            <row>
+                <label value="Hospital ID" tooltip="mustbeunique" />
+                <textbox id="ah_hospitalid" />
+            </row>
+            <row>
+                <label value="Hospital name" />
+                <textbox id="ah_hospitalname" cols="30" />
+            </row>
+        </rows>
+    </grid>
+</groupbox>
+
+<separator />
+<hbox>
+    <button id="addhospitalbutt" label="Add" onClick="addNewHospital(ah_hospitalid,ah_hospitalname); addHospital.close()" />
+    <button label="Cancel" onClick="addHospital.close()" />
+</hbox>
+
+</popup>
+<!-- end of add new hospital popup -->
+
+<groupbox mold="3d" width="100%">
+    <caption label="Please select hospital" style="font-weight:bold"/>
+
+<div width="100%">
+
+<!-- put listbox for all hospitals in database -->
+
+<listbox id="hospitals_list" rows="8" onSelect="populateHospDetails(hospitals_list)" />
+<zscript>
+populateHospitalsListbox(hospitals_list);
+</zscript>
+
+</div>
+
+<separator />
+<hbox>
+    <button label="New hospital" popup="addHospital" />
+    <button label="Delete" onClick="deleteHospital(hospitals_list)" />
+</hbox>
+
+</groupbox>
+
+<separator />
+
+<!-- hospital details entry form -->
+
+<groupbox mold="3d">
+    <caption id="gb_hospname" label="" style="font-weight:bold" />
+
+<grid>
+    <columns width="100px,">
+        <column label=""/>
+        <column label=""/>
+        <column label=""/>
+        <column label=""/>
+    </columns>
+
+	<rows>
+		<row>
+           <label value="Hospital Id" />
+           <textbox id="tb_hospitalid" disabled="true" tooltip="hospidnochange" />
+           
+           <label value="Hospital name" />
+           <textbox id="tb_hospitalname" cols="30" />
+        </row>
+
+        <row>
+           <label value="GM Name" />
+           <textbox id="tb_headname" cols="40" />
+
+           <label value="Email" />
+           <textbox id="tb_email" cols="30" />
+        </row>
+
+        <row>
+           <label value="Address L1" />
+           <textbox id="tb_address1" cols="40" />
+
+           <label value="Telephone" />
+           <textbox id="tb_telephone" />
+        </row>
+
+        <row>
+           <label value="Address L2" />
+           <textbox id="tb_address2" cols="40" />
+
+           <label value="Fax" />
+           <textbox id="tb_fax" />
+        </row>
+
+        <row>
+           <label value="City" />
+           <textbox id="tb_city" />
+
+           <label value="State" />
+           <textbox id="tb_state" />
+        </row>
+
+        <row>
+           <label value="Website" />
+           <textbox id="tb_website" cols="30" />
+
+            <label value="Postcode" />
+            <textbox id="tb_postcode" />
+
+        </row>
+
+    </rows>
+</grid>
+
+<separator height="20px"/>
+
+<button label="Update" onClick="updateHospitalDetails()" />
+
+</groupbox>
+
+<separator />
+
+<groupbox mold="3d">
+    <caption label="Photos" />
+Not now
+</groupbox>
+
+<zscript>
+hInputForm hiBoxes = new hInputForm(tb_hospitalid, tb_hospitalname,tb_headname,
+        tb_address1, tb_address2, tb_city, tb_state, tb_postcode,
+        tb_telephone, tb_fax, tb_email, tb_website);
+        
+</zscript>
+
+
+</zk>

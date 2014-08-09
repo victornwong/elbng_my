@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="print_quotetrack_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : Print quotation track list..
+Written by : Victor Wong
+Done: 14/1/2011
+
+*NOTES* testing
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+	thesrc = BIRT_WEBVIEWER + BIRT_QUOTETRACK;
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_quottrac_box" width="800px" height="600px" title="Print Quotation Tracks" position="center" mode="overlapped" border="normal" closable="true" sizable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+<separator height="3px" />
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

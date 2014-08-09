@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="contriFactorSetupPage"?>
+
+<zk>
+<zscript src="mirisDb_API.zs" />
+<zscript src="lookuptree.zs" />
+
+<zscript>
+
+// Simple onSelect eventlistener
+class showtree_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		showLookupTree(cf_sublist,contfactorstree);
+        
+        // hardcoded id, to show the CRUD buttons when sub-type selected
+        crud_buttons.setVisible(true);
+
+	}    
+}
+
+void populateSubCategory(Listbox mListbox, Div subDiv)
+{
+	togetkkk = mListbox.getSelectedItem().getId();
+
+	sql = mirisSQL();
+
+	sqlstatem = "select * from lookups where myparent = '" + togetkkk + "'";
+	catlist = sql.rows(sqlstatem);
+
+	// Remove previous sublist
+	Listbox tocheck = subDiv.getFellowIfAny("cf_sublist");
+	if(tocheck != null)
+	{
+		tocheck.setParent(null);
+	}
+	
+	// create a new sublistbox for the tree
+	Listbox new_sublist = new Listbox();
+	new_sublist.setId("cf_sublist");
+	new_sublist.addEventListener("onSelect", new showtree_event());
+	new_sublist.setParent(subDiv);
+	
+	// Remove previous lookuptree, otherwise user will get confused
+	Treechildren treetocheck = contfactorstree.getTreechildren();
+	if(treetocheck != null)
+	{
+		treetocheck.setParent(null);
+	}
+
+	if(catlist.size() > 0)
+	{
+		for(cato : catlist)
+		{
+			Listitem mylistitem = new Listitem();
+			cat_name = cato.get("name");
+			cat_disptext = cato.get("disptext");
+			
+			mylistitem.setLabel(cat_disptext);
+			mylistitem.setId(cat_name);
+			mylistitem.setParent(new_sublist);
+		}
+	}
+
+	sql.close();
+}
+
+</zscript>
+
+<!-- main portion to show type and subtype -->
+<hbox>
+	<vbox>
+	<groupbox mold="3d" width="210px">
+		<caption label="Please select a type" />
+			<listbox id="cf_catlist" onSelect="populateSubCategory(cf_catlist,cf_subcategory)"/>
+			<zscript>
+			populateCategory(cf_catlist,"CONTRIBUTORYFACTORS");
+			</zscript>
+	</groupbox>
+	<separator />	
+	<groupbox mold="3d" width="210px">
+		<caption label="Please select subtype" />
+		<div id="cf_subcategory" />
+	</groupbox>
+	</vbox>
+
+    <vbox>
+	<groupbox mold="3d" width="100%">
+		<caption label="Contributory factors" />
+		<tree id="contfactorstree" rows="20" context="contfactPopup" >
+			<treecols>
+				<treecol label="CODE" width="100px" />
+				<treecol label="Description" />
+			</treecols>
+		</tree>	
+	</groupbox>
+
+    <separator />
+
+    <div id="crud_buttons">
+    <hbox>
+        <button label="Insert" popup="cf_insertPopup" />
+        <button label="Update" popup="cf_updatePopup" />
+        <button label="Delete" popup="cf_deletePopup" />
+    </hbox>
+    </div>
+
+    </vbox>
+    
+</hbox>
+
+<!-- end of main portion -->
+
+<!-- some tooltips -->
+<popup id="uniqcode">
+Code must be unique
+</popup>
+
+<popup id="codenochange">
+Incident code cannot be changed
+</popup>
+
+<popup id="descripto">
+Please enter something meaningful
+</popup>
+
+<popup id="tipexpired">
+If item is expired, it won't be usable in the system
+</popup>
+
+<popup id="tipintvalue">
+To be used later if required
+</popup>
+
+<!-- end of tooltips -->
+
+<popup id="cf_updatePopup" width="530px" onOpen="popUpdateBox(contfactorstree,modinputs)">
+
+<groupbox mold="3d" width="100%">
+	<caption label="MODIFY" />
+
+<grid>
+ <columns>
+  <column label="Field" />
+  <column label="Entry" />
+ </columns>
+ 
+ <rows>
+ <!-- for update, the incident type code cannot be changed -->
+	<row>
+	 <label value="Code"  tooltip="codenochange" />
+	 <textbox id="incd_name" disabled="true" />
+	</row>
+	
+	<row>
+	 <label value="Description"  tooltip="descripto"/>
+	 <textbox id="incd_disptext" multiline="true" rows="3" cols="60" />
+	</row>
+
+	<row>
+	 <label value="Expired" tooltip="tipexpired" />
+	 <checkbox id="incd_expired" label="Yes/No" />
+	</row>
+	
+	<row>
+	 <label value="NumVal" tooltip="tipintvalue" />
+	 <intbox id="incd_intvalue" constraint="no negative"/>
+	</row>
+
+ </rows>
+
+</grid>
+
+<zscript>
+lookupInputs modinputs = new lookupInputs(incd_name,incd_disptext,
+	incd_expired,incd_intvalue,"cf_sublist",contfactorstree);
+</zscript>
+
+</groupbox>
+
+<separator />
+<hbox>
+<button id="update" label="Update" onClick="updateItem(cf_updatePopup,contfactorstree,modinputs)" />
+<button id="cancelupdate" label="Cancel" onClick="cf_updatePopup.close()" />
+</hbox>
+</popup>
+
+<!-- popup to delete incident type -->
+<popup id="cf_deletePopup" width="200px">
+
+<groupbox mold="3d" width="170px">
+	<caption label="DELETE" />
+<vbox>
+	<label value="Are you sure?" />
+	<separator />
+	<hbox>
+		<button id="delyes" label="Yes" onClick="deleteItem(cf_deletePopup,contfactorstree)" />
+		<button id="delno" label="No" onClick="cf_deletePopup.close()" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+<!-- insert new incident type -->
+<popup id="cf_insertPopup" width="530px">
+
+<groupbox mold="3d" width="100%">
+	<caption label="INSERT" />
+
+<grid>
+ <columns>
+  <column label="Field" />
+  <column label="Entry" />
+ </columns>
+ 
+ <rows>
+	<row>
+	 <label value="Code" tooltip="uniqcode" />
+	 <textbox id="ins_incd_name" />
+	</row>
+	
+	<row>
+	 <label value="Description" tooltip="descripto" />
+	 <textbox id="ins_incd_disptext" multiline="true" rows="3" cols="60" />
+	</row>
+
+	<row>
+	 <label value="Expired" tooltip="tipexpired"/>
+	 <checkbox id="ins_incd_expired" label="Yes/No" />
+	</row>
+	
+	<row>
+	 <label value="NumVal" tooltip="tipintvalue" />
+	 <intbox id="ins_incd_intvalue" constraint="no negative"/>
+	</row>
+ </rows>
+
+</grid>
+
+<zscript>
+lookupInputs insinputs = new lookupInputs(ins_incd_name,ins_incd_disptext,
+	ins_incd_expired,ins_incd_intvalue,"cf_sublist",contfactorstree);
+
+// hide crud_buttons when page first show
+crud_buttons.setVisible(false);
+</zscript>
+
+</groupbox>
+
+<separator />
+<hbox>
+<button id="insert" label="Insert" onClick="insertItem(cf_insertPopup, contfactorstree, insinputs)" />
+<button id="insertcancel" label="Cancel" onClick="cf_insertPopup.close()" />
+</hbox>
+</popup>
+
+<!-- use this one to update/insert/delete lookup table -->
+<menupopup id="contfactPopup">
+<menuitem label="Update" popup="cf_updatePopup" />
+<menuitem label="Insert" popup="cf_insertPopup" />
+<menuitem label="Delete" popup="cf_deletePopup" />
+</menupopup>
+
+</zk>

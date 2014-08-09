@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="rwqmtrender_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "RWQM Trending";
+MYVERSION = "v0.1";
+/*
+Title		: RWQM data-mining and trending
+Dated		: 17/08/2012
+Written by	: Victor Wong
+
+#204a87
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+gridhand = new GridHandler();
+samphand = new SampleReg();
+
+glob_selected_station = "";
+
+class stnlb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = stations_lb.getSelectedItem();
+		glob_selected_station = lbhand.getListcellItemLabel(isel,0);
+	}
+}
+
+void showStations()
+{
+Object[] stnlb_headers = 
+{
+	new listboxHeaderWidthObj("Station",true,""),
+};
+
+	Listbox newlb = lbhand.makeVWListbox_Width(stations_holder, stnlb_headers, "stations_lb", 20);
+	
+	sqlstm = "select distinct cust_stationno from elb_rwqm_results order by cust_stationno";
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) { newlb.detach(); return; }
+	newlb.addEventListener("onSelect", new stnlb_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("cust_stationno"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void loadStationResults()
+{
+	if(glob_selected_station.equals("")) return;
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+
+	// get the tests ..
+	sqlstm = "select distinct test_parameter,result_units from elb_rwqm_results where cust_stationno='" + glob_selected_station + "'";
+	tstunits = sqlhand.gpSqlGetRows(sqlstm);
+
+	// get sample-id
+	sqlstm = "select distinct sampleid,cust_sampmarking from elb_rwqm_results where cust_stationno='" + 
+	glob_selected_station + "' and analysed_date between '" + sdate + "' and '" + edate + "'";
+	sampids = sqlhand.gpSqlGetRows(sqlstm);
+
+	// remove prev
+	if(results_holder.getFellowIfAny("smpresgrid") != null) { kko = results_holder.getFellowIfAny("smpresgrid"); kko.detach(); }
+	resgrid = new Grid();
+	resgrid.setId("smpresgrid");
+	rsrows = new Rows();
+	rsrows.setParent(resgrid);
+
+	tstrow = gridhand.gridMakeRow("","","",rsrows);
+	unitrow = gridhand.gridMakeRow("","","",rsrows);
+
+	gridhand.grid_makeBlankColumn(tstrow,2);
+	gridhand.makeLabelToParent("SampleID", "", unitrow);
+	gridhand.makeLabelToParent("SampMark", "", unitrow);
+
+	for(dpi : tstunits)
+	{
+		gridhand.makeLabelToParent(dpi.get("test_parameter"), "", tstrow);
+		gridhand.makeLabelToParent(dpi.get("result_units"), "", unitrow);
+	}
+
+	HashMap sampres_map = new HashMap();
+
+	for(dpi : sampids)
+	{
+		smpid = dpi.get("sampleid");
+		perow = gridhand.gridMakeRow("","","",rsrows);
+		gridhand.makeLabelToParent(smpid, "", perow);
+		gridhand.makeLabelToParent(dpi.get("cust_sampmarking"), "", perow);
+
+		// make them textboxes for per test
+		for(tpi : tstunits)
+		{
+			//resbox = gridhand.makeTextboxToParent("","","95%","",false,perow);
+			okey = smpid + "_" + tpi.get("test_parameter");
+			sampres_map.put(okey,gridhand.makeTextboxToParent("","","95%","",false,perow));
+		}
+	}
+
+	// get them results and put into boxes
+	sqlstm = "select sampleid,test_parameter,final_result from elb_rwqm_results " +
+	"where cust_stationno='" + glob_selected_station + "' and " + 
+	"analysed_date between '" + sdate + "' and '" + edate + "'";
+	tresults = sqlhand.gpSqlGetRows(sqlstm);
+	
+	for(tres : tresults)
+	{
+		smpid = tres.get("sampleid");
+		testn = tres.get("test_parameter");
+		tkey = smpid + "_" + testn;
+
+		try
+		{
+			tbox = sampres_map.get(tkey);
+			tbox.setValue( kiboo.floatToString(tres.get("final_result"),"0.0") );
+		}
+		catch (NullPointerException e)
+		{}
+
+	}
+	resgrid.setParent(results_holder);
+	
+	//alert(sampres_map);
+}
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="rwqmtrender_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new java.util.Date()" />
+<hbox>
+<div id="stations_holder" width="150px" />
+
+<div>
+<groupbox mold="3d">
+<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new java.util.Date()" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new java.util.Date()" />
+			<button label="Load results" style="font-size:9px" onClick="loadStationResults()" />
+		</row>
+	</rows>
+</grid>
+</groupbox>
+
+<div id="workarea">
+
+<div id="results_holder" />
+
+</div>
+
+</div>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+showStations();
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

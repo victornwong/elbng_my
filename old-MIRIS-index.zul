@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="mirislogin" ?>
+<?page title="MIRiS Login"?>
+<!--
+index.zul
+
+{{IS_NOTE
+	Purpose: Login page for MIRIS project
+		
+	Description:
+		
+	History:
+
+}}IS_NOTE
+
+Copyright (C) 2009 STARLiMS(M) Sdn Bhd
+
+{{IS_RIGHT
+}}IS_RIGHT
+-->
+<zk>
+
+<zscript src="/mainproc/mirisglobal.zs" />
+<zscript src="/mainproc/mirisDb_API.zs" />
+
+<zscript>
+<![CDATA[
+
+userAccessObj useraccessobj = new userAccessObj();
+
+boolean checkUserAccess()
+{
+	boolean retval = true;
+	
+	return retval;
+}
+
+void loginToSystem()
+{
+    useraccessobj.username = tb_username.getValue();
+	
+	// if no hospital selected and no username, ignore and return.
+	Listitem hospsel = hospitals_login.getSelectedItem();
+	if(hospsel == null || useraccessobj.username == "") return;
+	
+	useraccessobj.hospitalid = hospsel.getId();
+	useraccessobj.hospitalname = hospsel.getLabel();
+	
+	// check security now.
+	if(!checkUserAccess())
+	{
+		showMessageBox("Invalid login..");
+		return;
+	}
+	
+	// hide login window before loading mainproc
+	loginwin.setVisible(false);
+
+	// set user access object , security thing
+	mainproc.setDynamicProperty("uao",useraccessobj);
+	mainproc.setSrc(MAINPROCPATH + "/index.zul");
+	
+	// reset user access object, we only hide the login window, when it's visible again
+	// everything should be cleared.
+	tb_username.setValue("");
+	tb_password.setValue("");
+	hospitals_login.setSelectedIndex(0);
+
+}
+
+]]>
+</zscript>
+
+<window id="loginwin" title="MIRiS Login" width="450px" height="180px" position="top,center"
+ mode="overlapped" style="padding:50px"
+ >
+
+<hbox>
+<image src="/mirisimg/logokkm.jpg" style="margin-top:10px; margin-right:20px; margin-left:10px" />
+
+<vbox> 
+<grid>
+ <columns>
+  <column label="" />
+  <column label="" />
+ </columns>
+ 
+ <rows>
+	<row>
+	Username
+	<textbox id="tb_username" />
+	</row>
+	
+	<row>
+	Password
+	<textbox id="tb_password" type="password" />
+	</row>
+	
+	<row>
+	Hospital
+
+    <listbox id="hospitals_login" mold="select">
+		<listitem label="NONE" />
+	</listbox>
+    <zscript>
+    populateHospitalsListbox(hospitals_login);
+    </zscript>
+
+    </row>
+	
+ </rows>
+</grid>
+
+<separator height="20px" />
+<hbox>
+	<button id="loginbutt" label="Login" onClick="loginToSystem()" />
+</hbox>
+
+</vbox>
+
+</hbox>
+
+</window>
+
+ <div>
+ <include id="mainproc" />
+ </div>
+
+</zk>

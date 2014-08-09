@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="main"?>
+<?page title="MIRiS"?>
+<!--
+
+MIRIS Project
+
+Version				: 1.00
+Coding began date	: 1/1/2009
+Developers			: Victor Wong
+
+(c)2009 STARLiMS (M) Sdn Bhd
+
+-->
+
+<zk>
+
+<zscript src="mirisglobal.zs" />
+<zscript src="mirisDb_API.zs" />
+
+<zscript>
+// Some security checking codes here
+
+useraccessobj = getUserAccessObject();
+hospname_disp = useraccessobj.hospitalname;
+
+// hospname_disp = "Klang";
+
+// KeyEvent listener for main-window. Can implement hot-keys and such.
+class mainWindowCtrlKey implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+        switch(event.getKeyCode())
+        {
+            case 49: // 1
+                runexternal("addform");
+                break;
+
+            case 48: // 0
+                runexternal("setup");
+                break;
+
+            default:
+                //alert("keypressed: " + event.getKeyCode());
+                break;
+        }
+	}
+}
+
+</zscript>
+
+<!-- intercept Alt-1 to Alt-0 for hotkey thinggy -->
+<window id="mainWindow" ctrlKeys="@1@2@3@4@5@6@7@8@9@0" width="993px" height="1000px"
+	position="center">
+
+<zscript>
+    mainWindow.addEventListener("onCtrlKey", new mainWindowCtrlKey());
+</zscript>
+
+<borderlayout>
+
+<north border="none">
+<div width="100%">
+<flash src="mirisimg/MOHBanner.swf" width="100%" height="100px" />
+</div>
+</north>
+
+<!-- westside, for title and so on.. -->
+<west border="none">
+  
+	<div>
+	<vbox>
+    <label value="M I R i S" style="font-size:30px;font-weight:bold; font-family:Arial;color:#991111" />
+	<!--
+	<image src="/mirisimg/logokkm.jpg" style="margin-top:10px; margin-right:20px; margin-left:10px" />
+	-->
+	
+	<fisheyebar id="mainmenu" attachEdge="center" labelEdge="center" orient="vertical"
+		style="margin-top:100px; margin-left:30px">
+		
+		<fisheye image="/mirisimg/addform.png" label="Baru"
+			onClick='runexternal("addform")' />
+			
+		<fisheye image="/mirisimg/browse.png" label="Browse"
+			onClick='runexternal("browse")' />
+			
+		<fisheye image="/mirisimg/manincident.png" label="Incidents Manager"
+			onClick='runexternal("incidentmanager")' />
+			
+		<fisheye image="/mirisimg/setup.png" label="Setup"
+			onClick='runexternal("setup")' />
+			
+		<fisheye image="/mirisimg/user.png" label="Users"
+			onClick='runexternal("users")' />
+			
+		<fisheye image="/mirisimg/logoff.png" label="Logoff"
+			onClick='runexternal("logoff")' />
+
+	</fisheyebar>
+	
+	</vbox>
+	
+	</div>
+
+</west>
+
+<!-- this is the content part, everything will play here. -->
+<center border="none">
+ 
+ <div id="thecontent">
+   <vbox>
+
+      <!-- <label value="Patient Safety Event - Management and Reporting" /> -->
+	  
+	  <label value="${hospname_disp}" style="font-size:18px;font-weight:bold;padding:30px" />
+	  
+	  <separator />
+
+	  <groupbox mold="3d">
+		<caption label="Incidents" />
+		
+	<zscript>
+    <![CDATA[
+    import java.util.Date;
+    import java.util.TimeZone;
+    
+    TimeZone zone=TimeZone.getTimeZone("GMT-05");
+    
+    Date current=new Date(Date.parse("Oct 05 2006 00:00:00 GMT-0500"));
+    //for hotzone of band #1
+    Date d1=new Date(Date.parse("Aug 01 2006 00:00:00 GMT-0500"));
+    Date d2=new Date(Date.parse("Sep 01 2006 00:00:00 GMT-0500"));
+    Date d3=new Date(Date.parse("Aug 02 2006 00:00:00 GMT-0500"));
+    Date d4=new Date(Date.parse("Aug 04 2006 00:00:00 GMT-0500"));
+    Date d5=new Date(Date.parse("Aug 02 2006 06:00:00 GMT-0500"));
+    Date d6=new Date(Date.parse("Aug 02 2006 12:00:00 GMT-0500"));
+
+    //for hotzone of band #2
+    Date d7=new Date(Date.parse("Aug 01 2006 00:00:00 GMT-0500"));
+    Date d8=new Date(Date.parse("Sep 01 2006 00:00:00 GMT-0500"));
+    ]]>
+  </zscript>
+
+        <div id="timelinething" >
+		<timeline id="incident_timeline" height="400px" width="830px">
+		
+    <bandinfo width="70%" id="b1" intervalUnit="day"
+      intervalPixels="100" eventSourceUrl="data/newXMLDocument.xml" 
+      timeZone="${zone}" date="${current}">
+        <hotzone start="${d1}" end="${d2}" magnify="10" unit="week" />
+        <hotzone start="${d3}" end="${d4}" magnify="7" unit="day" />
+        <hotzone start="${d5}" end="${d6}" magnify="5" unit="hour" />
+    </bandinfo>
+    <bandinfo id="b2" timeZone="${zone}" date="${current}"
+      width="30%" intervalUnit="week" intervalPixels="50"
+      syncWith="b1" eventSourceUrl="data/newXMLDocument.xml" 
+      trackHeight="0.5" trackGap="0.5" showEventText="false">
+      <hotzone start="${d7}" end="${d8}" magnify="20" unit="week" />
+    </bandinfo>
+		
+		</timeline>
+
+        </div>
+		
+		<button label="Change xml 1" onClick='b1.setEventSourceUrl("data/newXMLDocument.xml")' />
+		<button label="Change xml 2" onClick='b1.setEventSourceUrl("data/timeline_ex1.xml")' />
+        </groupbox>
+		
+		<include id="tasksbox" src="${MAINPROCPATH}/tasksbox.zul" />
+
+    </vbox>
+ </div>
+</center>
+ 
+<south border="none">
+ 
+	<div>
+  
+	<include id="addnewincident" />
+	<include id="browseincident" />
+	<include id="systemsetup" />
+	<include id="usermanagement" />
+
+	<!-- placeholder for Incident Manager window -->
+	<include id="incidentmanager" />
+	</div>
+	
+</south>
+
+</borderlayout>
+
+</window>
+ 
+ <zscript><![CDATA[
+
+    // Check to see module is opened. return true if opened
+    boolean checkOpened(Include whichone)
+    {
+        boolean retval = false;
+
+        if(whichone.getSrc() != null)
+            retval = true;
+
+        return retval;
+    }
+
+	void activateModule(Include theinclude, String modulefn)
+	{
+		if(!checkOpened(theinclude))
+		{
+			// pass useraccessobject to other module
+			theinclude.setDynamicProperty("uao",useraccessobj);
+			theinclude.setSrc(MAINPROCPATH + "/" + modulefn);
+		}
+	}
+	
+	boolean allModuleClosed()
+	{
+		boolean retval = true;
+		
+		if(checkOpened(addnewincident) ||
+			checkOpened(systemsetup) ||
+			checkOpened(usermanagement) || 
+			checkOpened(incidentmanager))
+			retval = false;
+	
+		return retval;
+	}
+
+    // Run other modules.
+	void runexternal(String whichone)
+	{
+		if(!allModuleClosed()) return;
+	
+		switch(whichone)
+		{
+			case "addform":
+				activateModule(addnewincident,"addnew.zul?dowhat=addnew");
+                break;
+
+			case "browse":
+				break;
+				
+			case "setup":
+				activateModule(systemsetup,"systemsetup.zul");
+				break;
+				
+			case "users":
+				activateModule(usermanagement,"usermanager.zul");
+				break;
+				
+			case "incidentmanager":
+				activateModule(incidentmanager,"incidentmanager.zul");
+				break;
+                
+            case "logoff":
+				Window loginwindow = Path.getComponent("//mirislogin/loginwin");
+				loginwindow.setVisible(true);
+				
+				Include logininc = Path.getComponent("//mirislogin/mainproc");
+				logininc.setSrc("");
+				
+				useraccessobj.clearAll();
+                
+                break;
+
+		}
+	}
+	
+]]>	
+</zscript>
+
+</zk>

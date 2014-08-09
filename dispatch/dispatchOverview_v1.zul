@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="dispoverv_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Dispatch/Sample-collection Overview";
+MYVERSION = "v0.1";
+MYPANEL = "dispover_panel";
+/*
+Title		: Dispatch and sample-collection overview board
+Written by	: Victor Wong
+Dated		: 14/01/2013
+
+Give an overview of 7 days dispatching schedules
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+glob_selected_manifest = "";
+glob_selected_dispatcher = "";
+glob_selected_destination = "";
+Object ddselected = null;
+
+class dest_dclick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		desti = lbhand.getListcellItemLabel(isel,0);
+		todate = kiboo.todayISODateString();
+
+		sqlstm = "update elb_dispatchscheduledetails set completed=1-completed," +
+		"complete_date='" + todate + "', complete_ticker='" + useraccessobj.username + "' " +
+		"where origid=" + desti;
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		showDestinations(glob_selected_manifest);
+	}
+}
+
+class dest_click implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		ddselected = event.getReference();
+		glob_selected_destination = lbhand.getListcellItemLabel(ddselected,0);
+		retnot = lbhand.getListcellItemLabel(ddselected,3);
+		returnnote.setValue(retnot);
+	}
+}
+
+void showDestinations(String iwhat)
+{
+Object[] destilb_headers = {
+	new listboxHeaderWidthObj("DD#",true,"40px"),
+	new listboxHeaderWidthObj("Client",true,""),
+	new listboxHeaderWidthObj("Reasons",true,""),
+	new listboxHeaderWidthObj("Return",true,""),
+	new listboxHeaderWidthObj("Done",true,"40px"),
+};
+	Listbox newlb = lbhand.makeVWListbox_Width(destinations_holder, destilb_headers, "destinations_lb", 10);
+
+	sqlstm = "select origid,customer_name,reasonnotes,completed,returnnotes from elb_dispatchscheduledetails " + 
+	"where manifest_id=" + iwhat;
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.setRows(35);
+	newlb.addEventListener("onSelect", new dest_click());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(kiboo.checkNullString(dpi.get("reasonnotes")));
+		kabom.add(kiboo.checkNullString(dpi.get("returnnotes")));
+		kabom.add((dpi.get("completed") != null) ? ((dpi.get("completed") == 1) ? "YES" : "NO") : "NO");
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	dc_obj = new dest_dclick();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+	
+	workarea.setVisible(true);
+}
+
+void showDispatch_Metadata()
+{
+	dl_lbl.setValue(glob_selected_manifest);
+	dispatcher_lbl.setValue(glob_selected_dispatcher);
+}
+
+class dpm_dclick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		glob_selected_manifest = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_dispatcher = lbhand.getListcellItemLabel(isel,1);
+		showDestinations(glob_selected_manifest);
+		showDispatch_Metadata();
+	}
+}
+
+// populate 'em dispatch-schedules boxes
+void populateScheduleBoxes()
+{
+Object[] dispman_headers =
+{
+	new listboxHeaderWidthObj("DL#",true,"40px"),	
+	new listboxHeaderWidthObj("Disp",true,"50px"),
+	new listboxHeaderWidthObj("Dest",true,"30px"),
+};
+
+	sdate = kiboo.getDateFromDatebox(usertoday_date);
+	
+	for(i=1;i<8;i++)
+	{
+		myis = i.toString();
+		datei = i-1;
+
+		sqlstm = "select convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) as lookdate";
+		lkdate = sqlhand.gpSqlFirstRow(sqlstm);
+
+		sqlstm = "select dpm.origid, dpm.dispatcher_id," +
+		"(select count(origid) from elb_dispatchscheduledetails where manifest_id=dpm.origid) as destcount, " +
+		"(select count(origid) from elb_dispatchscheduledetails where manifest_id=dpm.origid and completed=1) as compcount " +
+		"from elb_dispatchmanifest dpm where " +
+		"schedule_date=convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) " +
+		"order by origid";
+
+		dispms = sqlhand.gpSqlGetRows(sqlstm);
+
+		lbid = "schedules_" + i.toString() + "_holder";
+		shid = "schedules_" + myis + "_lb";
+		shold = maindiv.getFellowIfAny(lbid);
+		Listbox newlb = lbhand.makeVWListbox_Width(shold, dispman_headers, shid, 3);
+
+		dlid = "due_" + i.toString() + "_lbl";
+		dlbl = maindiv.getFellowIfAny(dlid);
+		dlbl.setValue("Dated: " + lkdate.get("lookdate").toString().substring(0,10));
+
+		if(dispms.size() == 0) continue;
+		newlb.setRows(8);
+
+		for(dpi : dispms)
+		{
+			ArrayList kabom = new ArrayList();
+			kabom.add(dpi.get("origid").toString());
+			kabom.add(kiboo.checkNullString(dpi.get("dispatcher_id")));
+			kabom.add(dpi.get("compcount").toString() + " / " + dpi.get("destcount").toString());
+			strarray = kiboo.convertArrayListToStringArray(kabom);	
+			lbhand.insertListItems(newlb,strarray,"false","");
+		}
+		dc_obj = new dpm_dclick();
+		lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+	}
+}
+
+]]>
+</zscript>
+
+<popup id="returnnote_popup">
+<div width="400px" style="background:#a52a2a;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+<grid>
+	<rows>
+		<row>
+			<label value="Return notes" style="font-size:9px" />
+		</row>
+		<row>
+			<textbox id="returnnote" style="font-size:9px" multiline="true" height="50px" width="99%" />
+		</row>
+		<row>
+			<hbox>
+				<button label="Save return-notes" style="font-size:9px" />
+				<button label="X Close" style="font-size:9px" onClick="returnnote_popup.close()" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+</div>
+</popup>
+
+<div id="maindiv" width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<div style="background:#b5f449;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<hbox>
+		<label value="Set today date" style="font-size:9px" />
+		<datebox id="usertoday_date" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+		<button label="Show schedules" style="font-size:9px" onClick="populateScheduleBoxes()" />
+	</hbox>
+</div>
+<separator height="5px" />
+<hbox>
+<grid style="background:#a52a2a;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#ff0000">
+			<label id="due_1_lbl" style="font-weight:bold;text-decoration:blink" />
+		</row>
+		<row >
+			<div id="schedules_1_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#de9511;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#f57900">
+			<label id="due_2_lbl" style="font-weight:bold;" />
+		</row>
+		<row >
+			<div id="schedules_2_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#d3d7cf">
+			<label id="due_3_lbl" />
+		</row>
+		<row >
+			<div id="schedules_3_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff; -moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#d3d7cf">
+			<label id="due_4_lbl" />
+		</row>
+		<row >
+			<div id="schedules_4_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#d3d7cf">
+			<label id="due_5_lbl" />
+		</row>
+		<row >
+			<div id="schedules_5_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#d3d7cf">
+			<label id="due_6_lbl" />
+		</row>
+		<row >
+			<div id="schedules_6_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row style="background:#d3d7cf">
+			<label id="due_7_lbl" />
+		</row>
+		<row >
+			<div id="schedules_7_holder" />
+		</row>
+	</rows>
+</grid>
+</hbox>
+<separator height="5px" />
+
+<hbox>
+
+<div id="workarea" visible="false" width="900px" style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+<hbox>
+<grid width="400px">
+	<rows>
+		<row>
+			<label value="DL#" />
+			<label id="dl_lbl" />
+			<label value="Dispatcher" />
+			<label id="dispatcher_lbl" />
+		</row>
+	</rows>
+</grid>
+<label multiline="true" style="font-size:9px">
+Double-click a destination to update the status (completed or not)
+(DL=Dispatch List, DD=Destination)
+</label>
+<button label="Enter return-notes" style="font-size:9px" onClick="returnnote_popup.open(ddselected)" />
+</hbox>
+
+<separator height="3px" />
+
+<div id="destinations_holder" />
+
+</div>
+
+</hbox>
+
+
+<separator height="5px" />
+
+<zscript>
+<![CDATA[
+kiboo.setTodayDatebox(usertoday_date);
+populateScheduleBoxes();
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

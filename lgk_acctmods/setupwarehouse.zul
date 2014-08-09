@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="warehousesetup_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+selected_warehouse_code = "";
+selected_warehouse_name = "";
+
+// Database func: get rec from StockWarehouse by warehouse code
+Object getStockWarehouse_rec(String iwcode)
+{
+	retval = null;
+	sql = lgk_mysoftsql();
+	if(sql == null) return null;
+	sqlstm = "select * from StockWarehouse where Warehouse='" + iwcode + "'";
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+
+]]>
+</zscript>
+
+<window id="win_warehousesetup" width="750px" height="515px" title="Setup Warehouse" position="center" mode="overlapped" border="normal" closable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div style="padding:3px">
+<groupbox mold="3d">
+	<caption label="Warehouses.." />
+	<div id="warehouses_holder" />
+</groupbox>
+<groupbox mold="3d">
+	<caption id="warehousedetail_lbl" label="Warehouse details" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+		<row>
+			<label value="Warehouse.Code" style="font-size:9px" />
+			<textbox id="wh_warehouse" width="150px" style="font-size:9px" />
+			<label value="Warehouse.Name" style="font-size:9px" />
+			<textbox id="wh_description" width="290px" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address1" style="font-size:9px" />
+			<textbox id="wh_warehouse_add_1" width="600px" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address2" style="font-size:9px" />
+			<textbox id="wh_warehouse_add_2" width="600px" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address3" style="font-size:9px" />
+			<textbox id="wh_warehouse_add_3" width="600px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact.Person" style="font-size:9px" />
+			<textbox id="wh_contact_person" width="200px" style="font-size:9px" />
+			<label value="Email" style="font-size:9px" />
+			<textbox id="wh_email" width="150px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel.No" style="font-size:9px" />
+			<textbox id="wh_telno" width="150px" style="font-size:9px" />
+			<label value="Fax.No" style="font-size:9px" />
+			<textbox id="wh_faxno" width="150px" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Notes" style="font-size:9px" />
+			<textbox id="wh_memo" multiline="true" width="460px" height="80px" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+<separator height="5px" />
+<hbox>
+	<button label="Clear" style="font-size:9px" onClick="clearWarehouseInputs()" />
+	<button id="newupdate_btn" label="New" style="font-size:9px" onClick="newWareHouse()" />
+	<button label="Delete" style="font-size:9px" onClick="deleteWarehouse()" />
+</hbox>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+void showWarehouseMetadata()
+{
+	if(selected_warehouse_code.equals("")) return;
+
+	wshrec = getStockWarehouse_rec(selected_warehouse_code);
+	if(wshrec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve warehouse details..");
+		return;
+	}
+
+	whscode = checkNullString(wshrec.get("Warehouse"));
+	wh_warehouse.setValue(whscode);
+
+	descp = checkNullString(wshrec.get("Description"));
+	wh_description.setValue(descp);
+
+	add1 = checkNullString(wshrec.get("Warehouse_Add_1"));
+	wh_warehouse_add_1.setValue(add1);
+
+	add2 = checkNullString(wshrec.get("Warehouse_Add_2"));
+	wh_warehouse_add_2.setValue(add2);
+
+	add3 = checkNullString(wshrec.get("Warehouse_Add_3"));
+	wh_warehouse_add_3.setValue(add3);
+
+	cpers = checkNullString(wshrec.get("Contact_Person"));
+	wh_contact_person.setValue(cpers);
+
+	email = checkNullString(wshrec.get("Email"));
+	wh_email.setValue(email);
+
+	telno = checkNullString(wshrec.get("TelNo"));
+	wh_telno.setValue(telno);
+
+	faxno = checkNullString(wshrec.get("FaxNo"));
+	wh_faxno.setValue(faxno);
+
+	memo = wshrec.get("Memo");
+	if(memo != null)
+	{
+		long length = memo.length();
+		String memostr = memo.getSubString(1, (int)length);
+		wh_memo.setValue(memostr);
+	}
+
+	newupdate_btn.setLabel("Update");
+	wh_warehouse.setDisabled(true); // cannot change warehouse code
+	warehousedetail_lbl.setLabel("Warehouse details: " + selected_warehouse_name);
+}
+
+// onSelect for showWarehouses()
+class warehouseslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_warehouse_code = getListcellItemLabel(selitem,0);
+		selected_warehouse_name = getListcellItemLabel(selitem,1);
+		showWarehouseMetadata();
+	}
+}
+
+void showWarehouses()
+{
+Object[] warehouseslb_headers = {
+	new listboxHeaderObj("WHSE.Code",true),
+	new listboxHeaderObj("Warehouse.Name",true),
+	new listboxHeaderObj("C.Person",true),
+	new listboxHeaderObj("Tel.No",true),
+	new listboxHeaderObj("Fax.No",true),
+	new listboxHeaderObj("Email",true),
+	};
+
+	Listbox newlb = makeVWListbox(warehouses_holder,warehouseslb_headers,"warehouses_lb",8);
+	
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select warehouse,description,contact_person,telno,faxno,email from stockwarehouse order by description";
+	whsrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(whsrecs.size() == 0) return;
+	newlb.addEventListener("onSelect", new warehouseslb_Listener());
+
+	for(dpi : whsrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		whscode = checkNullString(dpi.get("warehouse"));
+		kabom.add(whscode);
+
+		descp = checkNullString(dpi.get("description"));
+		kabom.add(descp);
+
+		cpers = checkNullString(dpi.get("contact_person"));
+		kabom.add(cpers);
+
+		telno = checkNullString(dpi.get("telno"));
+		kabom.add(telno);
+
+		faxno = checkNullString(dpi.get("faxno"));
+		kabom.add(faxno);
+
+		email = checkNullString(dpi.get("email"));
+		kabom.add(email);
+		
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void clearWarehouseInputs()
+{
+	selected_warehouse_code = "";
+
+	warehousedetail_lbl.setLabel("Warehouse details");
+	wh_warehouse.setValue("");
+	wh_description.setValue("");
+	wh_warehouse_add_1.setValue("");
+	wh_warehouse_add_2.setValue("");
+	wh_warehouse_add_3.setValue("");
+	wh_contact_person.setValue("");
+	wh_email.setValue("");
+	wh_telno.setValue("");
+	wh_faxno.setValue("");
+	wh_memo.setValue("");
+
+	newupdate_btn.setLabel("New");
+	wh_warehouse.setDisabled(false);
+}
+
+// create new or update warehouse details
+void newWareHouse()
+{
+	wshcode = replaceSingleQuotes(wh_warehouse.getValue());
+	wshname = replaceSingleQuotes(wh_description.getValue());
+	wshadd1 = replaceSingleQuotes(wh_warehouse_add_1.getValue());
+	wshadd2 = replaceSingleQuotes(wh_warehouse_add_2.getValue());
+	wshadd3 = replaceSingleQuotes(wh_warehouse_add_3.getValue());
+	wshcper = replaceSingleQuotes(wh_contact_person.getValue());
+	wshemail = replaceSingleQuotes(wh_email.getValue());
+	wshtel = replaceSingleQuotes(wh_telno.getValue());
+	wshfax = replaceSingleQuotes(wh_faxno.getValue());
+	wshmemo = replaceSingleQuotes(wh_memo.getValue());
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	
+	if(selected_warehouse_code.equals(""))
+	{
+		// check if warehouse code being used
+		sqlstm = "select warehouse from stockwarehouse where warehouse='" + wshcode + "'";
+		kkr = sql.firstRow(sqlstm);
+		if(kkr != null)
+		{
+			showMessageBox("Warehouse.Code is already in used.. creation fail");
+			sql.close();
+			return;
+		}
+	}
+
+	// insert a new warehouse by default
+	sqlstm = "insert into stockwarehouse (warehouse,description,memo,warehouse_add_1,warehouse_add_2,warehouse_add_3,contact_person,telno,faxno,email) values (" +
+	"'" + wshcode + "','" + wshname + "','" + wshmemo + "','" + wshadd1 + "','" + wshadd2 + "','" + wshadd3 + "','" + wshcper + "','" + wshtel + "','" + wshfax + "','" + wshemail + "')";
+
+	// if selected_warehouse_code .. update only
+	if(!selected_warehouse_code.equals(""))
+	{
+		sqlstm = "update stockwarehouse set description='" + wshname + "',memo='" + wshmemo + "',warehouse_add_1='" + wshadd1 + "',warehouse_add_2='" + wshadd2 + 
+		"',warehouse_add_3='" + wshadd3 + "',contact_person='" + wshcper + "',telno='" + wshtel + "',faxno='" + wshfax + "',email='" + wshemail + 
+		"' where warehouse='" + selected_warehouse_code + "'";
+	}
+
+	sql.execute(sqlstm);
+	sql.close();
+	clearWarehouseInputs();
+	showWarehouses(); // refresh
+}
+
+void deleteWarehouse()
+{
+	if(selected_warehouse_code.equals("")) return;
+	
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	
+	// check if warehouse-code in use for stock-items
+	sqlstm = "select top 1 warehousecode from stockmasterdetails where warehousecode='" + selected_warehouse_code + "'";
+	kkr = sql.firstRow(sqlstm);
+	if(kkr != null)
+	{
+		showMessageBox("Warehouse.Code is assigned to some stock-items.. cannot delete");
+		sql.close();
+		return;
+	}
+
+	if (Messagebox.show("Delete this warehouse..", "Are you sure?", Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sqlstm = "delete from stockwarehouse where warehouse='" + selected_warehouse_code + "'";
+		sql.execute(sqlstm);
+	}
+
+	sql.close();
+	clearWarehouseInputs();
+	showWarehouses(); // refresh
+}
+
+
+// Startup codes
+showWarehouses();
+
+]]>
+</zscript>
+
+</window>
+</zk>

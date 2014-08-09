@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="box_available"?>
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Some security checking codes here
+// useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// hardcoded html-post parameter name: ar_code (set in customer_extra_address.zul -> playDocsDeliveryDetails()
+// the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+MODULE_DBNAME = "box_available";
+
+Object whathuh;
+
+String[] typeofBoxes_array = { "ALL", "Hardcase Cooler", "Styrofoam", "Plastic cooler", "Metal box" };
+
+void startSearchBox(Listbox itypeofbox)
+{
+	if(itypeofbox.getSelectedItem() == null) return;
+	
+	iselected = itypeofbox.getSelectedItem().getLabel();
+	wheretype = "";
+	
+	if(iselected.equals("Hardcase Cooler"))
+		wheretype="where boxestype='HARDCASE'";
+		
+		
+	if(iselected.equals("Styrofoam"))
+		wheretype="where boxstype='STYRO'";
+		
+	sqlstatem = "select * from boxes " + wheretype;
+	
+	alert(sqlstatem);
+
+}
+
+]]>
+</zscript>
+
+<window id="assign_new_box_wind" title="Box Available" width="650px" height="300px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<groupbox mold="3d" width="100%">
+<caption label="Search Box" />
+	<vbox>
+ <hbox>
+	
+	<label value="Type" />
+	<listbox id="typeofbox" rows="1" mold="select" />
+
+	<zscript>
+		populateDropdownListbox(typeofbox, typeofBoxes_array);
+	</zscript>
+
+	<button label="Start search" onClick="startSearchBox(typeofbox)" />
+
+ </hbox>
+</vbox>
+
+<separator height="5px" />
+
+<!-- search results box -->
+<groupbox mold="3d" width="100%">
+<caption label="Search results" />
+	
+</groupbox>
+</groupbox>
+
+<hbox>
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+</hbox>
+
+</div>
+
+</window>
+
+</zk>

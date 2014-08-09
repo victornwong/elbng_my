@@ -1,0 +1,704 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="grnupdater_win"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: GRN Updater - scan/match barcodes or just tick items delivered
+Written by: Victor Wong
+Notes:
+tblStockInMaster.NewField10 = AP.Code
+*/
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+//grn_vouchernum = Executions.getCurrent().getParameter("grnvn");
+//grn_id = Executions.getCurrent().getParameter("grnid");
+
+//stockinmaster_record = getStockInMaster_rec(grn_id);
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+selected_grn_id = "";
+selected_grn_supplier = "";
+selected_grn_vouchernumber = "";
+selected_grnitem_id = "";
+selected_grnitem_stockcode = "";
+grn_vouchernum = "";
+
+last_track_quantity = 0;
+selected_track_id = "";
+Object selected_track_listitem;
+
+]]>
+</zscript>
+
+<!-- document management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="lgkglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of document management popup -->
+
+<window id="grnupdater_box" width="800px" height="530px" title="GRN - Serial/Numbers Updater" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<!-- <button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />	 -->
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<separator height="3px" />
+<label id="error_msg" style="font-size:12px;font-weight:bold" />
+<div style="padding:3px">
+
+<borderlayout height="450px">
+	<west id="westside" size="380px" title="GRN.Details" collapsible="true">
+		<div style="padding:3px">
+		<hbox>
+			<label value="GRN.Number" style="font-size:9px" />
+			<textbox id="grn_number" width="150px" style="font-size:9px" />
+			<button id="searchgrn_btn" label="Load" style="font-size:9px" onClick="loadGRN_clicker()" />
+			<button id="viewdoculinks_btn" label="Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+		</hbox>
+		<separator height="3px" />
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row spans=",3">
+				<label value="GRN.Number" style="font-size:9px" />
+				<div style="background:#778844;padding:2px">
+					<label id="loaded_grn_number" style="font-size:9px;color:#ffffff;font-weight:bold" />
+				</div>
+			</row>
+			<row spans=",3">
+				<label value="Supplier.Code" style="font-size:9px" />
+				<label id="grn_suppliercode_lbl" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Supplier" style="font-size:9px" />
+				<label id="grn_suppliername_lbl" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Created" style="font-size:9px" />
+				<datebox id="grn_strdate" format="yyyy-MM-dd" style="font-size:9px" disabled="true" />
+				<label value="Received" style="font-size:9px" />
+				<datebox id="grn_entrydate" format="yyyy-MM-dd" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<groupbox mold="3d">
+			<caption label="Items" />
+			<div id="grn_items_holder" />
+		</groupbox>			
+		</div>
+	</west>
+	<center id="item_lbl" title="Serial.Numbers">
+		<div style="padding:2px">
+		
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row>
+			<label value="SN" style="font-size:9px" />
+			<textbox id="serialnumber_input" width="250px" />
+			<button id="matchsn_btn" label="Match" style="font-size:9px" onClick="matchSerialNumber()" />
+			</row>
+			<row>
+			<label value="Manual entry" style="font-size:9px" />
+			<textbox id="manualsn_entry" width="250px" />
+			<button id="slotinsn_btn" label="Slot-in" style="font-size:9px" onClick="slotinSerialNumber_clicker()" />
+			</row>
+			</rows>
+		</grid>
+
+		<separator height="3px" />
+		<div id="items_sn_holder" />
+		<separator height="3px" />
+		<hbox>
+			<button id="saveloggedsn_btn" label="Save logged serial-numbers" style="font-size:9px" onClick="saveLoggedSerialNum_clicker()" />
+			<button id="clearsn_btn" label="Clear serial-number" style="font-size:9px" onClick="clearSerialNum_clicker()" />
+		</hbox>
+		<separator height="5px" />
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row>
+			<label value="Notes" />
+			<textbox id="grni_notes" multiline="true" width="300px" height="50px" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+
+		<separator height="3px" />
+		<button id="updatenotes_btn" label="Update notes" style="font-size:9px" onClick="updateUnits_Notes_clicker()" />
+
+		</div>
+	</center>
+</borderlayout>
+<separator height="5px" />
+<button id="completegrn_btn" label="Complete GRN - update received date" style="font-size:9px" onClick="completeGRN_clicker()" />
+
+</div>
+
+<zscript>
+<![CDATA[
+//--- linking documents related
+void doViewDoculinkPopup()
+{
+	// make sure something to look-for in table - 20/10/2010: customize this for other linking-id
+	if(selected_grn_vouchernumber.equals("")) return;
+
+	documentLinkProp.global_eq_origid = selected_grn_vouchernumber;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+//--- ENDOF linking documents related
+
+void toggleGRN_inputs(boolean iwhat)
+{
+	// if(useraccessobj.accesslevel == 9) return; // no disable stuff for admin
+
+	grn_entrydate.setDisabled(iwhat);
+	serialnumber_input.setDisabled(iwhat);
+	matchsn_btn.setDisabled(iwhat);
+	manualsn_entry.setDisabled(iwhat);
+	slotinsn_btn.setDisabled(iwhat);
+
+	saveloggedsn_btn.setDisabled(iwhat);
+	clearsn_btn.setDisabled(iwhat);
+
+	grni_notes.setDisabled(iwhat);
+	updatenotes_btn.setDisabled(iwhat);
+
+	completegrn_btn.setDisabled(iwhat);
+}
+
+// Update received date, posted flag and quantity(stockmasterdetails)
+void completeGRN_clicker()
+{
+	// nothing loaded, nothing to be saved..
+	if(selected_grn_id.equals("")) return;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	// update recv date and posted flag in tblStockInMaster
+	sqlstm = "update tblstockinmaster set entrydate='" + todaydate + "', posted=1 where id=" + selected_grn_id;
+	alert(sqlstm);
+
+	// add units recv to stockmasterdetails
+	// get items - stockcode in GRN
+	sqlstm = "select stockcode,quantity from tblstockindetail where voucherno='" + selected_grn_vouchernumber + "'";
+	stkcoderecs = sql.rows(sqlstm);
+	if(stkcoderecs.size() != 0)
+	{
+		for(dpi : stkcoderecs)
+		{
+			stkcode = dpi.get("stockcode");
+			qty = dpi.get("quantity");
+			
+			// get qty_in_stock first..
+			getqty = "select qty_in_stock from stockmasterdetails where stock_code='" + stkcode + "'";
+			kkr = sql.firstRow(getqty);
+			if(kkr != null)
+			{
+				newqty = kkr.get("qty_in_stock") + qty;
+				upstock = "update stockmasterdetails set qty_in_stock=" + newqty + " where stock_code='" + stkcode + "'";
+				sql.execute(upstock);
+			}
+		}
+	}
+
+	// to be implemented if req - make sure all units recv got s/n
+	// send notification to everyone
+
+	sql.close();
+
+	showMessageBox("This GRN is received/completed.. stock-table has been adjusted");
+	toggleGRN_inputs(true); // disable all inputs
+
+}
+
+// onOpen for westside - invalidate listbox and stuff - can be used for other modules later
+class westside_onopen implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		if(items_sn_holder.getFellowIfAny("itemsn_lb") != null) itemsn_lb.invalidate();
+	}
+}
+westside.addEventListener("onOpen",new westside_onopen());
+//------------
+
+// Save watever serial-numbers being logged
+void saveLoggedSerialNum_clicker()
+{
+	// if no serial-numbers listbox.. return
+	if(items_sn_holder.getFellowIfAny("itemsn_lb") == null) return;
+	snlbcount = itemsn_lb.getItemCount();
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	// update everything..
+	for(i=0; i<snlbcount; i++)
+	{
+		selitem = itemsn_lb.getItemAtIndex(i);
+		trakid = getListcellItemLabel(selitem,0);
+		realsn = getListcellItemLabel(selitem,3);
+		sqlstm = "update stockunits_tracker set real_serialnumber='" + realsn + "' where origid=" + trakid;
+		sql.execute(sqlstm);
+	}
+	sql.close();
+	showMessageBox("Logged serial-numbers saved..");
+}
+
+void clearSerialNum_clicker()
+{
+	if(selected_track_id.equals("")) return;
+	setListcellItemLabel(selected_track_listitem,3,"");
+	itemsn_lb.invalidate();
+}
+
+// Slot into listbox the manual-enter s/n
+void slotinSerialNumber_clicker()
+{
+	if(selected_track_id.equals("")) return;
+
+	thesn = replaceSingleQuotes(manualsn_entry.getValue());
+	supsn = getListcellItemLabel(selected_track_listitem,2);
+	realsn = getListcellItemLabel(selected_track_listitem,3);
+	
+	// check manual-sn dups
+	if(ExistInListbox(itemsn_lb,thesn,3))
+	{
+		showMessageBox("Serial-number is in the list.. no duplicates");
+		return;
+	}
+	
+	// check if user wanna replace the sn
+	if(!realsn.equals(""))
+	{
+		if (Messagebox.show("Replace this serial-number..", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+			setListcellItemLabel(selected_track_listitem,3,thesn);
+	}
+
+	setListcellItemLabel(selected_track_listitem,3,thesn);
+	itemsn_lb.invalidate();
+}
+
+// Match serial-number to what's def or not def, just slot in..
+void matchSerialNumber()
+{
+	// if no serial-numbers listbox.. return
+	if(items_sn_holder.getFellowIfAny("itemsn_lb") == null) return;
+
+	thesn = replaceSingleQuotes(serialnumber_input.getValue());
+	if(thesn.equals("")) return;
+
+	snlbcount = itemsn_lb.getItemCount();
+	foundsn = false;
+	slotted = false;
+	dups = false;
+
+	// match against what's def in the listbox - col.2 = supplier sn - match this one
+	for(i=0; i<snlbcount; i++)
+	{
+		selitem = itemsn_lb.getItemAtIndex(i);
+		suppsn = getListcellItemLabel(selitem,2);
+
+		if(suppsn.equals(thesn)) // a match - set real-sn
+		{
+			setListcellItemLabel(selitem,3,suppsn);
+			foundsn = true;
+		}
+
+		if(foundsn) break;
+	}
+
+	if(!foundsn) // cannot find any matches - slot into any empty ones
+	{
+		for(i=0; i<snlbcount; i++)
+		{
+			selitem = itemsn_lb.getItemAtIndex(i);
+			suppsn = getListcellItemLabel(selitem,2);
+			realsn = getListcellItemLabel(selitem,3);
+			
+			// if any dups - break
+			if(realsn.equals(thesn))
+			{
+				dups = true;
+				break;
+			}
+
+			if(suppsn.equals("") && realsn.equals("")) // slot it in
+			{
+				setListcellItemLabel(selitem,3,thesn);
+				slotted = true;
+				break;
+			}
+		}
+	}
+
+	// these 2 message-box can be taken out of using tablet for fast input
+	if(!foundsn && !slotted && !dups) // no match and cannot slot anymore
+		showMessageBox("Cannot find a matching SN or no more slots");
+
+	if(dups)
+		showMessageBox("Sorry, duplicate serial-number not allowed..");
+
+	itemsn_lb.invalidate();
+}
+
+// Inputbox key events
+// onOK for serial-number matching after barcode-scan
+class serialnumber_tb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		manualsn_entry.setValue(serialnumber_input.getValue()); // copy it to manual-entry box
+		matchSerialNumber();
+	}
+}
+
+// onOK to load GRN after scanning barcode
+class loadgrn_tb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		loadGRN_clicker();
+	}
+}
+
+serialnumber_input.addEventListener("onOK",new serialnumber_tb_Listener());
+grn_number.addEventListener("onOK", new loadgrn_tb_Listener());
+
+// ENDOF inputbox key events
+
+// Clear serial-number juggling stuff
+void clearSerialNum_stuff()
+{
+	if(items_sn_holder.getFellowIfAny("itemsn_lb") != null) itemsn_lb.setParent(null);
+
+	selected_track_id = ""; // reset global var
+	serialnumber_input.setValue("");
+	manualsn_entry.setValue("");
+}
+
+// Load GRN by grn_number
+void loadGRN_clicker()
+{
+	grnsrch = replaceSingleQuotes(grn_number.getValue());
+
+	// NOTES: remember to change this back to return
+	if(grnsrch.equals("")) grnsrch = "FGRN00283";
+
+	grnrec = getStockInMaster_ByVoucher(grnsrch);
+
+	if(grnrec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve GRN record..");
+		return;
+	}
+
+	loaded_grn_number.setValue(grnsrch);
+	// default no supplier-code and name
+	grn_suppliercode_lbl.setValue("");
+	grn_suppliername_lbl.setValue("");
+
+	apcode = grnrec.get("NewField10");
+	if(apcode != null)
+	{
+		supprec = getSupplier_Rec_ByCode(apcode);
+		if(supprec != null)
+		{
+			grn_suppliercode_lbl.setValue(apcode);
+			grn_suppliername_lbl.setValue(supprec.get("SupplierName"));
+		}
+		else
+			apcode = "";
+	}
+
+	selected_grn_id = grnrec.get("Id");
+	selected_grn_supplier = apcode;
+	selected_grn_vouchernumber = grnsrch;
+	grn_vouchernum = grnsrch; // used in makeQtyListbox()
+
+	// Load grn-items
+	showGRNItemsListbox(grnsrch);
+
+	// Remove prev stuff
+	clearSerialNum_stuff();
+
+	grnposted = grnrec.get("Posted");
+	postedstr = (grnposted) ? " [RECEIVED]" : "";
+
+	// set window title - incase user got smart and open multiple window for GRN
+	grnupdater_box.setTitle("GRN - Serial/Numbers Updater : " + selected_grn_vouchernumber + postedstr);
+
+	toggleGRN_inputs(false); // enable all inputs by default
+	// check if GRN already received .. disable inputs
+	if(grnposted) toggleGRN_inputs(true);
+}
+
+// onSelect for showGRNItemsListbox()
+class grnitemslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_grnitem_id = getListcellItemLabel(selitem,0);
+		selected_grnitem_stockcode = getListcellItemLabel(selitem,1);
+
+		itemname = getListcellItemLabel(selitem,2);
+		item_lbl.setTitle("Serial/Numbers : " + itemname);
+
+		qty = getListcellItemLabel(selitem,3);
+		makeQtyListbox(qty);
+	}
+}
+
+// chopped from grnmaker.zul - might customize a bit
+void showGRNItemsListbox(String grnvoucher)
+{
+Object[] grnitemslb_headers = {
+	new listboxHeaderObj("stkindet_id",false),
+	new listboxHeaderObj("stock_code",false),
+	new listboxHeaderObj("Item.Name",true),
+	new listboxHeaderObj("Qty",true),
+	};
+
+	Listbox newlb = makeVWListbox(grn_items_holder,grnitemslb_headers,"grnitems_lb",5);
+	sqlstm = "select id,stockcode,description,quantity from tblstockindetail where voucherno='" + grnvoucher + "'";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	grnitems = sql.rows(sqlstm);
+	sql.close();
+
+	if(grnitems.size() == 0) return;
+
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new grnitemslb_Listener());
+
+	for(dpi : grnitems)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("stockcode"));
+		kabom.add(dpi.get("description"));
+		kabom.add(dpi.get("quantity").toString());
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void updateUnits_Notes_clicker()
+{
+	if(selected_track_id.equals("")) return;
+	thenotes = replaceSingleQuotes(grni_notes.getValue());
+	if(thenotes.equals("")) return;
+	sqlstm = "update stockunits_tracker set notes='" + thenotes + "' where origid=" + selected_track_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	// update notes column in listbox
+	setListcellItemLabel(selected_track_listitem,4,thenotes);
+	itemsn_lb.invalidate();
+}
+
+// onSelect for makeQtyListbox()
+class itemsnlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selected_track_listitem = event.getReference();
+		selected_track_id = getListcellItemLabel(selected_track_listitem,0);
+		supsn = getListcellItemLabel(selected_track_listitem,2);
+		realsn = getListcellItemLabel(selected_track_listitem,3);
+		notes = getListcellItemLabel(selected_track_listitem,4);
+
+		grni_notes.setValue(notes);
+
+		/*
+		itm_pre_serialnumber.setValue(supsn);
+		itm_real_serialnumber.setValue(realsn);
+		itm_notes.setValue(notes);
+		*/
+	}
+}
+
+void makeQtyListbox(String iqty)
+{
+	Object[] itemsnlb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("Supp.SN",true),
+	new listboxHeaderObj("Log.SN",true),
+	new listboxHeaderObj("Notes",true),
+	};
+
+	tomake = Integer.parseInt(iqty);
+	if(tomake == 0) return;
+	
+	last_track_quantity = tomake;
+	
+	makenewentry = false;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	// StockUnits_Tracker juggling..
+	// Count how many if any already in table
+	countme = "select count(origid) as itemcount from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+	"' and parent_stock_in='" + grn_vouchernum + "'";
+	kkr = sql.firstRow(countme);
+	if(kkr != null)
+	{
+		itmc = kkr.get("itemcount");
+		if(itmc != 0 && tomake < itmc) // whops, user changed qty in grn, remove some of them
+		{
+			// get list of origid
+			sqlstm = "select origid from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+			"' and parent_stock_in='" + grn_vouchernum + "' order by origid";
+
+			kkr2 = sql.rows(sqlstm);
+			Integer[] origids = new Integer[kkr2.size()];
+			kki = 0;
+
+			for(dki : kkr2)
+			{
+				origids[kki] = dki.get("origid");
+				kki++;
+			}
+
+			delorigids = "(";
+			// now make the string of origids to delete
+			for(i=tomake; i<kkr2.size(); i++)
+			{
+				delorigids += origids[i].toString() + ",";
+			}
+
+			mangled = delorigids.substring(0,delorigids.length()-1) + ")";
+
+			deltracker = "delete from stockunits_tracker where origid in " + mangled;
+			sql.execute(deltracker);
+		}
+		
+		insertrec = "insert into stockunits_tracker (parent_stock_code,pre_serialnumber,real_serialnumber," + 
+		"parent_stock_in,parent_stock_out,received_date,out_date,transfer_to,notes) values (" +
+		"'" + selected_grnitem_stockcode + "','','','" + grn_vouchernum + "','','','','','')" ;
+		
+		if(itmc != 0 && tomake > itmc) // user add more units for the grn item
+		{
+			// create the extra blanks
+			for(i=itmc; i<tomake; i++)
+			{
+				sql.execute(insertrec);
+			}
+		}
+
+		if(itmc == 0) // zero unit-tracking, make some
+		{
+			for(i=0;i<tomake;i++)
+			{
+				sql.execute(insertrec);
+			}
+		}
+	}
+
+	sqlstm = "select origid,pre_serialnumber,real_serialnumber,notes from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+	"' and parent_stock_in='" + grn_vouchernum + "'";
+
+	stktrks = sql.rows(sqlstm);
+	sql.close();
+	
+	if(stktrks.size() == 0) return;
+
+	Listbox newlb = makeVWListbox(items_sn_holder,itemsnlb_headers,"itemsn_lb",tomake+1);
+	newlb.addEventListener("onSelect", new itemsnlb_Listener());
+	lncount = 1;
+	
+	for(dpi : stktrks)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(lncount.toString());
+		kabom.add(dpi.get("pre_serialnumber"));
+		kabom.add(dpi.get("real_serialnumber"));
+		kabom.add(dpi.get("notes"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		lncount++;
+	}
+}
+
+void updateSN_clicker()
+{
+	if(selected_track_id.equals("")) return;
+
+	presn = replaceSingleQuotes(itm_pre_serialnumber.getValue());
+	rsn = replaceSingleQuotes(itm_real_serialnumber.getValue());
+	notes = replaceSingleQuotes(itm_notes.getValue());
+
+	sqlstm = "update stockunits_tracker set pre_serialnumber='" + presn + "', real_serialnumber='" + rsn + "',notes='" + notes + 
+	"' where origid=" + selected_track_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	//makeQtyListbox(last_track_quantity.toString()); // refresh
+}
+
+// STARTUP CODES
+
+setTodayDatebox(hiddendatebox);
+
+setTodayDatebox(grn_strdate);
+setTodayDatebox(grn_entrydate);
+
+documentLinkProp.document_idprefix = "DOCS";
+lgk_setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+</window>
+</zk>

@@ -1,0 +1,990 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="special_ids_sampreg_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/testpackage_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Core				: Upload and parse COC excel-worksheet
+Title				: Special sample-registration-marking-tests for IDS
+Coding began date	: 5/7/2010
+Developers			: Victor
+
+**NOTES**
+IDS sahaja huh.. afterwards can do for other special clients.
+
+*/
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ss.util.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.hssf.usermodel.*;
+
+//import org.apache.poi.ss.usermodel.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+THIS_MODULE_ARCODE = "300L/005";
+
+global_selected_folderno = "";
+global_selected_sampleid = "";
+global_selected_testpackage = "";
+
+// Simple func to allow user upload something to server
+// need to add some pass-back of uploaded file format/contenttype/filename thing or just extend this bugga
+Object getUploadFileData()
+{
+	retval = null;
+
+	uploaded_file = Fileupload.get(true);
+
+	if(uploaded_file == null) return null;
+
+	formatstr = uploaded_file.getFormat();
+	contenttype = uploaded_file.getContentType();
+	ufilename = uploaded_file.getName();
+
+	Object uploaded_data;
+	int fileLength = 0;
+
+	f_inmemory = uploaded_file.inMemory();
+	f_isbinary = uploaded_file.isBinary();
+
+	if(f_inmemory && f_isbinary)
+	{
+	//ByteArrayInputStream upfluf = new ByteArrayInputStream(uploaded_fluff);
+		uploaded_data = new ByteArrayInputStream(uploaded_file.getByteData());
+	}
+	else
+	{
+		uploaded_data = uploaded_file.getStreamData();
+		fileLength = uploaded_data.available(); 
+	}
+
+	//alert("formatstr: " + formatstr + " | contenttype: " + contenttype + " | filename: " + ufilename);
+	// need to check content type - xls or whatever
+
+	return uploaded_data;
+}
+
+String POI_GetCellContentString(HSSFCell icell)
+{
+	retval = "---";
+	
+	switch(icell.getCellType())
+	{
+		case HSSFCell.CELL_TYPE_STRING:
+			retval = icell.getRichStringCellValue().getString();
+			break;
+						
+		case HSSFCell.CELL_TYPE_NUMERIC:
+			if(DateUtil.isCellDateFormatted(icell))
+			{
+				retval = icell.getDateCellValue().toString();
+				//retval = icell.getRichStringCellValue().getString();
+			}
+			else
+			{
+				retval = icell.getNumericCellValue().toString();
+			}
+			break;
+	}
+	
+	return retval;
+}
+
+
+void playFolderDriller(String ifoldno)
+{
+		theparam = "folderno=" + ifoldno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void localPlayDriller()
+{
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	
+	ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+	playFolderDriller(ifolderno);
+
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+		playFolderDriller(ifolderno);
+	}
+}
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("TAT",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Samples",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+// 5/7/2010: modded this on for only : IDS ar_code = 300L/005
+void startFolderJobsSearch(Datebox startd, Datebox endd)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	// cnm = icustomer_tb.getValue();
+	
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	// 29/3/2010: check branch
+	branch_str = "";
+	
+	ibranch = useraccessobj.branch;
+	if(!ibranch.equals("ALL")) // if admin login, should be able to see all folders else filter according to branch
+	{
+		branch_str = "and branch='" + ibranch + "' ";
+	}
+
+	// hardcoded ar_code 300L/005 = IDS only
+	sqlstatem = "select top 510 * from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + branch_str + 
+	" and ar_code='" + THIS_MODULE_ARCODE + "' " +
+	" order by datecreated desc";
+	
+	// 25/3/2010: new select cmd to search based on s.date, e.date and customer-name - req by Zainab
+	// 5/7/2010: not used for special-clients
+	/*
+	if(!cnm.equals(""))
+	{
+		xcnm = replaceSingleQuotes(cnm); // play safe
+		sqlstatem = "select jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," + 
+			"jobfolders.duedate, jobfolders.tat, " + 
+			"customer.ar_code,customer.customer_name " +
+			"from jobfolders left join customer " +
+			"on customer.ar_code = jobfolders.ar_code where " +
+			"jobfolders.datecreated between '" + sdate + "' and '" + edate + "'" + 
+			"and customer.customer_name like '%" + xcnm + "%' " +
+			"and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " +
+			branch_str + 
+			"group by " + 
+			"jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," +
+			"jobfolders.duedate, jobfolders.tat, " +
+			"customer.ar_code, customer.customer_name";
+	}
+	*/
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	// create a new listbox and attach to searchdiv
+	// Listbox newlb = makeFoldersListbox(folders_searchdiv,reccount);
+	Listbox newlb = makeVWListboxWithFooter(folders_searchdiv, folders_lb_headers, "folderjobs_lb", 5, reccount.toString() + " folders");
+
+	// newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	if(reccount > 0 && reccount <= 500)
+	{
+		newlb.setRows(15);
+		total_numsamples = 0;
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			ArrayList kabom = new ArrayList();
+
+			ifolderno = ilist.get("origid");
+
+			folderbranch = ilist.get("branch");
+			folderprefix = folderPrefixByBranch(folderbranch);
+			folderstr = folderprefix + padZeros5(ifolderno);
+
+			kabom.add(folderstr);
+            kabom.add(ilist.get("datecreated").toString().substring(0,10));
+
+			kabom.add(ilist.get("tat") + " day(s)");
+			kabom.add(ilist.get("duedate").toString().substring(0,10));
+
+			// 27/2/2010: get number of samples for this folder
+			numsamples = getNumberOfSamples_InFolder(ifolderno);
+			kabom.add(numsamples.toString());
+
+			total_numsamples = total_numsamples + numsamples;
+
+			// get customer name from ar_code - will be slow if alot, scan 1 by 1
+			iar_code = ilist.get("ar_code");
+			iar_code = iar_code.toUpperCase().trim();
+			icompanyname = "Undefined";
+
+			if(!iar_code.equals(""))
+			{
+				// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+				if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+				{
+					csrec = getCashSalesCustomerInfo_Rec(strarray[0]);	// get rec based on folder no
+					if(csrec != null)
+						icompanyname = "CshAct: " + csrec.get("customer_name");
+					else
+						icompanyname = "CshAct: Undefined";
+				}
+				else
+					icompanyname = getCompanyName(iar_code);
+			}
+
+			kabom.add(icompanyname);
+			kabom.add(ilist.get("folderstatus"));
+			kabom.add(ilist.get("branch"));
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+		}
+
+		// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+		numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+	}
+} // end of startFolderJobsSearch()
+
+void doViewDoculinkPopup()
+{
+	// make sure we've some sampleid selected before showing the worksheet list
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+
+	foldern = folderjobs_lb.getSelectedItem().getLabel();
+
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+Object[] foundsm_lb_headers = {
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Sample.Marking",true),
+};
+
+Object[] regsamps_lb_headers = {
+	new listboxHeaderObj("Samp.ID",true),
+	new listboxHeaderObj("Sample.Marking",true),
+};
+
+Object[] foundtests_lb_headers = {
+	new listboxHeaderObj("Test parameter",true),
+};
+
+class jobsamples_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		global_selected_sampleid = samples_lb.getSelectedItem().getLabel(); // first col is the origid for jobsamples
+	}
+}
+
+void showSamples_MiniMe(String ifolderno)
+{
+	thefolderno = convertFolderNoToInteger(ifolderno);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select top 200 origid,samplemarking from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0 order by origid";
+
+	regsamps = sql.rows(sqlstatem);
+	sql.close();
+
+	Listbox smp_newlb = makeVWListbox(regsamples_div, regsamps_lb_headers, "samples_lb", 15);
+	smp_newlb.addEventListener("onSelect", new jobsamples_lb_Listener());
+
+	if(regsamps.size() > 0)
+	{
+		for(regsm : regsamps)
+		{
+			ArrayList kabom = new ArrayList();
+			
+			kabom.add(regsm.get("origid").toString());
+			
+			smm = regsm.get("samplemarking");
+			if(smm.equals("")) smm = "----------";
+			
+			kabom.add(smm);
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(smp_newlb,strarray,"false");
+		}
+	}
+}
+
+// General purpose COC worksheet splicer to grab sample-marking and tests if possible
+// 5/7/2010: first version done for IDS worksheet
+void spliceWorksheet_clicker()
+{
+	// make sure some folder selected
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+
+	global_selected_folderno = folderjobs_lb.getSelectedItem().getLabel(); // save for later use huh..
+	
+	wssplicer_caption.setLabel("Folder: " + global_selected_folderno);
+	
+	uploaded_fluff = getUploadFileData();
+	
+	if(uploaded_fluff == null) return;
+	
+	//ByteArrayInputStream upfluf = new ByteArrayInputStream(uploaded_fluff);
+	
+	HSSFWorkbook excelWB = new HSSFWorkbook(uploaded_fluff);
+	FormulaEvaluator evaluator = excelWB.getCreationHelper().createFormulaEvaluator();
+	numsheets = excelWB.getNumberOfSheets();
+	
+	Sheet sheet = excelWB.getSheetAt(0);
+	rows = sheet.getPhysicalNumberOfRows();
+	
+	if(rows < 1)
+	{
+		showMessageBox("Nothing to splice huh..");
+		return;
+	}
+
+	//foundsampmarking_div regsamples_div
+	
+	Listbox newlb = makeVWListbox(foundsampmarking_div, foundsm_lb_headers, "foundsampmarks_lb", 15);
+	smcount = 1;
+	
+	// Suck sample-marking from the COC
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		rows = sheet.getPhysicalNumberOfRows();
+
+		// HARDCODED: start scanning from the COC row 14 onwards
+		for(myr=13; myr < rows; myr++)
+		{
+			Row row = sheet.getRow(myr);
+			if(row != null)
+			{
+				HSSFCell cell = row.getCell(0);
+
+				if(cell != null)
+				{
+					kamestr = POI_GetCellContentString(cell);
+					kamestop = "";
+					
+					if(kamestr.length() > 9)
+						kamestop = kamestr.substring(0,10);
+
+					if(!kamestop.equals("Sampled by")) // hardcoded: reading COC worksheet for this string, around A24
+					{
+						if(!kamestr.equals("---"))
+						{
+							ArrayList kabom = new ArrayList();
+							kabom.add(smcount.toString() + ".");
+							kabom.add(kamestr);
+
+							strarray = convertArrayListToStringArray(kabom);
+							insertListItems(newlb,strarray,"false");
+							smcount++;
+						}
+					}
+					else
+						break;
+				}
+			}
+		}
+	}
+	
+	// Suck test parameters from COC - foundtests_div foundtests_lb_headers
+	Listbox newlb3 = makeVWListbox(foundtests_div, foundtests_lb_headers, "foundtests_lb", 15);
+
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		Row row = sheet.getRow(8); // hardcoded, J9 -> U9
+		
+		if(row != null)
+		{
+			for(j=9; j<20; j++)
+			{
+				Cell cell = row.getCell(j);
+
+				if(cell != null)
+				{
+					meme = POI_GetCellContentString(cell);
+
+					if(!meme.equals("---"))
+					{
+						// make sure only uniq test in listbox
+						if(!ExistInListbox(foundtests_lb,meme,0))
+						{
+							ArrayList kabom = new ArrayList();
+							kabom.add(meme);
+							strarray = convertArrayListToStringArray(kabom);
+							insertListItems(newlb3,strarray,"false");
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// show our registered samples - foldern
+	showSamples_MiniMe(global_selected_folderno);
+
+	// show tests from test.package assigned to client - testpackages_div
+	showTestPackage_ByClient(THIS_MODULE_ARCODE);
+
+	ws_splicer_gb.setVisible(true);
+}
+
+// Database func: just to update JobSamples.samplemarking
+void updateSampleMarkingOnly_Rec(String iorigid, String iapa)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstatem = "update JobSamples set samplemarking='" + iapa + "' where origid=" + iorigid;
+	sql.execute(sqlstatem);
+	sql.close();
+}
+
+void linkSampleMarking_clicker()
+{
+	// make sure we have some shit to link
+	if(foundsampmarking_div.getFellowIfAny("foundsampmarks_lb") == null) return;
+	if(foundsampmarks_lb.getSelectedIndex() == -1) return;
+	if(regsamples_div.getFellowIfAny("samples_lb") == null) return;
+	if(samples_lb.getSelectedIndex() == -1) return;
+
+	selitem = foundsampmarks_lb.getSelectedItem();
+	fndmark = getListcellItemLabel(selitem,1);
+	smp_origid = samples_lb.getSelectedItem().getLabel();
+	global_selected_sampleid = smp_origid; // as usual, save for later use..
+
+	fndmark = replaceSingleQuotes(fndmark); // play-safe
+
+	updateSampleMarkingOnly_Rec(smp_origid,fndmark);
+	
+	// refresh the listbox
+	showSamples_MiniMe(global_selected_folderno);
+}
+
+Object[] testpackageItems_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+};
+
+// 7/7/2010: Show tests from test.package based on test.package id passed
+// testpackages_div
+void showTestPackage_Items(String itestpackid)
+{
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	sqlstatem = "select distinct testpackage_items.mysoftcode, testpackage_items.origid, " +
+	"stockmasterdetails.description, stockmasterdetails.description2, stockmasterdetails.stock_cat, stockmasterdetails.groupcode " +
+	"from testpackage_items " +
+	"left join stockmasterdetails " +
+	"on stockmasterdetails.id=testpackage_items.mysoftcode " +
+	"where testpackage_items.testpackage_id=" + itestpackid +
+	" order by stockmasterdetails.description";
+
+	tp_recs = sql.rows(sqlstatem);
+	sql.close();
+	
+	// testpackage_items_div def in the popup -- can be used for other mods
+	Listbox newlb = makeVWListbox(testpackage_items_div, testpackageItems_lb_headers, "testpackage_items_lb", 5);
+	
+	if(tp_recs.size() < 1) return;
+	
+	newlb.setRows(15);
+	
+	for(tpi : tp_recs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(tpi.get("origid").toString());
+
+		pmysoftc = tpi.get("mysoftcode");
+		kabom.add(pmysoftc.toString());
+
+		desc1 = trimListitemLabel(tpi.get("description"),30);
+		desc2 = trimListitemLabel(tpi.get("description2"),20);
+
+		kabom.add(desc1);
+		kabom.add(desc2);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+Object[] clienttestpackages_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Pck.Name",true),
+	new listboxHeaderObj("Last.Update",true),
+};
+
+void showTestPackage_ByClient(String iarcode)
+{
+	if(iarcode.equals("")) return;
+
+	// HARDCODED
+	iarcode = THIS_MODULE_ARCODE;
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select origid,package_name,lastupdate from TestPackages where ar_code='" + iarcode + "' and deleted=0 order by package_name";
+	tprecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(tprecs.size() < 1)
+	{
+		showMessageBox("Cannot find any test-packages for this client");
+		return;
+	}
+	
+	Listbox newlb = makeVWListbox(testpackages_div, clienttestpackages_lb_headers, "testpackages_lb", 15);
+	
+	for(tpi : tprecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(tpi.get("origid").toString());
+		kabom.add(tpi.get("package_name"));
+		kabom.add(tpi.get("lastupdate").toString().substring(0,10));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Show test-package items, uses popup - can be used for other mod
+// packitems_btn
+// testpackages_div, clienttestpackages_lb_headers, "testpackages_lb
+// showTestPackage_Items(String itestpackid)
+void showPackageItems_clicker()
+{
+	if(testpackages_div.getFellowIfAny("testpackages_lb") == null) return;
+	if(testpackages_lb.getSelectedIndex() == -1) return;
+
+	selitem = testpackages_lb.getSelectedItem();
+	global_selected_testpackage = getListcellItemLabel(selitem,0);
+	testpackname = getListcellItemLabel(selitem,1);
+
+	showTestPackage_Items(global_selected_testpackage);
+	testpackagename_lbl.setLabel(testpackname);
+
+	packageitems_popup.open(packitems_btn);
+}
+
+// global_selected_sampleid
+// Test-package popup assign single test clicker
+void assignSingleTest_clicker()
+{
+	if(global_selected_sampleid.equals("")) return; // usually set by onSelect listener
+	if(testpackage_items_div.getFellowIfAny("testpackage_items_lb") == null) return;
+	if(testpackage_items_lb.getSelectedIndex() == -1) return;
+
+	selitem = testpackage_items_lb.getSelectedItem();
+	tpi_mysoftcode = getListcellItemLabel(selitem,1);
+
+	// alert("going to assign : " + global_selected_sampleid + " with mysoftcode: " + tpi_mysoftcode);
+
+	insertJobTestParameters_Rec(global_selected_sampleid,tpi_mysoftcode); // samplereg_funcs.zs
+	packageitems_popup.close(); // close the popup
+}
+
+Object[] assignedtests_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+};
+
+// populate the show-tests for sample popup
+// sampletests_div
+void showAssignedTests_SamplePopup(String isampleid)
+{
+	Listbox newlb = makeVWListbox(sampletests_div, assignedtests_lb_headers, "asstest_lb", 5);
+	sampletest_lbl.setLabel(":: No test assigned yet ::");
+
+	if(isampleid.equals("")) return;
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select jobtestparameters.origid, jobsamples.sampleid_str, stockmasterdetails.description, stockmasterdetails.description2 from jobtestparameters " +
+	"left join stockmasterdetails on jobtestparameters.mysoftcode=stockmasterdetails.id " +
+	"left join jobsamples on jobtestparameters.jobsamples_id=jobsamples.origid " +
+	"where jobsamples.origid=" + isampleid;
+
+	testrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(testrecs.size() < 1) return;
+	
+	newlb.setRows(10);
+
+	kkb = "...";
+
+	for(tpi : testrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kkb = tpi.get("sampleid_str");
+
+		kabom.add(tpi.get("origid").toString());
+		desc1 = trimListitemLabel(tpi.get("description"),30);
+		desc2 = trimListitemLabel(tpi.get("description2"),20);
+		kabom.add(desc1);
+		kabom.add(desc2);
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	sampletest_lbl.setLabel(kkb);
+}
+
+// sample_tests_popup , regsamples_div, regsamps_lb_headers, "samples_lb",
+void showSampleTests_clicker()
+{
+	showAssignedTests_SamplePopup(global_selected_sampleid);
+	sample_tests_popup.open(showtestparam_btn);
+}
+
+//sampletests_div, assignedtests_lb_headers, "asstest_lb"
+void removeAssTest_clicker()
+{
+	if(sampletests_div.getFellowIfAny("asstest_lb") == null) return;
+	if(asstest_lb.getSelectedIndex() == -1) return;
+	
+	jobtestparam_id = asstest_lb.getSelectedItem().getLabel(); // first col is the origid for JobTestParameters set in showAssignedTests_SamplePopup()
+	deleteJobTestParameters_Rec(jobtestparam_id);
+	
+	showAssignedTests_SamplePopup(global_selected_sampleid); // refresh popup's listbox
+}
+
+// Edit sample-marking clicker
+// sm_caption_lbl
+void doSampleMarking_clicker()
+{
+	if(global_selected_sampleid.equals("")) return;
+	
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select samplemarking,sampleid_str from jobsamples where origid=" + global_selected_sampleid;
+	thesm = sql.firstRow(sqlstm);
+	sql.close();
+	
+	if(thesm != null)
+	{
+		sm_caption_lbl.setLabel(thesm.get("sampleid_str"));
+		sm_input_tb.setValue(thesm.get("samplemarking"));
+		sm_edit_popup.open(smplay_btn);
+	}
+}
+
+// Update sample-marking - called by popup
+void updateSampleMarking_clicker()
+{
+	isampm = replaceSingleQuotes(sm_input_tb.getValue());
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstatem = "update JobSamples set samplemarking='" + isampm + "' where origid=" + global_selected_sampleid;
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	showSamples_MiniMe(global_selected_folderno); // refresh the samples listbox
+	sm_edit_popup.close();
+}
+
+// Let user assign the whole test-package to the selected sample
+void assignWholePackage_clicker()
+{
+	if(global_selected_sampleid.equals("")) return;
+	if(global_selected_testpackage.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	// global_selected_testpackage set in showPackageItems_clicker()
+	sqlst = "select mysoftcode from TestPackage_Items where deleted=0 and testpackage_id=" + global_selected_testpackage;
+	tp_items = sql.rows(sqlst);
+
+	if(tp_items.size() > 0)
+	{
+		for(tpi : tp_items)
+		{
+			tp_mysc = tpi.get("mysoftcode").toString();
+			// HARDCODED field position, need to change if table change
+			sqlstatem = "insert into JobTestParameters values (" + global_selected_sampleid + "," + tp_mysc + ",0,'DRAFT',0,0)";
+			sql.execute(sqlstatem);
+		}
+	}
+
+	sql.close();
+	packageitems_popup.close();
+}
+
+// Knockoff from assign_tests.zul
+void commitFolder()
+{
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+
+	ifoldn = folderjobs_lb.getSelectedItem().getLabel();
+	
+	showMessageBox("Point of no return, once this folder/job is commited, you cannot change anything no more..");
+	
+	if (Messagebox.show("Commit folder/job: " + ifoldn, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		iorig = Integer.parseInt(extractFolderNo(ifoldn)).toString();
+		sqlstatem = "update jobfolders set folderstatus='" + FOLDERCOMMITED + "' where origid=" + iorig;
+		sql.execute(sqlstatem);
+		// alert(sqlstatem);
+		sql.close();
+
+		showMessageBox("Commited : " + ifoldn);
+
+		startFolderJobsSearch(startdate,enddate); // refresh folder/job listbox
+	}
+}
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<groupbox width="400px">
+
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<!-- popup to show Test.Package items -->
+<popup id="packageitems_popup">
+<groupbox width="400px">
+	<caption id="testpackagename_lbl" label="..." />
+
+	<div id="testpackage_items_div" />
+	<separator height="5px" />
+	<hbox>
+		<button label="Assign test" style="font-size:9px" onClick="assignSingleTest_clicker()" />
+		<button label="Whole package" style="font-size:9px" onClick="assignWholePackage_clicker()" />
+		<button label="Close" onClick="packageitems_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+
+<!-- popup to show tests assigned to sample -->
+<popup id="sample_tests_popup">
+<groupbox width="400px">
+	<caption id="sampletest_lbl" label="..." />
+
+	<div id="sampletests_div" />
+	<separator height="5px" />
+	<hbox>
+		<button label="Remove test" style="font-size:9px" onClick="removeAssTest_clicker()" />
+		<button label="Close" onClick="sample_tests_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+
+<!-- popup let user edit sample-marking -->
+<popup id="sm_edit_popup">
+<groupbox width="400px">
+	<caption id="sm_caption_lbl" label="..." />
+	<label value="Sample.Marking" style="font-size:9px" />
+	<textbox id="sm_input_tb" multiline="true" height="50px" width="370px" style="font-size:9px" />
+	<separator height="5px" />
+	<hbox>
+		<button label="Update" style="font-size:9px" onClick="updateSampleMarking_clicker()" />
+		<button label="Close" onClick="sm_edit_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="special_ids_sampreg_panel" title="SPECIAL HISAP: IDS Manufacturing - Samples Handling" border="normal" collapsible="true" closable="true">
+<panelchildren>
+
+<vbox>
+
+<groupbox mold="3d" width="100%">
+<caption label="Search parameters" />
+<vbox>
+
+<hbox>
+	<label value="Start date" style="font-size:9px" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+
+	<separator width="10px"/>
+
+	<label value="End date" style="font-size:9px" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	
+	<button label="Search/Refresh" style="font-size:9px" onClick="startFolderJobsSearch(startdate,enddate)" />
+
+	<separator width="30px" />
+	<button label="Folder details" style="font-size:9px" onClick="localPlayDriller()" />
+	<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+</hbox>
+
+<hbox>
+	<label value="Customer" visible="false" />
+	<textbox id="customer_tb" width="200px" visible="false" />
+</hbox>
+
+</vbox>
+</groupbox>
+
+<!-- search results box -->
+<groupbox mold="3d" width="100%" style="padding:3px" >
+<caption label="Found folders..." />
+<vbox>
+	<hbox>
+		<button label="Hisap COC template" style="font-size:9px" onClick="spliceWorksheet_clicker()" />
+		<button label="COMMIT folder" style="font-size:9px" onClick="commitFolder()" />
+	</hbox>
+	
+	<div id="folders_searchdiv" />
+	<label id="numofsamples_lbl" style="font-size:9px" />
+</vbox>
+</groupbox>
+
+<groupbox id="ws_splicer_gb" mold="3d" width="100%" style="padding:3px" visible="false">
+<caption id="wssplicer_caption" label="Worksheet splicer" />
+<vbox>
+
+<hbox>
+	<vbox>
+		<div style="background:#778899;padding:3px">
+			<label value="Sample-marking in our database" style="color:#FFFFFF" />
+		</div>
+		<hbox>
+			<button id="smplay_btn" label="Sample marking" style="font-size:9px" onClick="doSampleMarking_clicker()" />
+			<button id="showtestparam_btn" label="Test parameters" style="font-size:9px" onClick="showSampleTests_clicker()" />
+		</hbox>
+		<div id="regsamples_div" width="300px" />
+	</vbox>
+
+	<vbox>
+		<div style="background:#778899;padding:3px">
+			<label value="Client's sample-marking" style="color:#FFFFFF" />
+		</div>
+
+		<button label="Hisap sample marking" style="font-size:9px" onClick="linkSampleMarking_clicker()" />
+		<div id="foundsampmarking_div" width="300px" />
+	</vbox>
+
+	<vbox>
+		<div style="background:#778899;padding:3px">
+			<label value="Test parameters on COC" style="color:#FFFFFF" />
+		</div>
+		<separator height="19px" />
+		<div id="foundtests_div" width="200px" />
+		<separator height="2px" />
+	</vbox>
+
+	<vbox>
+		<div style="background:#778899;padding:3px">
+			<label value="Test packages assigned to client" style="color:#FFFFFF" />
+		</div>
+
+		<button id="packitems_btn" label="Package items" style="font-size:9px" onClick="showPackageItems_clicker()" />
+		<div id="testpackages_div" width="300px" />
+	</vbox>
+	
+</hbox>
+
+</vbox>
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+// Set search startdate and enddate to today's date
+//Calendar kkk = Calendar.getInstance();
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+//startFolderJobsSearch(startdate,enddate,customer_tb);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+</vbox>
+</panelchildren>
+</panel>
+
+</div>
+
+</zk>
+

@@ -1,0 +1,1304 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="registernew_samples_panel"?>
+<!--
+Title 			: Register new incoming PO/COC/Samples
+Developers	: Victor
+
+Revisions/NOTES:
+
+29/3/2010: added branch - for deployment to other branches later
+	in startFolderJobsSearch(), will make use of the branch code to list out only relevant folders instead of everything
+	
+15/4/2010: set a new folder prefix for branches - def in alsglobaldefs.zs
+	JB = ALJB
+	KK = ALKK
+	
+16/4/2010: added 3 more fields to the JobFolders table - labfolderstatus, releasedby, releaseddate
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+// to count open window
+windcounter = 1;
+
+String[] desiredTAT = { "7" , "3" , "1", "14", "21", "30" };
+String[] securitySeals = { "Intact" , "Damaged" , "Missing" };
+String[] modeDelivery = { "Self delivery" , "We pickup", "Courier" };
+String[] priorities = { "NORMAL" , "HIGH", "LOW" };
+
+Object whathuh;
+Object whathuh_samples;
+
+int sample_lb_currentindex = -1;
+
+// check whether can do CRUD on samples. uses whathuh var to access folderJobObj
+boolean foldersamplesCRUD_Check()
+{
+	retval = true;
+	
+	if(!whathuh.fj_folderstatus.equals(FOLDERDRAFT))
+	{
+		showMessageBox("Folder/job already logged or commited. Modification can only be performed by HOD or senior supervisor");
+		retval = false;
+	}
+
+	return retval;
+}
+
+// Use to disable all folder information groupbox 's form components
+// uses var whathuh and whathuh_samples to access the components
+void disableFolderInformationGroupbox()
+{
+	// disable folder information form components
+
+	whathuh.fj_date_created.setDisabled(true);
+	whathuh.fj_ar_code.setDisabled(true);
+	whathuh.fj_extranotes.setDisabled(true);
+	whathuh.fj_tat_dd.setDisabled(true);
+	whathuh.fj_customer_po.setDisabled(true);
+	whathuh.fj_customer_coc.setDisabled(true);
+	whathuh.fj_customer_request_date.setDisabled(true);
+	whathuh.fj_deliverymode.setDisabled(true);
+	whathuh.fj_securityseal.setDisabled(true);
+	whathuh.fj_noboxes.setDisabled(true);
+	whathuh.fj_temperature.setDisabled(true);
+	whathuh.fj_allgoodorder.setDisabled(true);
+	whathuh.fj_paperworknot.setDisabled(true);
+	whathuh.fj_paperworksamplesnot.setDisabled(true);
+	whathuh.fj_samplesdamaged.setDisabled(true);
+	whathuh.fj_attention.setDisabled(true);
+	
+	// disable sample's metadata components
+	whathuh_samples.samplemarking.setDisabled(true);
+	whathuh_samples.extranotes.setDisabled(true);
+	
+}
+
+// Enable to folder information groupbox's form components
+void enableFolderInformationGroupbox()
+{
+	// enable folder information groupbox form components
+	whathuh.fj_date_created.setDisabled(false);
+	whathuh.fj_ar_code.setDisabled(false);
+	whathuh.fj_extranotes.setDisabled(false);
+	whathuh.fj_tat_dd.setDisabled(false);
+	whathuh.fj_customer_po.setDisabled(false);
+	whathuh.fj_customer_coc.setDisabled(false);
+	whathuh.fj_customer_request_date.setDisabled(false);
+	whathuh.fj_deliverymode.setDisabled(false);
+	whathuh.fj_securityseal.setDisabled(false);
+	whathuh.fj_noboxes.setDisabled(false);
+	whathuh.fj_temperature.setDisabled(false);
+	whathuh.fj_allgoodorder.setDisabled(false);
+	whathuh.fj_paperworknot.setDisabled(false);
+	whathuh.fj_paperworksamplesnot.setDisabled(false);
+	whathuh.fj_samplesdamaged.setDisabled(false);
+	whathuh.fj_attention.setDisabled(false);
+	
+	// enable sample's metadata components
+	whathuh_samples.samplemarking.setDisabled(false);
+	whathuh_samples.extranotes.setDisabled(false);
+}
+
+class folderJobObj
+{
+	public Textbox fj_origid_folderno;
+	public Datebox fj_date_created;
+	public Textbox fj_ar_code;
+	public Label fj_customername;
+	public Textbox fj_extranotes;
+	public Listbox fj_tat_dd;
+	public Datebox fj_due_date;
+	
+	public Textbox fj_customer_po;
+	public Textbox fj_customer_coc;
+	
+	public Datebox fj_customer_request_date;
+	
+	public Listbox fj_deliverymode;
+	public Listbox fj_securityseal;
+	public Textbox fj_noboxes;
+	public Textbox fj_temperature;
+	
+	public Checkbox fj_allgoodorder;
+	public Checkbox fj_paperworknot;
+	public Checkbox fj_paperworksamplesnot;
+	public Checkbox fj_samplesdamaged;
+	
+	public Textbox fj_attention;
+	public String fj_folderstatus;
+	public Listbox fj_priority;
+
+	public folderJobObj(Textbox ifolderno, Datebox idatecreated, Textbox iarcode, Label icustomername, Textbox iextranotes, Listbox itatdd,
+		Textbox icustomer_po, Textbox icustomer_coc, Datebox icustreqdate, Listbox ideliverymode, Listbox isecurityseal, Textbox inoboxes, Textbox itemperature,
+		Checkbox iallgoodorder, Checkbox ipaperworknot, Checkbox ipaperworksamplesnot, Checkbox isamplesdamaged)
+	{
+		fj_origid_folderno = ifolderno;
+		fj_date_created = idatecreated;
+		fj_ar_code = iarcode;
+		fj_customername = icustomername;
+		fj_extranotes = iextranotes;
+		
+		fj_tat_dd = itatdd;
+		
+		fj_customer_po = icustomer_po;
+		fj_customer_coc = icustomer_coc;
+	
+		fj_customer_request_date = icustreqdate;
+	
+		fj_deliverymode = ideliverymode;
+		fj_securityseal = isecurityseal;
+		fj_noboxes = inoboxes;
+		fj_temperature = itemperature;
+		
+		fj_allgoodorder = iallgoodorder;
+		fj_paperworknot = ipaperworknot;
+		fj_paperworksamplesnot = ipaperworksamplesnot;
+		fj_samplesdamaged = isamplesdamaged;
+		
+		// cannot put anymore parameters.. huh?? check for direct assignment at the end.
+		// fj_attention = 
+
+		fj_folderstatus = "";
+	}
+	
+	int getOrigid()
+	{
+		return convertFolderNoToInteger(fj_origid_folderno.getValue());
+	}
+	
+	void clearDetails()
+	{
+		fj_origid_folderno.setValue("");
+		setTodayDatebox(fj_date_created);
+		
+		fj_ar_code.setValue("");
+		fj_ar_code.setDisabled(false);
+		
+		fj_customername.setValue("");
+		fj_extranotes.setValue("");
+		
+		fj_customer_po.setValue("");
+		fj_customer_coc.setValue("");
+	
+		setTodayDatebox(fj_customer_request_date);
+	
+		fj_deliverymode.setSelectedIndex(0);
+		fj_securityseal.setSelectedIndex(0);
+		fj_noboxes.setValue("");
+		fj_temperature.setValue("");
+		
+		fj_allgoodorder.setChecked(false);
+		fj_paperworknot.setChecked(false);
+		fj_paperworksamplesnot.setChecked(false);
+		fj_samplesdamaged.setChecked(false);
+		
+		fj_attention.setValue("");
+		
+		fj_tat_dd.setSelectedIndex(0); // reset index 0
+		
+		fj_folderstatus = "";
+	}
+	
+	void showDetails()
+	{
+		irec = Integer.parseInt(extractFolderNo(fj_origid_folderno.getValue()));
+		if(irec == 0) return;
+		
+		therec = getFolderJobRec(irec.toString());
+		if(therec == null) return;
+		
+		credate = therec.get("datecreated");
+		dudate = therec.get("duedate");
+
+		fj_date_created.setValue(credate);
+		fj_extranotes.setValue(therec.get("extranotes"));
+
+		iar_code = therec.get("ar_code");
+		
+		fj_ar_code.setValue(iar_code);
+		
+		fj_folderstatus = therec.get("folderstatus");
+		
+		if(!iar_code.equals(""))
+		{
+			icompname = getCompanyName(therec.get("ar_code"));
+			fj_customername.setValue(icompname);
+			
+			// already assigned folder to ar_code, supposed not to change - but then.. 26/1/2010
+			// maybe check for uploadToLIMS and uploadToMYSOFT flag, if set, cannot change anymore
+			//fj_ar_code.setDisabled(true);
+		}
+		
+		// matchListboxItems(Listbox ilb, String iwhich)
+		
+		fj_customer_request_date.setValue(therec.get("custreqdate"));
+		
+		fj_customer_po.setValue(therec.get("customerpo"));
+		fj_customer_coc.setValue(therec.get("customercoc"));
+		
+		idmode = therec.get("deliverymode");
+		matchListboxItems(fj_deliverymode, idmode);
+		
+		isecs = therec.get("securityseal");
+		matchListboxItems(fj_securityseal, isecs);
+		
+		ootat = therec.get("tat");
+		itat = ootat.toString();
+		matchListboxItems(fj_tat_dd, itat);
+
+		fj_due_date.setValue(dudate);
+		
+		// 10/2/2010: if create-date is same as due-date, always when a new folder is created, due some TAT calc
+		if(dudate.equals(credate))
+		{
+			addDaysToDate(fj_date_created,fj_due_date,ootat);
+			
+			weekEndCheck(fj_due_date);
+		}
+
+		fj_noboxes.setValue(therec.get("noboxes"));
+		fj_temperature.setValue(therec.get("temperature"));
+		
+		fj_allgoodorder.setChecked((therec.get("allgoodorder") == 1) ? true : false);
+		fj_paperworknot.setChecked((therec.get("paperworknot") == 1) ? true : false);
+		fj_paperworksamplesnot.setChecked((therec.get("paperworksamplesnot") == 1) ? true : false);
+		fj_samplesdamaged.setChecked((therec.get("samplesdamaged") == 1) ? true : false);
+		
+		fj_attention.setValue(therec.get("attention"));
+
+		ipriority = therec.get("priority");
+		matchListboxItems(fj_priority, ipriority);
+	}
+	
+	void saveDetails()
+	{
+		sql = als_mysoftsql();
+		if(sql == null) return;
+		
+		ifolderno_str = fj_origid_folderno.getValue();
+		ifold = extractFolderNo(ifolderno_str);
+		ifoldno = Integer.parseInt(ifold);
+		
+		idatecreated = getDateFromDatebox(fj_date_created);
+		iarcode = fj_ar_code.getValue();
+		iextranotes = replaceSingleQuotes(fj_extranotes.getValue());
+		
+		idmode = fj_deliverymode.getSelectedItem().getLabel();
+		isecs = fj_securityseal.getSelectedItem().getLabel();
+		
+		inoboxes = replaceSingleQuotes(fj_noboxes.getValue());
+		itempa = replaceSingleQuotes(fj_temperature.getValue());
+		
+		icustpo = replaceSingleQuotes(fj_customer_po.getValue());
+		icustcoc = replaceSingleQuotes(fj_customer_coc.getValue());
+		
+		iattention = replaceSingleQuotes(fj_attention.getValue());
+		
+		icustreqdate = getDateFromDatebox(fj_customer_request_date);
+		
+		ia1 = (fj_allgoodorder.isChecked()) ? "1" : "0";
+		ia2 = (fj_paperworknot.isChecked()) ? "1" : "0";
+		ia3 = (fj_paperworksamplesnot.isChecked()) ? "1" : "0";
+		ia4 = (fj_samplesdamaged.isChecked()) ? "1" : "0";
+		
+		itat = fj_tat_dd.getSelectedItem().getLabel();
+		ipriority = fj_priority.getSelectedItem().getLabel();
+		
+		iduedate = getDateFromDatebox(fj_due_date);
+
+		// 29/3/2010: to update branch field according to username branch setting.
+		ibranch = useraccessobj.branch;
+		if(ibranch.equals("") || ibranch.equals("ALL")) // if no branch setup or branch="ALL" <-- admin login, set branch "SA"
+			ibranch = "SA";
+
+		sqlstatem = "update JobFolders set ar_code='" + iarcode + "', " +
+		"datecreated='" + idatecreated + "', " +
+		"extranotes='" + iextranotes + "', " +
+		"folderno_str='" + ifolderno_str + "', " +
+		"deliverymode='" + idmode + "', " +
+		"securityseal='" + isecs + "', " +
+		"noboxes='" + inoboxes + "', " +
+		"temperature='" + itempa + "', " +
+		"custreqdate='" + icustreqdate + "', " +
+		"customerpo='" + icustpo + "', " +
+		"customercoc='" + icustcoc + "', " +
+		"folderstatus='" + fj_folderstatus + "', " +
+		"tat=" + itat + ", " +
+		"duedate='" + iduedate + "', " +
+		"allgoodorder=" + ia1 + ", " +
+		"paperworknot=" + ia2 + ", " +
+		"paperworksamplesnot=" + ia3 + ", " +
+		"samplesdamaged=" + ia4 + ", " +
+		"priority='" + ipriority + "'," +
+		"attention='" + iattention + "', " +
+		"branch='" + ibranch + "' " +
+		"where origid=" + ifoldno.toString();
+	
+		sql.execute(sqlstatem);
+		sql.close();
+
+	}
+} // end of class folderJobObj
+
+class sampleObj
+{
+	public Textbox sample_origid;
+	public Textbox samplemarking;
+	public Textbox extranotes;
+	
+	public sampleObj(Textbox isample_origid, Textbox isamplemarking, Textbox iextranotes)
+	{
+		sample_origid = isample_origid;
+		samplemarking = isamplemarking;
+		extranotes = iextranotes;
+	}
+	
+	void clearDetails()
+	{
+		sample_origid.setValue("");
+		samplemarking.setValue("");
+		extranotes.setValue("");
+	}
+	
+	void showDetails()
+	{
+		iorigid = convertSampleNoToInteger(sample_origid.getValue());
+		therec = getFolderSampleRec(iorigid.toString());
+		if(therec == null) return;
+		
+		samplemarking.setValue(therec.get("samplemarking"));
+		extranotes.setValue(therec.get("extranotes"));
+	}
+	
+	void saveDetails()
+	{
+		// make sure there's something to save
+		if(sample_origid.getValue().equals("")) return;
+		
+		sql = als_mysoftsql();
+		if(sql == null) return;
+		
+		isamporig = sample_origid.getValue();
+		isampmark = replaceSingleQuotes(samplemarking.getValue());
+		
+		iextrano = replaceSingleQuotes(extranotes.getValue());
+		
+		// 8/2/2010: get folderno from main folderno textbox
+		ifoldno = convertFolderNoToInteger(whathuh.fj_origid_folderno.getValue());
+
+		iorigid = convertSampleNoToInteger(sample_origid.getValue());
+		
+		sqlstatem = "update JobSamples set samplemarking='" + isampmark + "', " +
+		"extranotes='" + iextrano + "', " +
+		"sampleid_str='" + isamporig + "', " +
+		"jobfolders_id=" + ifoldno.toString() +
+		" where origid=" + iorigid.toString();
+		
+		//alert(sqlstatem);
+		sql.execute(sqlstatem);
+		
+		sql.close();
+	
+	}
+	
+} // end of class sampleObj
+
+// onSelect listener for samples_lb
+class SamplesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 8/2/2010: save whatever in the previous selection
+		prevn = whathuh_samples.sample_origid.getValue();
+		
+		// make sure there was something selected before saving sample details
+		if(!prevn.equals("")) whathuh_samples.saveDetails();
+
+		// 9/2/2010: update samples_lb column 2(samplemarking) w/o doing a complete startFolderSamplesSearch()
+		if(sample_lb_currentindex != -1)
+		{
+			oldlc = samples_lb.getItemAtIndex(sample_lb_currentindex);
+			setListcellItemLabel(oldlc,1,whathuh_samples.samplemarking.getValue());
+		}
+
+		sample_lb_currentindex = samples_lb.getSelectedIndex(); // 9/2/2010: save the selected index now for use above logic later
+			
+		irecno = samples_lb.getSelectedItem().getLabel();
+
+		whathuh_samples.clearDetails();
+		whathuh_samples.sample_origid.setValue(irecno);
+
+		// save a copy of the folderno
+		ifolderno = whathuh.fj_origid_folderno.getValue();
+		
+		// 8/2/2010: refresh listbox -- not sure if it's possible to refresh/redraw the listbox within an eventListener,
+		// 'cause the makeSamplesListbox func will point to the same eventlistener. might crash..
+		
+		whathuh_samples.showDetails();
+
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeSamplesListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("samples_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("samples_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new SamplesLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Sample Marking");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    newlb.setRows(15);
+
+    return newlb;
+
+} // end of makeSamplesListbox()
+
+// Search and populate samples in folders listbox
+void startFolderSamplesSearch(Textbox ifolderno)
+{
+	foldns = ifolderno.getValue();
+	thefolderno = convertFolderNoToInteger(foldns);
+	if(thefolderno == 0) return;
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	sqlstatem = "select top 510 * from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0" +
+	" order by origid";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeSamplesListbox(samples_div);
+
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[2];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			ifno = ilist.get("origid");
+			
+            strarray[0] = foldns + padZeros5(ifno);
+			
+            strarray[1] = ilist.get("samplemarking");
+
+            insertListItems(newlb,strarray,SAMPLES_PREFIX);
+		}
+	}
+
+} // end of startFolderSamplesSearch()
+
+// Add new samples to job/folder
+// 24/2/2010: added codes to check if no AR_code, cannot create new samples
+void createNewSampleEntry()
+{
+	// folder/job must be selected before inserting a new sample
+	if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+	
+	// 2/2/2010: if folderstatus not draft, cannot add new samples
+	if(!foldersamplesCRUD_Check()) return;
+	
+	// 24/2/2010: no ar_code, cannot add new samples
+	if(whathuh.fj_ar_code.getValue().equals("")) return;
+
+	thefolderno = folderjobs_lb.getSelectedItem().getLabel();
+	
+	// must check folder status before creating new samples, if it's LOGGED or COMMITTED, should not allow to add
+	/*
+	if(whathuh.fj_folderstatus.equals(FOLDERLOGGED))
+		require supervisor access level to add samples
+		
+	if(whathuh.fj_folderstatus.equals(FOLDERCOMMITED))
+		cannot change at all now.. already commited, suck into mysoft and starlims already
+
+	*/
+	
+	createNewSampleRec(thefolderno);
+
+	// refresh samples listbox
+	startFolderSamplesSearch(whathuh.fj_origid_folderno);
+}
+
+// Set 'deleted' flag in table to reflect deletion. Later can write admin-cleanup utils to clean all these
+void removeSampleEntry()
+{
+	// no sample selected, return
+	if(whathuh_samples.sample_origid.getValue().equals("")) return;
+	if(samples_lb.getSelectedIndex() == -1) return;
+	
+	// 2/2/2010: if folderstatus not draft, cannot do CRUD
+	if(!foldersamplesCRUD_Check()) return;
+	
+	isampid = samples_lb.getSelectedItem().getLabel();
+	
+	// must check folder status, if commited or logged..
+	
+	if (Messagebox.show("Delete sample " + isampid, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		sampid = convertSampleNoToInteger(isampid);
+
+		sqlstatem = "update JobSamples set deleted=1 where origid=" + sampid.toString();
+		sql.execute(sqlstatem);
+		sql.close();
+
+		// refresh samples listbox
+		startFolderSamplesSearch(whathuh.fj_origid_folderno);
+		whathuh_samples.clearDetails();
+	}
+}
+
+// Save sample's metadata, sample-marking and other things
+void saveSampleMetadata()
+{
+	// 2/2/2010: only folder in DRAFT can save sample's metadata
+	if(!foldersamplesCRUD_Check()) return;
+	
+	// use sampleObj func to save the details
+	whathuh_samples.saveDetails();
+
+	// refresh the samples listbox
+	startFolderSamplesSearch(whathuh.fj_origid_folderno);
+}
+
+// onSelect listener for folderjobs_lb
+class FolderLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 3/2/2010: to be coded - update JobSamples->sampleid_str with the full ALSM0000100001 string for easier access in BIRT
+		// 8/2/2010: if there was a previously selected folder, save the samples full string
+		oldfoldn = whathuh.fj_origid_folderno.getValue();
+		if(!oldfoldn.equals("")) saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+
+		// alert("save previous folder samples: " + oldfoldn);
+		
+		irecno = folderjobs_lb.getSelectedItem().getLabel();
+
+		whathuh.clearDetails();
+		whathuh.fj_origid_folderno.setValue(irecno);
+		
+		whathuh.showDetails();
+		
+		// 27/1/2010: if folderstatus is LOGGED, don't allow changes to the customer-code
+		ifoldn = convertFolderNoToInteger(irecno);
+		therec = getFolderJobRec(ifoldn.toString());
+		
+		ifoldstat = therec.get("folderstatus");
+
+		// disable customer-code box, so no drag-drop
+		// 2/2/2010: disable some of the groupbox if folderstatus is LOGGED or COMMITED
+		// arbox = (ifoldstat.equals(FOLDERLOGGED)) ? true : false;
+		// whathuh.fj_ar_code.setDisabled(arbox);
+		
+		if(ifoldstat.equals(FOLDERLOGGED) || ifoldstat.equals(FOLDERCOMMITED))
+			disableFolderInformationGroupbox();
+		else
+			enableFolderInformationGroupbox();
+		
+		// show samples tied to this folder/job
+		whathuh_samples.clearDetails();
+		startFolderSamplesSearch(whathuh.fj_origid_folderno);
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeFoldersListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("folderjobs_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("folderjobs_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new FolderLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("FolderNo");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("RecvDate");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    Listheader hd6 = new Listheader();
+    hd6.setLabel("DueDate");
+    hd6.setSort("auto");
+    hd6.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Customer");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+    Listheader hd5 = new Listheader();
+    hd5.setLabel("Priority");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+    Listheader hd4 = new Listheader();
+    hd4.setLabel("Status");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+
+	// 29/3/2010: new col for branch
+	Listheader hd5 = new Listheader();
+    hd5.setLabel("Brnch");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+    newlb.setRows(15);
+
+    return newlb;
+
+} // end of makeFoldersListbox()
+
+// Do the search and populate listbox
+// 29/3/2010: added branch checking - should be deployable to other branches later
+// 15/4/2010: added different folder prefix for branches
+void startFolderJobsSearch(Datebox startd, Datebox endd)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	// 29/3/2010: check branch
+	branch_str = "";
+	
+	ibranch = useraccessobj.branch;
+	if(!ibranch.equals("ALL")) // if admin login, should be able to see all folders else filter according to branch
+		branch_str = "and branch='" + ibranch + "'";
+
+	sqlstatem = "select top 510 * from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 and folderstatus='" + FOLDERDRAFT + "' " + branch_str + " order by datecreated desc";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeFoldersListbox(folderjobs_div);
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[7];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			ifolderno = ilist.get("origid");
+			
+			folderprefix = JOBFOLDERS_PREFIX; // default folder prefix
+			
+			chkbranch = ilist.get("branch");
+			
+			// 15/4/2010: set branch folders prefix
+			if(chkbranch.equals("JB"))
+				folderprefix = JB_JOBFOLDERS_PREFIX;
+			
+			if(chkbranch.equals("KK"))
+				folderprefix = KK_JOBFOLDERS_PREFIX;
+			
+            strarray[0] = folderprefix + padZeros5(ifolderno);
+			
+            strarray[1] = ilist.get("datecreated").toString().substring(0,10);
+			
+			strarray[2] = ilist.get("duedate").toString().substring(0,10);
+
+			// get customer name from ar_code - will be slow if alot, scan 1 by 1
+			iar_code = ilist.get("ar_code");
+			icompanyname = "Undefined";
+
+			if(!iar_code.equals(""))
+				icompanyname = getCompanyName(iar_code);
+
+			strarray[3] = icompanyname;
+
+			strarray[4] = ilist.get("priority");
+
+			ifoldstat = ilist.get("folderstatus");
+			statstr = (ifoldstat.equals(FOLDERLOGGED)) ? FOLDERLOGGED : FOLDERDRAFT; // def in alsglobaldefs.zs
+
+			strarray[5] = statstr;
+
+			strarray[6] = ilist.get("branch");
+
+            insertListItems(newlb,strarray,folderprefix);
+		}
+	}
+
+} // end of startFolderJobsSearch()
+
+
+// only accept arcode type 3XXX/XXX for drag-drop
+void dropAR_Code(Event event)
+{
+	Component dragged = event.dragged;
+	
+	iarcode = dragged.getLabel();
+	
+	// if no folder selected, don't put in the address
+
+	if(iarcode.substring(0,1).equals("3"))
+	{
+		// set textbox value to ar_code
+		self.setValue(iarcode);
+		
+		comprec = getCompanyRecord(iarcode); // func in alsglobal_sqlfuncs.zs
+		customername.setValue(comprec.get("customer_name"));
+	
+		attention.setValue(comprec.get("contact_person1"));
+	}
+}
+
+void createNewFolder_Wrapper(Datebox ihiddendatebox)
+{
+	// 29/3/2010: add in branch
+	kkk = useraccessobj.branch;
+	
+	// 16/4/2010: if user has "ALL" for branch, disallow adding new folder
+	
+	if(kkk.equals("ALL"))
+	{
+		showMessageBox("Superuser cannot add folder.. please use a normal branch user");
+		return;
+	}
+	
+	createNewFolderJob(ihiddendatebox,kkk); // samplereg_funcs.zs
+	
+	startFolderJobsSearch(startdate,enddate);
+}
+
+void deleteFolderJob()
+{
+	// instead of deleting straight from the database, set the deleted flag instead
+	// maybe have to put in some code which allow admin to see what's been deleted, and undelete the record
+	
+	ifolds = whathuh.fj_origid_folderno.getValue();
+	if(ifolds.equals("")) return;
+	
+	// 27/1/2010: if folderstatus is logged, cannot delete too
+	therec = getFolderJobRec(whathuh.getOrigid().toString());
+	
+	if(therec.get("folderstatus").equals(FOLDERLOGGED))
+	{
+		showMessageBox(ifolds + " is " + FOLDERLOGGED + " . Cannot delete");
+		return;
+	}
+	
+	if (Messagebox.show("Delete folder/job " + ifolds, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+	
+		ifoldno = convertFolderNoToInteger(ifolds);
+	
+		sqlstatem = "update JobFolders set deleted=1 where origid=" + ifoldno.toString();
+	
+		sql.execute(sqlstatem);
+	
+		sql.close();
+
+		// refresh folder listbox
+		startFolderJobsSearch(startdate,enddate);
+	}
+} // end of deleteFolderJob()
+
+void updateFolderJob()
+{
+	// if no folder/job selected, return
+	if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+
+	// 2/2/2010: make sure folder is in DRAFT
+	if(!foldersamplesCRUD_Check()) return;
+
+	// update table
+	whathuh.saveDetails();
+	whathuh.clearDetails();
+	
+	// deselect folder listbox
+	folderjobs_lb.clearSelection();
+	startFolderJobsSearch(startdate,enddate);
+	
+	// 5/3/2010: clear samples listbox
+	makeSamplesListbox(samples_div);
+
+}
+
+// Change folder/job status to logged. once logged, only higher level user will be able to change the data
+void logFolderJob()
+{
+	ifolds = whathuh.fj_origid_folderno.getValue();
+	if(ifolds.equals("")) return;
+	
+	ifstat = whathuh.fj_folderstatus;
+	
+	// folder already logged or commited, need not proceed
+	if(ifstat.equals(FOLDERLOGGED) || ifstat.equals(FOLDERCOMMITED))
+		return;
+	
+	if (Messagebox.show("Log-in job/folder " + ifolds + ". Once log-in, only HOD and senior supervisor be able to amend info." , "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		whathuh.fj_folderstatus = "LOGGED";
+		whathuh.saveDetails();
+
+		// refresh listbox
+		startFolderJobsSearch(startdate,enddate);
+		whathuh.clearDetails();
+
+		// remove folder->samples lb
+		// if there's previously a listbox, remove before adding a new one.
+		Listbox oldlb = samples_div.getFellowIfAny("samples_lb");
+		if(oldlb != null) oldlb.setParent(null);
+	
+	}
+}
+
+void printSRA_Wrapper()
+{
+	ifoldi = whathuh.fj_origid_folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	printSRA(ifoldi); // samplereg_funcs.zs
+	
+} // end of printSRA_Wrapper()
+
+void printSampleLabels_Wrapper()
+{
+	// see if we have any samples in listbox - hardcoded samples_lb
+	if(samples_lb.getItemCount() < 1) return;
+	
+	ifoldi = whathuh.fj_origid_folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	// 24/2/2010: save samples id full string eg. ALSM000010001 before printing.
+	// Previously depended on the onSelect event to kick this func, not totally saved the full-string
+	saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+	
+	// 24/2/2010: save also the folder info, BIRT cannot pickup the company-name by ar-code field
+	whathuh.saveDetails();
+	
+	printSampleLabels(ifoldi); // samplereg_funcs.zs
+	
+} // end of printSampleLabels_Wrapper()
+
+void playAssignCustomerWindow()
+{
+	// no folder/job selected, just return
+	if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+	
+	// 29/1/2010: if folder status is LOGGED - don't open window
+	jjk = whathuh.fj_folderstatus;
+	if(jjk.equals(FOLDERLOGGED) || jjk.equals(FOLDERCOMMITED)) return;
+	
+	uniqwindowid = "srhcust" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", uniqwindowid, "getcust=1",useraccessobj);
+	windcounter++;
+}
+
+// onSelect listener for TAT dropdown .. will calc the TAT
+class TAT_DD_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// if no folder selected or TAT not selected, just return..
+		if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+		
+		// fj_due_date
+		
+		ttd = tat_dd.getSelectedItem().getLabel();
+		tatdays = Integer.parseInt(ttd);
+
+		addDaysToDate(whathuh.fj_date_created,whathuh.fj_due_date,tatdays);
+		
+		// 16/3/2010: check whether it's a saturday/sunday, if so, add more days. not going to release report on a weekend.
+		weekEndCheck(whathuh.fj_due_date);
+		
+		/*
+		Calendar iduedatecheck = Calendar.getInstance();
+		iduedatecheck.setTime(whathuh.fj_due_date.getValue());
+		
+		iwday = iduedatecheck.get(iduedatecheck.DAY_OF_WEEK);
+		addupweekends = 0;
+		if(iwday == iduedatecheck.SUNDAY) addupweekends = 1;
+		if(iwday == iduedatecheck.SATURDAY) addupweekends = 2;
+		
+		addDaysToDate(whathuh.fj_due_date,whathuh.fj_due_date,addupweekends);
+		
+		// alert(iwday.toString() + " : " + mestr);
+		*/
+
+		
+	}
+}
+
+]]>
+</zscript>
+
+<div width="1100px">
+<panel id="registernewsamples_panel" title="Samples Registration" border="normal" collapsible="true" closable="true"  >
+<panelchildren>
+
+<div>
+<borderlayout height="830px">
+	<west title="Folders/Jobs" size="60%" splittable="true" collapsible="true">
+	<div>
+		<separator height="3px" />
+		
+		<hbox>
+			<label value="Start date" />
+			<datebox id="startdate" format="yyyy-MM-dd" />
+		
+			<label value="End date" />
+			<datebox id="enddate" format="yyyy-MM-dd" />
+		
+			<button id="search_btn" label="Search" onClick="startFolderJobsSearch(startdate, enddate)" />
+			
+			<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+			
+			<!-- put in a drop-down to allow search for deleted folders , only admin account can see this one -->
+			
+		</hbox>
+		
+		<separator height="3px" />
+		
+		<div id="folderjobs_div" />
+		
+		<separator height="3px" />
+		
+		<hbox>
+			<button label="New folder/job" onClick="createNewFolder_Wrapper(hiddendatebox)" />
+			<button label="Remove" onClick="deleteFolderJob()" />
+			<button label="Log-in folder/job" onClick="logFolderJob()" />
+			<button label="Print Sample Receipt Advice" onClick="printSRA_Wrapper()" />
+		</hbox>
+		
+		<separator height="3px" />
+		
+		<!-- folder metadata -->
+		<groupbox id="gb_folderinformation" >
+		<caption label="Folder information" />
+
+			<hbox>
+				<label id="customername" style="font-size:14px; font-weight:bold" />
+			</hbox>
+
+			<separator height="5px" />
+			
+			<groupbox>
+			<hbox>
+				<label value="FolderNo" />
+				<textbox id="folderno" disabled="true" />
+
+				<label value="CustCode" />
+				<textbox id="ar_code" width="80px" droppable="true" onDrop="dropAR_Code(event)" />
+				
+				<button label="Assign customer" onClick="playAssignCustomerWindow()" />
+				
+			</hbox>
+			
+			<hbox>
+				<label value="Contact person" />
+				<textbox id="attention" width="200px" />
+			</hbox>
+		
+			<separator height="3px" />
+		
+			<hbox>
+				<separator width="1px" />
+				<label value="Cust.PO" />
+				<textbox id="customer_po" />
+				
+				<label value="Cust.COC" />
+				<textbox id="customer_coc" />
+			</hbox>
+			
+			</groupbox>
+			
+			<groupbox>
+			<caption label="Dates" />
+			
+				<hbox>
+					<label value="Date samples received" />
+					<separator width="42px" />
+					<datebox id="date_created" format="yyyy-MM-dd" />
+					
+					<separator width="5px" />
+					
+				</hbox>
+
+				<hbox>
+					<label value="Due date (working days)" />
+					<separator width="29px" />
+					<datebox id="due_date" format="yyyy-MM-dd" disabled="true" />
+					
+					<label value="TAT" />
+					<listbox id="tat_dd" mold="select" />
+					<zscript>
+						populateDropdownListbox(tat_dd,desiredTAT);
+						// use this eventlistener to calc the TAT based on what's been selected
+						tat_dd.addEventListener("onSelect", new TAT_DD_Listener());
+					</zscript>
+					<label value=" day(s)" />
+
+				</hbox>
+				
+				<hbox>
+				<label value="Customer requested due date" />
+				<datebox id="clientreq_duedate" format="yyyy-MM-dd" />
+				
+				<label value="Priority" />
+				<listbox id="priority_dd" mold="select" />
+				<zscript>
+					populateDropdownListbox(priority_dd,priorities);
+				</zscript>
+				
+				</hbox>
+
+			</groupbox>
+			
+			<groupbox>
+			<caption label="Delivery Details"/>
+				
+				<hbox>
+					<label value="Mode of delivery" />
+					<listbox id="modeofdelivery" mold="select" />
+					<zscript>
+						populateDropdownListbox(modeofdelivery,modeDelivery);
+					</zscript>
+					
+					<separator width="5px" />
+					
+					<label value="SecuritySeal" />
+					<listbox id="securityseal" mold="select" />
+					<zscript>
+						populateDropdownListbox(securityseal,securitySeals);
+					</zscript>
+				</hbox>
+				
+				<hbox>
+					<label value="No. of Coolers/Boxes" />
+					<textbox id="boxescount" width="50px" />
+
+					<separator width="21px" />
+					<label value="Temperature" />
+					<textbox id="box_temperature" width="50px" />
+				</hbox>
+				
+				<vbox>
+				<checkbox id="allgoodorder" label="All samples and paperwork received in good order" />
+				<checkbox id="paperworknot" label="No paperwork included. Get customer's requirement" />
+				<checkbox id="paperworksamplesnot" label="Paperwork/Samples incomplete or ambigious. Please contact customer" />
+				<checkbox id="samplesdamaged" label="Samples were damaged during transit. Please contact customer" />
+				</vbox>
+			
+			</groupbox>
+			
+			<separator height="3px" />
+			<hbox>
+				<label value="Comments" />
+				<textbox id="extranotes" multiline="true" height="80px" width="380px" />
+				
+				<vbox>
+					<button label="Save folder info" onClick="updateFolderJob()" />
+				</vbox>
+			</hbox>
+		
+		</groupbox>
+		
+		<!-- end of folder metadata -->
+
+	</div>
+	</west>
+	
+	<center title="Samples">
+		<div>
+			<separator height="3px" />
+			<hbox>
+				<button label="Add samples" onClick="createNewSampleEntry()" />
+				<button label="Remove samples" onClick="removeSampleEntry()" />
+				<button label="Print labels" onClick="printSampleLabels_Wrapper()" />
+			</hbox>
+			<separator height="3px" />
+
+			<div id="samples_div" />
+				
+			<separator height="3px" />
+				
+			<groupbox id="sampleinfo_gb">
+			<caption label="Sample information" />
+
+					<hbox>
+						<label value="SampleID" />
+						<textbox id="sampleid_str" disabled="true" />
+					</hbox>
+						
+					<hbox>
+						<separator width="6px" />
+						<label value="Marking" />
+						<textbox id="samplemarking" width="280px" />
+					</hbox>
+			
+					<hbox>
+						<separator width="18px" />
+						<label value="Notes" />
+						<textbox id="sample_extranotes" multiline="true" height="80px" width="280px" />
+					</hbox>
+				
+			</groupbox>
+			<!-- end of sample metadata form -->
+			
+			<separator height="3px" />
+					
+			<hbox>
+				<button label="Save sample info" onClick="saveSampleMetadata()" />
+			</hbox>
+		</div>
+		<!-- end of Samples Div -->
+	</center>
+	
+</borderlayout>
+</div>
+
+<zscript>
+<![CDATA[
+
+if(can_access)
+{
+	// Set search today's date
+	setTodayDatebox(startdate);
+	setTodayDatebox(enddate);
+	setTodayDatebox(hiddendatebox);
+
+	startFolderJobsSearch(startdate, enddate);
+
+	// show empty samples listbox when loaded
+	startFolderSamplesSearch(folderno);
+
+	tfolderJobs = new folderJobObj(folderno, date_created, ar_code, customername, extranotes, tat_dd,
+		customer_po,customer_coc,clientreq_duedate,modeofdelivery,securityseal,boxescount,box_temperature,
+		allgoodorder,paperworknot,paperworksamplesnot,samplesdamaged
+	);
+
+	whathuh = tfolderJobs;
+	// manually set ui components, parameters passing hits the limit above
+	whathuh.fj_attention = attention;
+	whathuh.fj_due_date = due_date;
+	whathuh.fj_priority = priority_dd;
+
+	tfolderSamples = new sampleObj(sampleid_str,samplemarking,sample_extranotes);
+	whathuh_samples = tfolderSamples;
+}
+
+// search_btn.setDisabled(true);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+
+</zk>
+

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="als_portal_login" ?>
+<?page title="ALS e-LABMAN"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+<zk xmlns:h="http://www.w3.org/1999/xhtml" xmlns:zk="http://www.zkoss.org/2005/zk">
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobalfuncs.zs" />
+<zscript src="alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+
+userAccessObj useraccessobj = new userAccessObj();
+
+void loginToSystem()
+{
+	tmp_username = tb_username.getValue();
+	tmp_password = tb_password.getValue();
+	
+	if(tmp_username.equals("") || tmp_password.equals(""))
+		return;
+	
+	// 25/2/2010: toymaker special account incase the main one got deleted!!!
+	if(tmp_username.equals("toymaker") && tmp_password.equals("samvwchng"))
+	{
+		useraccessobj.origid = 1;
+		useraccessobj.username = "toymaker";
+		useraccessobj.accesslevel = 9;
+	}
+	else
+	{
+		enc_pwd = als_MD5_Encrypter(tmp_password);
+	
+		// check security now.
+		if(!checkUserAccess(tmp_username,enc_pwd,useraccessobj))
+		{
+			showMessageBox("Invalid login..");
+			return;
+		}
+	}
+	
+	// hide login window before loading mainprogram
+	loginwin.setVisible(false);
+
+	// set user access object , security thing
+	// mainprogram.setDynamicProperty("uao",useraccessobj);
+	
+	setUserAccessObj(mainprogram, useraccessobj);
+	
+	// hardcoded for ClientXS for now.
+	mainprogram.setSrc("index_portal.zul");
+	
+	// reset user access object, we only hide the login window, when it's visible again
+	// everything should be cleared.
+	tb_username.setValue("");
+	tb_password.setValue("");
+
+} // end of loginToSystem()
+
+]]>
+</zscript>
+
+<window id="loginwin" width="523px" height="373px" position="center,center" mode="overlapped" >
+<caption image="/alsimg/favicon.png" label="ALS e-LABMAN"/>
+
+<vbox>
+<image src="/alsimg/topside.png" />
+<separator height="3px" />
+<hbox>
+<separator width="290px" />
+<label value="Username" />
+<separator width="3px" />
+<textbox id="tb_username" />
+</hbox>
+
+<hbox>
+<separator width="290px" />
+<label value="Password" />
+<separator width="5px" />
+<textbox id="tb_password" type="password" onOk="loginToSystem()" />
+</hbox>
+
+<hbox>
+<separator width="460px" />
+<button id="loginbutt" label="Login" onClick="loginToSystem()" />
+</hbox>
+<separator height="5px" />
+<hbox>
+	<separator width="10px" />
+	<label multiline="true" style="font-size:9px" >
+Please login using the username/password provided to you.
+If you require assistance, please contact: helpdesk@alsglobal.com.my
+	</label>
+</hbox>
+
+<image src="/alsimg/bottomside.png" />
+
+<div>
+	<h:center>
+		<label multiline="true" style="font-size:9px" >
+			&#169;2009,2010 ALS Technichem Malaysia Sdn Bhd (All rights reserved)
+		</label>
+	</h:center>
+</div>
+
+</vbox>
+</window>
+
+<div>
+<include id="mainprogram" />
+</div>
+</zk>

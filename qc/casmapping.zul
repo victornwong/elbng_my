@@ -1,0 +1,651 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="castoanalytemapping_man"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title				: Service/Sales Items Manager
+Coding began date	: 7/9/2010
+Developers			: Victor
+
+**NOTES**
+
+StockMasterDetails.newfield10 = units
+StockMasterDetails.newfield9 = bill - YES/NO
+StockMasterDetails.newfield8 = LOR
+StockMasterDetails.newfield7 = CAS #
+
+DecimalFormat df = new DecimalFormat("#.##");
+invtotal = df.format(dpi.get("total"));
+
+*/
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL + 1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+String[] predef_units = { "mg/kg","ug/L","%","-" };
+
+String todaydate_str = "";
+
+selected_stock_cat = "";
+selected_division = "";
+selected_test = "";
+
+// Show or hide test-parameters 3-pane selector
+void toggleTestParametersBox(boolean iwhat)
+{
+	mysoft_testparams.setVisible(iwhat);
+}
+
+boolean testItem_InTestPackage(Listbox ilb, String imyc)
+{
+	retval = false;
+
+	for(i=0; i<ilb.getItemCount(); i++)
+	{
+		// children -> item 1 = hidden mysoft code
+		lbim = ilb.getItemAtIndex(i).getChildren().get(1).getLabel();
+
+		if(lbim.equals(imyc))
+		{
+			retval = true;
+			break;
+		}
+	}
+	return retval;
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// get mysoft stockmasterdetails id from hidden listbox column
+		selitem = event.getReference();
+		selected_test = getListcellItemLabel(selitem,0);
+
+		showStockItem_Metadata(selected_test);
+		//newstockitem_btn.setLabel("Update test/sale item"); // change button label if item selected
+	}
+}
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+// 7/9/2010: added selling price - can remove if used in other modules
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+	new listboxHeaderObj("LOR",true),
+	new listboxHeaderObj("CAS#",true),
+	new listboxHeaderObj("Units",true),
+	};
+
+	Listbox newlb = makeVWListbox(iwhichdiv, testparameters_lb_headers, "tests_description_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstatem = "select id,description,description2,newfield10,newfield8,newfield7 from stockmasterdetails " + 
+		"where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' " +
+		"and groupcode='" + igroupcode + "' " +
+		"order by description" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist == null) return;
+
+	newlb.setRows(16);
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+	NumberFormat nf = NumberFormat.getCurrencyInstance();
+
+	for(ilist : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(ilist.get("id").toString());
+
+		/*
+		stkcode = ilist.get("stock_code");
+		stkcode = (stkcode == null) ? "-----" : stkcode;
+		kabom.add(stkcode);
+		*/
+
+		kabom.add(trimListitemLabel(ilist.get("description"),35));
+		kabom.add(trimListitemLabel(ilist.get("description2"),35));
+
+		lor = (ilist.get("newfield8").equals("")) ? "----" : ilist.get("newfield8");
+		cas = (ilist.get("newfield7").equals("")) ? "----" : ilist.get("newfield7");
+		units = (ilist.get("newfield10").equals("")) ? "----" : ilist.get("newfield10");
+		
+		kabom.add(lor);
+		kabom.add(cas);
+		kabom.add(units);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selected_division = section_groupcode_lb.getSelectedItem().getLabel();
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+		
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		if(testparameters_column.getFellowIfAny("tests_description_lb") != null)
+			tests_description_lb.setParent(null);
+
+		clearStockitem_clicker(); // use onClick func to clear the stockitem metadata fields
+
+		populateTestParametersColumn(testparameters_column, selected_stock_cat, selected_division);
+	}
+}
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	Object[] sections_lb_headers = {
+	new listboxHeaderObj("",true),
+	};
+
+	Listbox newlb = makeVWListbox(iwhichdiv, sections_lb_headers, "section_groupcode_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+		
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	selected_stock_cat = istock_cat;
+	
+	if(tlist == null) return;
+
+	newlb.setRows(18);
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+	String[] strarray = new String[1];
+
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		strarray[0] = ilist.get("groupcode");
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+		selected_stock_cat = convertLongNameToCode(als_divisions, iwhat);
+
+		// populate section column
+		populateSectionColumn(section_column, selected_stock_cat);
+		selected_division = ""; // clear prev selected division
+
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		if(testparameters_column.getFellowIfAny("tests_description_lb") != null)
+			tests_description_lb.setParent(null);
+
+		clearStockitem_clicker(); // use onClick func to clear the stockitem metadata fields
+	}
+}
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+	Object[] divisions_lb_headers = {
+		new listboxHeaderObj("",true),
+	};
+
+	Listbox newlb = makeVWListbox(iwhichdiv, divisions_lb_headers, "division_stockcat_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist == null) return;
+	
+	newlb.setRows(18);
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateDivisionColumn()
+
+// Auto select those test-parameters boxes
+void autoAssignTestBox(String iwhich)
+{
+	istockrec = getStockMasterDetails(iwhich);
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	populateSectionColumn(section_column,istockcat);
+	populateTestParametersColumn(testparameters_column,istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+
+	matchListboxItems(division_stockcat_lb, divisionln);
+	matchListboxItems(section_groupcode_lb, igroupcode);
+
+	tscode = istockrec.get("ID").toString();
+
+	// alert(tsname);
+	// ilist.get("description") + " (" + ilist.get("description2") + ")" ;
+
+	matchListboxItems(tests_description_lb,tscode);
+}
+
+void showStockItem_Metadata(String imysoftcode)
+{
+	stkrec = getMySoftMasterProductRec(imysoftcode);
+	if(stkrec == null) return;
+	
+	test_name_holder.setValue(stkrec.get("Description"));
+
+	units_nf10 = stkrec.get("NewField10");
+	units_nf10 = (units_nf10 == null) ? "" : units_nf10;
+
+	si_units_newfield10.setValue(units_nf10);
+
+	lor_nf8 = stkrec.get("NewField8");
+	lor_nf8 = (lor_nf8 == null) ? "" : lor_nf8;
+	si_lor_newfield8.setValue(lor_nf8);
+
+	cas_nf7 = stkrec.get("NewField7");
+	cas_nf7 = (cas_nf7 == null) ? "" : cas_nf7;
+	si_casnumber_newfield7.setValue(cas_nf7);
+
+	method = stkrec.get("Description2");
+	si_description2.setValue(method);
+}
+
+void clearStockitem_clicker()
+{
+	si_units_newfield10.setValue("");
+	si_lor_newfield8.setValue("");
+	si_casnumber_newfield7.setValue("");
+	si_description2.setValue("");
+	selected_test = ""; // clear global selected_test - to disallow updating of earlier selected item - in case
+}
+
+void updateCASUnits_clicker()
+{
+	if(selected_test.equals("")) return;
+
+	units = replaceSingleQuotes(si_units_newfield10.getValue());
+	lor = replaceSingleQuotes(si_lor_newfield8.getValue());
+	cas = replaceSingleQuotes(si_casnumber_newfield7.getValue());
+	method = replaceSingleQuotes(si_description2.getValue());
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update stockmasterdetails set newfield10='" + units + "',newfield8='" + lor + "',newfield7='" + cas + "', description2='" + method + "' where id=" + selected_test;
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateTestParametersColumn(testparameters_column, selected_stock_cat, selected_division); // refresh
+	clearStockitem_clicker(); // clear saved stuff - don't confuse ppl
+}
+
+//---------- CAS selector -------------
+// onSelect event for showCASMegalist()
+class casmegalistLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_cas = getListcellItemLabel(selitem,0);
+		casnum = getListcellItemLabel(selitem,1);
+		chemname = getListcellItemLabel(selitem,2);
+		shotname = getListcellItemLabel(selitem,3);
+
+		// showCASDetails(casnum,chemname,shotname);
+	}
+}
+
+class casmegalistLB_DoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = casmegalist_lb.getSelectedItem();
+		casnum = getListcellItemLabel(selitem,1);
+
+		// hardcoded for this module
+		si_casnumber_newfield7.setValue(casnum);
+	}
+}
+
+void showCASMegalist(String isearch, Div iwhich)
+{
+	Object[] casmegalist_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("CAS.Number",true),
+	new listboxHeaderObj("Chemical.Name",true),
+	new listboxHeaderObj("Short.Name",true),
+	};
+
+	if(isearch.equals("")) return;
+
+	Listbox newlb = makeVWListbox(iwhich, casmegalist_lb_headers, "casmegalist_lb", 5);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select top 100 * from elb_chemistry_lookup where casrn like '%" + isearch + 
+	"%' or chemical_name like '%" + isearch + "%' or short_name like '%" + isearch + "%' order by chemical_name";
+	casrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(casrecs.size() == 0) return;
+	newlb.setRows(12);
+	//newlb.addEventListener("onSelect", new casmegalistLB_Listener());
+
+	for(dpi : casrecs)
+	{
+		ArrayList scmk = new ArrayList();
+
+		scmk.add(dpi.get("origid").toString());
+		scmk.add(dpi.get("casrn"));
+		scmk.add(dpi.get("chemical_name"));
+		scmk.add(dpi.get("short_name"));
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	dc_obj = new casmegalistLB_DoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+void searchCAS_clicker(Textbox thebox, Div theholder)
+{
+	global_searchstring = replaceSingleQuotes(thebox.getValue());
+	if(global_searchstring.equals("")) return;
+	showCASMegalist(global_searchstring, theholder);
+}
+//---------- end of CAS selector -------------
+
+//---------- Units selector stuff ------------
+
+class unitsLB_DoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = units_lb.getSelectedItem();
+		unitcode = getListcellItemLabel(selitem,0);
+
+		// hardcoded for this module
+		si_units_newfield10.setValue(unitcode);
+	}
+}
+
+void showUnits(String iunittype)
+{
+	Object[] units_lb_headers = {
+	new listboxHeaderObj("Units",true),
+	new listboxHeaderObj("Description",true),
+	};
+
+	// units_holder def in popup
+	Listbox newlb = makeVWListbox(units_holder, units_lb_headers, "units_lb", 5);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select unit_code,unit_desc from elb_units where unit_type='" + iunittype + "' order by unit_desc";
+	units = sql.rows(sqlstm);
+	sql.close();
+
+	if(units.size() == 0) return;
+
+	//newlb.addEventListener("onSelect", new unittypesLB_Listener());
+	newlb.setRows(10);
+
+	String[] strarray = new String[2];
+
+	for(dpi : units)
+	{
+		strarray[0] = dpi.get("unit_code");
+		strarray[1] = dpi.get("unit_desc");
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	dc_obj = new unitsLB_DoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// onSelect event for unitTypes_Putter()
+class unittypesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		unittype = selitem.getLabel();
+		showUnits(unittype);
+	}
+}
+
+void unitTypes_Putter(Div idiv)
+{
+	Object[] unittypes_lb_headers = {
+	new listboxHeaderObj("Unit Types",true),
+	};
+
+	Listbox newlb = makeVWListbox(idiv, unittypes_lb_headers, "unittypes_lb", 5);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select distinct unit_type from elb_units order by unit_type";
+	unittypes = sql.rows(sqlstm);
+	sql.close();
+
+	if(unittypes.size() == 0) return;
+
+	newlb.addEventListener("onSelect", new unittypesLB_Listener());
+	newlb.setRows(10);
+
+	String[] strarray = new String[1];
+
+	for(dpi : unittypes)
+	{
+		strarray[0] = dpi.get("unit_type");
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void unitsPicker_clicker()
+{
+	// populate unit-type in first holder
+	units_selector_popup.open(unitspicker_btn);
+}
+
+//---------- end of Units selector stuff -----
+
+]]>
+</zscript>
+
+<!-- Units selector popup -->
+<popup id="units_selector_popup">
+<groupbox mold="3d" width="500px">
+	<caption label="Units Picker" />
+	<hbox>
+		<div id="unittypes_holder" width="150px" />
+		<div id="units_holder" />
+	</hbox>
+	<separator height="3px" />
+	<button label="X Close" style="font-size:9px" onClick="units_selector_popup.close()" />
+</groupbox>
+</popup>
+<!-- end of units selector popup -->
+
+<div width="1200px">
+<panel id="casanalytemapping_panel" title="Analyte Metadata Mappings" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+	<button label="X Close panel" style="font-size:9px" onClick="casanalytemapping_panel.setParent(null)" />
+</hbox>
+<borderlayout height="250px">
+	<center>
+		<!-- test parameters from mysoft -->
+		<borderlayout id="mysoft_testparams" height="200px">
+			<west title="Division" size="150px" flex="true" splittable="true" collapsible="true">
+				<div id="division_column" />
+			</west>
+			<center>
+				<borderlayout height="200px" width="100%">
+					<west title="Section" size="150px" flex="true" splittable="true" collapsible="true">
+						<div id="section_column" />
+					</west>
+					<center>
+						<borderlayout height="200px" width="100%">
+							<west title="Test parameters" size="100%" flex="true" splittable="true" collapsible="true">
+								<div>
+									<div id="testparameters_column" />
+								</div>
+							</west>
+						</borderlayout>
+					</center>
+				</borderlayout>
+			</center>
+		</borderlayout>
+		<!-- end of test parameters from mysoft -->
+	</center>
+</borderlayout>
+
+<separator height="5px" />
+
+<groupbox id="itemdata_gb" mold="3d">
+	<caption label="Test" />
+	<hbox>
+		<groupbox width="600px">
+			<caption label="CAS #" />
+			<hbox>
+				<label value="CAS/Chemical.Name" style="font-size:9px" />
+				<separator width="5px" />
+				<textbox id="main_searchstr" width="150px" style="font-size:9px" />
+				<button label="Search" style="font-size:9px" onClick="searchCAS_clicker(main_searchstr,casmegalist_holder)" />
+				<separator width="5px" />
+				<label value="(search max. 100 CAS per click)" style="font-size:9px" />
+			</hbox>
+			<separator height="3px" />
+			<div id="casmegalist_holder" />
+		</groupbox>
+
+		<grid width="400px">
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Test" style="font-size:9px" />
+				<div style="background:#997722;padding:2px">
+					<label id="test_name_holder" style="color:#ffffff" />
+				</div>
+			</row>
+			<row>
+				<label value="CAS #" style="font-size:9px" />
+				<textbox id="si_casnumber_newfield7" width="150px" style="font-size:9px" />
+				<!-- <button id="pickcasnum_btn" label="Pick CAS#" style="font-size:9px" /> -->
+			</row>
+			<row>
+				<label value="Method" style="font-size:9px" />
+				<textbox id="si_description2" multiline="true" width="340px" height="30px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="LOR" style="font-size:9px" />
+				<textbox id="si_lor_newfield8" width="150px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Units" style="font-size:9px" />
+				<textbox id="si_units_newfield10" width="150px" style="font-size:9px" />
+				<!-- <listbox id="si_units_newfield10" mold="select" style="font-size:9px" /> -->
+			</row>
+			<row>
+				<label value="" />
+				<!-- <textbox id="si_units_newfield10" style="font-size:9px" /> -->
+				<button id="unitspicker_btn" label="Get units" style="font-size:9px" onClick="unitsPicker_clicker()" />
+			</row>
+		</rows>
+		</grid>
+		<button label="Update data" style="font-size:9px" onClick="updateCASUnits_clicker()" />
+	</hbox>
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+todaydate_str = getDateFromDatebox(hiddendatebox);
+
+//populateGLCode_listbox();
+
+populateDivisionColumn(division_column);
+unitTypes_Putter(unittypes_holder);
+
+if(useraccessobj.accesslevel == 9)
+{
+	//delstockitem_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

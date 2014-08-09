@@ -1,0 +1,667 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="assign_new_box_wind"?>
+<zk>
+
+<!--
+
+Dispatch Manifest module
+
+Version				: 0.1
+Coding began date	: 18/01/2010
+Developer			: Victor Wong
+
+(c)2009 ALS Technichem Malaysia Sdn Bhd
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Some security checking codes here
+// useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+
+windcounter = 1;
+
+BOXRENTAL_TABLE = "BoxRental";
+
+BOXRENTAL_PREFIX = "BOXFORM";
+
+Object whathuh;
+
+class boxRentalInput
+{
+	public Textbox dm_origid;
+	public Textbox dm_rentalform_id;
+	public Textbox dm_box_id;
+	public Datebox dm_rentout_date;
+	public Textbox dm_return_date;
+	
+	public Textbox dm_typeofbox;
+
+	public boxRentalInput(Textbox iorigid, Textbox irentalform_id, Textbox ibox_id, Datebox irentout_date, Datebox ireturn_date, Textbox itypeofbox)
+	{
+		dm_origid = iorigid;
+		dm_rentalform_id = irentalform_id;
+		dm_box_id = ibox_id;
+		dm_rentout_date = irentout_date;
+		dm_return_date = ireturn_date;	
+
+		dm_typeofbox = itypeofbox;		
+	}
+	
+	void clearDetails()
+	{
+		dm_rentalform_id.setValue("");
+		dm_box_id.setValue("");
+		dm_origid.setValue("");
+		dm_typeofbox.setValue("");
+	}
+	
+	void showDetails()
+	{
+		// clear boxrental listbox first
+		makeBoxRentalFormListbox(boxrentalform_div);
+	
+		iorigid = strip_PrefixID(dm_origid.getValue());
+		
+		if(iorigid.equals("")) return;
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		sqlstatem = "select * from " + BOXRENTAL_TABLE + " where origid=" + iorigid;
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+		
+		if(therec == null)
+		{
+			showMessage("ERROR! Cannot retrieve box record");
+			return;
+		}
+		
+		dm_rentout_date.setValue(therec.get("rentout_date"));
+		dm_rentalform_id.setValue(therec.get("rentalform_id"));
+		dm_box_id.setValue(therec.get("box_id"));
+		
+		dm_typeofbox.setValue("");
+		
+		// show box name as rentalform_id is supposed to be hidden
+		boxprec = getBoxRencherRec(therec.get("rentalform_id"));
+
+		if(boxprec != null)
+		{
+			dm_typeofbox.setValue(boxprec.get("typeofbox"));
+		}
+		
+		// put codes here to update the box rental listbox
+		populateBoxRentalListbox(dm_origid.getValue());
+		
+	}
+	
+	void saveBoxrentalList()
+	{
+		// hardcoded boxrentalform2 listbox id
+		listcount = boxrentalform2.getItemCount();
+		
+		// nothing, just return
+		if(listcount == 0) return;
+		
+		irentalform_id_origid = strip_PrefixID(dm_origid.getValue());
+		
+		sql = als_mysoftsql();
+
+		if(sql == NULL) return;
+		
+		for(i=0; i<listcount; i++)
+		{
+			// get box rental origid
+			iboxorigid = boxrentalform2.getItemAtIndex(i).getLabel();
+			boxorigid = strip_PrefixID(ischorigid);
+
+			// update rentalform_id field
+
+			sqlstatem = "update BoxRentalForm set rentalform_id=" + irentalform_id_origid + ", " +
+				"box_id='" + dm_typeofbox.getValue() + "' " +
+				"where origid=" + boxorigid ;
+				
+			sql.execute(sqlstatem);
+		
+		}
+
+		sql.close();
+	}
+	
+	void updateDetails()
+	{
+		// nothing to update, return
+		if(dm_origid.getValue().equals(""))
+		{
+			clearDetails();
+			return;
+		}
+		
+		sql = als_mysoftsql();
+
+		if(sql == NULL) return;
+		
+		iorigid = strip_PrefixID(dm_origid.getValue());
+		
+		irentalform_id = dm_rentalform_id.getValue();
+		ibox_id = dm_box_id.getValue();
+		irentout_date = getDateFromDatebox(rentout_date);
+		ireturn_date = getDateFromDatebox(return_date);
+
+		sqlstatem = "update " + BOXRENTAL_TABLE + " set rentalform_id='" + irentalform_id + "'," +
+		"box_id='" + ibox_id + "'," +
+		"rentout_date='" + irentout_date + "'," +
+		"return_date='" + ireturn_date + "'," +
+		"where origid=" + iorigid;
+		
+		sql.execute(sqlstatem);
+		sql.close();
+		
+		// codes to save box rental list - update the rentalform_id in BoxRentalForm
+		saveBoxrentalList();
+		
+		// clear all input boxes and deselect from search-box
+		// clearDetails();
+		
+		// boxrental_lb.clearSelection();
+		
+		// refresh list boxes
+		// startBoxRentalSearch(startdate,enddate);
+		
+		//makeBoxRentalFormListbox(boxavailable_div);
+		//populateBoxRentalFormListbox(String irentalform_id_origid);
+	}
+
+}
+
+void dropBoxId(Event event)
+{
+	Component dragged = event.dragged;
+	ibox = dragged.getLabel();
+	
+	therec = getBoxRencherRec(ibox); // in alsglobalfuncs.zs
+	
+	newtypeofbox.setValue(therec.get("typeofbox"));
+	newstatus.setValue(therec.get("status"));
+	box_id.setValue(ibox);
+	
+}
+
+void playAssignBoxAvailable()
+{
+	uniqwindowid = myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","boxcontainers/chiller_selection_box.zul", uniqwindowid, "boxo=0");
+	windcounter++;
+}
+
+class MyBoxRental_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 28/1/2010: save previous rec if available
+		whathuh.updateDetails();
+	
+		irecno = boxrental_lb.getSelectedItem().getLabel();
+
+		whathuh.dm_origid.setValue(irecno);
+		whathuh.showDetails();
+		
+		startBoxRentalSearch(startdate,enddate);
+	}
+	
+} // end of MyBoxRental_Listener
+
+Listbox makeBoxRentalListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("boxrental_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("boxRentalContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new MyBoxRental_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Box Form");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Date");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Type of Box");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+
+    newlb.setRows(5);
+
+    return newlb;
+
+} // end of makeBoxRentalListbox()
+
+// check box rental listbox for dups schedule, return true if dup
+boolean checkManifestSchedule_Dups(String iwhichrec)
+{
+	// hardcoded boxrentalform2 listbox id
+	
+	listcount = boxrentalform2.getItemCount();
+	retval = false;
+	
+	if(listcount > 0)
+	{
+		for(i=0; i<listcount; i++)
+		{
+			lb_origid = boxrentalform2.getItemAtIndex(i);
+			
+			if(lb_origid.getLabel().equals(iwhichrec))
+			{
+				showMessageBox("Destination already in manifest");
+				
+				retval = true;
+				break;
+			}
+		}
+	}
+	
+	return retval;
+}
+
+boolean checkScheduleAssignedToManifest(Object iwhichrec)
+{
+	retval = false;
+	idispmanif = iwhichrec.get("manifest_id");
+
+	if(idispmanif != 0)
+	{
+		showMessageBox("Schedule already assigned to " + BOXRENTAL_PREFIX + idispmanif.toString());
+		retval=true;
+	}
+	
+	return retval;
+
+}
+
+class MyDropListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		Component dragged = event.dragged;
+
+		// alert(dragged.getLabel());
+		
+		iorigid_schedule_details = dragged.getLabel();
+		
+		// check for dups in the list
+		if(checkManifestSchedule_Dups(iorigid_schedule_details)) return;
+	
+		// no manifest selected, ignore insertion of schedule
+		if(whathuh.dm_origid.getValue().equals("")) return;
+		
+		therec = getDispatchScheduleRec(iorigid_schedule_details);
+		
+		if(therec == null) return;
+		
+		// destination already completed, don't add into list anymore.
+		if(therec.get("completed") == 1)
+		{
+			showMessageBox(iorigid_schedule_details + " is completed, can't insert");
+			return;
+		}
+
+		// check if schedule already assigned to a manifest
+		// 3/2/2010: recode this part, if destination in manifest but incomplete and date is earlier than the manifest date then can insert
+		if(checkScheduleAssignedToManifest(therec)) return;
+		
+		if(therec.get("ar_code").equals(""))
+		{
+			showMessageBox(iorigid_schedule_details + " is empty, cannot insert");
+			return;
+		}
+
+		String[] strarray = new String[2];
+		
+		strarray[0] = BOXRENTAL_PREFIX + therec.get("origid").toString();
+
+		iar_code = therec.get("ar_code");
+		icompanyname = "Undefined";
+			
+		if(!iar_code.equals(""))
+			icompanyname = getCompanyName(iar_code);
+			
+		strarray[1] = icompanyname;
+		
+		insertListItems(boxrentalform2,strarray,BOXRENTAL_PREFIX);
+	}
+}
+
+void clearBoxRentalFormListbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("boxrentalform2");
+	
+	if(oldlb != null)
+		oldlb.setParent(null);
+}
+
+// to populate makeBoxRentalFormListbox - boxrentalform2 with recs
+// imanif_origid = which manifest id to search for
+void populateBoxRentalFormListbox(String imanif_origid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	maniforig = strip_PrefixID(imanif_origid);
+	
+	sqlstatem = "select * from BoxRentalForm where ar_code=" + ar_codeorig;
+	
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+	
+	String[] strarray = new String[2];
+	
+	for(ilist : tlist)
+	{
+		strarray[0] = BOXRENTAL_PREFIX + ilist.get("origid").toString();
+		
+		icompanyname = getCompanyName(ilist.get("ar_code"));
+		strarray[1] = icompanyname;
+
+		// boxrentalform2 hardcoded as in makeBoxRentalFromListbox()
+		
+		insertListItems(boxrentalform2,strarray,BOXRENTAL_PREFIX);
+		
+		}
+}
+
+Listbox makeBoxRentalFormListbox(Div mDiv)
+{
+	// clear the listbox first
+	clearBoxRentalFormListbox(mDiv);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("boxrentalform2");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.setDroppable(BOXRENTAL_PREFIX);
+	newlb.addEventListener("onDrop", new MyDropListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("FormID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Customer");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    return newlb;
+
+} // end of makeBoxRentalFormListbox()
+
+// Do the search and populate listbox
+void startBoxRentalSearch(Datebox startd, Datebox endd)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select * from " + BOXRENTAL_TABLE + " where rentout_date between '" + sdate + "' and '" + edate + "'" + 
+	" order by rentout_date desc";
+	
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	// found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+	
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = boxrental_div.getFellowIfAny("boxrental_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+	// create a new listbox and attach to boxrental_div
+	Listbox newlb = makeBoxRentalListbox(boxrental_div);
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[3];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+            strarray[0] = BOXRENTAL_PREFIX + ilist.get("origid").toString();
+            strarray[1] = ilist.get("rentout_date").toString().substring(0,10);
+			
+			idispcode = ilist.get("dispatcher_id");
+			idispname = "Undefined";
+
+			if(!idispcode.equals(""))
+			{
+				xrec = getBoxRencherRec(idispcode);
+				if(xrec != null)
+					idispname = xrec.get("dispatcher_name");
+			}
+			
+			strarray[2] = idispname;
+
+            insertListItems(newlb,strarray,BOXRENTAL_PREFIX);
+		}
+	}
+
+} // end of startDispatchManifestSearch()
+
+// Create an entry in the boxrentalform table ..
+// fields: 
+void createNewBoxRental(Datebox ihiddendatebox)
+{
+	todaysdate = getDateFromDatebox(ihiddendatebox);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "insert into " + BOXRENTAL_TABLE + " values ('" + todaysdate + "','','','')";
+	
+	//sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh the dispatch schedule search-box.. set today's date for both start/end search date
+	//setTodayDatebox(startdate);
+	//setTodayDatebox(enddate);
+	startBoxRentalSearch(startdate,enddate);
+
+} // end of createNewRental()
+
+void removeScheduleFromListbox()
+{
+	// make sure to update ScheduleDetails.manifest_id or whatever to reflect removal of schedule from the manifest
+	
+	iselected = boxrentalform2.getSelectedIndex();
+	idisps = boxrentalform22.getSelectedItem().getLabel();
+	idispshid = strip_PrefixID(idisps);
+	
+	if(iselected == -1) return;
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	sqlstatem = "update BoxRentalForm set manifest_id=0, dispatcher_id='' where origid=" + idispshid ;
+	sql.execute(sqlstatem);
+	sql.close();
+    	
+	boxrentalform2.removeItemAt(iselected);
+}
+
+void saveForm()
+{
+	whathuh.updateDetails();
+	startBoxRentalSearch(startdate,enddate);
+	
+	makeBoxRentalFormListbox(boxrentalform_div);
+	populateBoxRentalFormListbox(whathuh.dm_origid.getValue());
+	
+	// whathuh.clearDetails();
+}
+
+// Remove a dispatch manifest .. some logic here
+void removeBoxRental()
+{
+	// Make sure there're no destinations.. otherwise don't allow deletion. Can recode this if user got use to the system and wanted fast response, delete the whole lot
+	
+	manfids = whathuh.dm_origid.getValue();
+	manifid = strip_PrefixID(manfids);
+	if(manifid.equals("")) return;
+
+	// sure to delete?
+	if (Messagebox.show("Delete manifest " + manfids, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+		return;
+	
+	// Remove all destinations' linking to the manifest. Otherwise destinations will not be able to assign to a new manifest
+	
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	sqlstatem = "update BoxRentalForm set origid=0, dispatcher_id='' where origid=" + manifid;
+	sql.execute(sqlstatem);
+	
+	// finally delete boxrental from the database
+	
+	sqlstatem = "delete from BoxRental deleted=1 where origid=" + manifid;
+	sql.execute(sqlstatem);
+
+	sql.close();
+
+	whathuh.clearDetails();
+	startDispatchManifestSearch(startdate,enddate);
+	makeBoxRentalFormListbox(boxrentalform_div);
+}
+
+]]>
+</zscript>
+
+<window id="boxrental_manager.win" title="Assign New Box" width="700px" height="650px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<groupbox mold="3d" width="100%">
+<caption label="New Box" />
+
+<hbox>
+	<label value="Rentout date" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+	
+	<label value="Return date" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	
+	<button label="Search" onClick="startBoxRentalSearch(startdate,enddate)" />
+	<button label="New Box" onClick="createNewBoxRental(hiddendatebox)" />
+	<button label="Delete Box" onClick="removeBoxRental()" />
+
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+	
+</hbox>
+<separator height="3px" />
+
+<div id="boxrental_div" />
+
+</groupbox>
+
+<hbox>
+
+<groupbox mold="3d" width="460px">
+<caption label="New Box Result" />
+
+<div id="boxrentalform_div" />
+
+<zscript>
+makeBoxRentalFormListbox(boxrentalform_div);
+</zscript>
+
+<button label="Remove Box" onClick="removeboxFromListbox()" />
+
+</groupbox>
+
+<vbox>
+<groupbox mold="3d" width="215px">
+<caption label="Box details" />
+
+<vbox>
+	<textbox id="boxform_origid" disabled="true" />
+	
+	<label value="Rent out date" />
+	<datebox id="schedule_date" format="yyyy-MM-dd" />
+			
+	<label value="Type of box" />
+	<textbox id="typeofbox" width="150px" droppable="true" onDrop="droptypeofbox" />
+
+	<button label="Assign Box Available" onClick="playAssignBoxAvailable()"/>
+	<button label="Save Form " onClick="saveForm()" />
+</vbox>
+
+</groupbox>
+
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+
+</vbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+
+<separator height="10px" />
+
+</div>
+
+</window>
+
+</zk>

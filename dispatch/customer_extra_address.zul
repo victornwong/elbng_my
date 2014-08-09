@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customerextra_address_manager"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+MYVERSION = "v0.1";
+/*
+Module to allow additional addresses for customers. Used by dispatch manager to organize route/schedule for dispatchers
+Written by : Victor Wong
+Dated : so long ago..
+
+03/04/2012: ported to btye-compl
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+windcounter = 1;
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+// Hand-coded listbox creation
+Listbox makeCustomerListbox(Div mDiv, Integer totalrecs)
+{
+Listbox newlb = new Listbox();
+
+newlb.setId("customers_lb");
+newlb.setContext("extraAddressContext");
+newlb.setVflex(true);
+// newlb.setPopup("testmypop");
+
+newlb.setParent(mDiv);
+
+Listhead newhead = new Listhead();
+newhead.setSizable(true);
+newhead.setParent(newlb);
+	
+Listheader hd1 = new Listheader();
+hd1.setLabel("Code");
+hd1.setSort("auto");
+hd1.setParent(newhead);
+
+Listheader hd2 = new Listheader();
+hd2.setLabel("Customer");
+hd2.setSort("auto");
+hd2.setParent(newhead);
+
+Listheader hd3 = new Listheader();
+hd3.setLabel("Address1");
+hd3.setSort("auto");
+hd3.setParent(newhead);
+
+Listheader hd4 = new Listheader();
+hd4.setLabel("Address2");
+hd4.setSort("auto");
+hd4.setParent(newhead);
+
+Listheader hd5 = new Listheader();
+hd5.setLabel("Address3");
+hd5.setSort("auto");
+hd5.setParent(newhead);
+
+Listheader hd6 = new Listheader();
+hd6.setLabel("Telephone");
+hd6.setSort("auto");
+hd6.setParent(newhead);
+
+Listheader hd7 = new Listheader();
+hd7.setLabel("Fax");
+hd7.setSort("auto");
+hd7.setParent(newhead);
+	
+Listheader hd8 = new Listheader();
+hd8.setLabel("E-Mail");
+hd8.setSort("auto");
+hd8.setParent(newhead);
+
+Listfoot newfooter = new Listfoot();
+newfooter.setParent(newlb);
+
+Listfooter fd1 = new Listfooter();
+fd1.setLabel("Found:");
+fd1.setParent(newfooter);
+
+Listfooter fd2 = new Listfooter();
+fd2.setLabel(totalrecs.toString());
+fd2.setParent(newfooter);
+
+newlb.setRows(15);
+
+return newlb;
+
+} // end of makeCustomerListbox()
+
+// Do the search and populate listbox
+void startCustomerSearch(Textbox icustomercode, Textbox icustomername, Textbox icustomeraddress)
+{
+Object[] cust_lb_headers = {
+	new listboxHeaderWidthObj("Code",true,"50px"),
+	new listboxHeaderWidthObj("Customer",true,"350px"),
+	new listboxHeaderWidthObj("Address1",true,""),
+	new listboxHeaderWidthObj("Address2",true,""),
+	new listboxHeaderWidthObj("Address3",true,""),
+	new listboxHeaderWidthObj("Telephone",true,"100px"),
+	new listboxHeaderWidthObj("Fax",true,"100px"),
+	new listboxHeaderWidthObj("E-Mail",true,"100px"),
+};
+
+	ccode = icustomercode.getValue();
+	cname = icustomername.getValue();
+	caddr = icustomeraddress.getValue();
+
+	// nothing to search, don't waste time, return
+	if(ccode.equals("") && cname.equals("") && caddr.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// bizarre sql statement wrangling here
+	ccode_wstring = (ccode.equals("")) ? "" : "ar_code like '%" + ccode + "%' ";
+	meandstr1 = "and ";
+	if(ccode_wstring.equals("")) meandstr1 = "";
+
+	cname_wstring = (cname.equals("")) ? "" :  meandstr1 + "customer_name like '%" + cname + "%' ";
+
+	meandstr2 = "and ";
+	if(cname_wstring.equals("") && !meandstr1.equals("and ")) meandstr2 = "";
+
+	caddr_wstring = (caddr.equals("")) ? "" : meandstr2 + "(address1 like '%" + caddr + "%' or address2 like '%" + caddr + "%' or address3 like '%" + caddr + "%') ";
+
+	sqlstatem = "select top 200 ar_code,customer_name,address1,address2,address3,telephone_no,fax_no,E_mail from customer where " +
+	ccode_wstring +
+	cname_wstring +
+	caddr_wstring +
+	" order by ar_code,customer_name";
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist.size() == 0) return;
+
+	newlb = lbhand.makeVWListbox_Width(searchdiv,cust_lb_headers,"customers_lb",12);
+	newlb.setContext("extraAddressContext");
+
+	String[] strarray = new String[8];
+	for(ilist : tlist)
+	{
+		strarray[0] = ilist.get("ar_code");
+		strarray[1] = ilist.get("customer_name");
+		strarray[2] = ilist.get("address1");
+		strarray[3] = ilist.get("address2");
+		strarray[4] = ilist.get("address3");
+		strarray[5] = ilist.get("telephone_no");
+		strarray[6] = ilist.get("fax_no");
+		strarray[7] = ilist.get("E_mail");
+		lbhand.insertListItems(newlb,strarray,"true","");
+	}
+	addextraaddressbutton.setVisible(true);
+
+} // end of startInvoiceSearch()
+
+void tryNotes()
+{
+	msele = customers_lb.getSelectedItem().getLabel();
+	alert("selected this: " + msele);
+}
+
+void playDocsDeliveryDetails()
+{
+	// get item selected in the list-box, customers_lb = hardcoded listbox id
+	if(customers_lb.getSelectedIndex() == -1) return;
+	arno = customers_lb.getSelectedItem().getLabel();
+	arcodestr = "ar_code=" + arno;
+	uniqwindowid = kiboo.makeRandomId("eo");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","dispatch/cust_addaddress.zul", uniqwindowid, arcodestr,useraccessobj);
+}
+
+]]>
+</zscript>
+
+<popup id="testmypop">
+<vbox>
+<label value="i'm poped..." />
+</vbox>
+</popup>
+
+<menupopup id="extraAddressContext">
+	<menuitem label="Add more address" onClick="playDocsDeliveryDetails()" /> 
+	<menuitem label="Hide popup" />
+</menupopup>
+
+<div width="1200px">
+<panel id="acctquotation" title="Customer Additional Pickup/Delivery Addresses Manager ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<vbox>
+<groupbox mold="3d">
+<hbox>
+	<label value="Customer code" style="font-size:9px" />
+	<textbox id="customercode" style="font-size:9px" />
+	<label value="Customer name" style="font-size:9px" />
+	<textbox id="customername" style="font-size:9px" />
+	<label value="Address" style="font-size:9px" />
+	<textbox id="customeraddress" style="font-size:9px" />
+	<button label="Search/Refresh" style="font-size:9px" onClick="startCustomerSearch(customercode,customername,customeraddress)" />
+	<button id="addextraaddressbutton" style="font-size:9px" label="Add extra address" onClick="playDocsDeliveryDetails()" visible="false" />
+</hbox>
+</groupbox>
+
+<groupbox mold="3d">
+<div id="searchdiv" />
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+]]>
+</zscript>
+
+</vbox>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

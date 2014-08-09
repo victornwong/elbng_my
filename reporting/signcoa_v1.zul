@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="signcoa_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v1.0";
+/*
+Title		: "Digitally" sign COA for users whom are assigned in "Released results" module
+Written by	: Victor Wong
+
+Revisions:
+
+09/01/2012: started
+04/04/2012: optimize and port to byte-compl
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+
+import org.victor.*;
+
+Generals kiboo = new Generals();
+SqlFuncs sqlhand = new SqlFuncs();
+ListboxHandler lbhand = new ListboxHandler();
+LookupFuncs luhand = new LookupFuncs();
+SecurityFuncs sechand = new SecurityFuncs();
+GuiFuncs guihand = new GuiFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+last_foldersearch_type = 0;
+selected_folderorigid = "";
+selected_folderno = "";
+global_labfolderstatus = "";
+selected_signator1 = "";
+selected_signator2 = "";
+selected_labstatus = "";
+
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("arcode",false),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Lab",true),
+	new listboxHeaderObj("Sign1",true),
+	new listboxHeaderObj("Sign1_Date",true),
+	new listboxHeaderObj("Sign2",true),
+	new listboxHeaderObj("Sign2_Date",true),
+	};
+
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_folderorigid = lbhand.getListcellItemLabel(selitem,0);
+		selected_folderno = lbhand.getListcellItemLabel(selitem,2);
+
+		selected_signator1 = lbhand.getListcellItemLabel(selitem,7);
+		selected_signator2 = lbhand.getListcellItemLabel(selitem,9);
+		selected_labstatus = lbhand.getListcellItemLabel(selitem,6);
+
+		signcoa_btn.setDisabled(true);
+
+		signit = false;
+
+		if(selected_signator1.equals(useraccessobj.username)) signit = true;
+		if(selected_signator2.equals(useraccessobj.username)) signit = true;
+
+		if(signit) signcoa_btn.setDisabled(false); // enable sign-coa button
+
+		if(useraccessobj.accesslevel == 9) signcoa_btn.setDisabled(false); // admin access - for debugging
+		
+		//showFolderResults(selected_folderorigid);
+		//showFolderMetadata(selected_folderno);
+	}
+}
+
+// itype: 1=by date, 2=by customer-name and selected date, 3=by folder, 4=by sampleid, 5=by signator(modd for this)
+void listFolders(int itype)
+{
+	// reset vars
+	selected_folderorigid = "";
+	selected_folderno = "";
+	selected_signator1 = "";
+	selected_signator2 = "";
+	selected_labstatus = "";
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+
+	searchtext = kiboo.replaceSingleQuotes(customer_tb.getValue());
+	foldnum = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+	signt = signator_dd.getSelectedItem().getLabel();
+
+	last_foldersearch_type = itype;
+
+	if(itype==3 && foldnum.equals("")) return;
+	if(itype==4 && sampid.equals("")) return;
+	
+	// header query
+	sqlstm = 
+	"select top 200 jf.origid, jf.datecreated, jf.folderno_str, jf.duedate, jf.ar_code, jf.labfolderstatus, " +
+	"jf.sign1, jf.sign1_date, jf.sign2, jf.sign2_date, " +
+	"customer.customer_name, csci.customer_name as cashcustomer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + "'";
+			break;
+
+		case 2:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + 
+			"' and customer.customer_name like '%" + searchtext + "%'";
+			break;
+
+		case 3:
+			sqlstm += "where jf.folderno_str like '%" + foldnum + "%'";
+			break;
+
+		case 4:
+			sqlstm += "where js.origid=" + sampid;
+			break;
+
+		case 5:
+			sqlstm += "where (sign1 = '" + signt + "' or sign2 = '" + signt + "')"; 
+			break;
+	}
+
+	// footer query	
+	sqlstm += " and js.deleted=0 and jf.deleted=0 and jf.folderstatus='COMMITED' " + 
+	"group by jf.origid, jf.datecreated, jf.folderno_str, jf.duedate, jf.branch,jf.ar_code, jf.share_sample, jf.labfolderstatus, " +
+	"jf.sign1, jf.sign1_date, jf.sign2, jf.sign2_date, " +
+	"customer.customer_name, csci.customer_name order by jf.origid";
+
+	Listbox newlb = lbhand.makeVWListbox(folders_holder, folders_lb_headers, "folderjobs_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+    therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(20);
+
+	newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("duedate").toString().substring(0,10));
+
+		iar_code = dpi.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = dpi.get("customer_name");
+
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550"))
+		{
+			csnam = dpi.get("cashcustomer");
+			if(csnam != null) icompanyname = csnam;
+		}
+
+		if(icompanyname == null) icompanyname = "Undefined";
+
+		kabom.add(icompanyname);
+		kabom.add(dpi.get("labfolderstatus"));
+
+		// signator 1
+		kabom.add(kiboo.checkNullString(dpi.get("sign1")));
+		sda1 = kiboo.checkNullDate(dpi.get("sign1_date"),"");
+		kabom.add(sda1);
+
+		// signator 2
+		kabom.add(kiboo.checkNullString(dpi.get("sign2")));
+		sda2 = kiboo.checkNullDate(dpi.get("sign2_date"),"");
+		kabom.add(sda2);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,JOBFOLDERS_PREFIX,"");
+	}
+
+	//newlb.invalidate();
+}
+
+// Allow signing of "released" folder for assigned signator
+void digitalSignCOA()
+{
+	if(selected_folderorigid.equals("")) return;
+
+	cansign = false;
+	woly = 1;
+
+	if(selected_signator1.equals(useraccessobj.username)) cansign = true;
+	if(selected_signator2.equals(useraccessobj.username)) { cansign = true; woly = 2; }
+
+	if(!cansign)
+	{
+		guihand.showMessageBox("You've not been assigned as a signator..");
+		return;
+	}
+
+	if(!selected_labstatus.equals("RELEASED"))
+	{
+		guihand.showMessageBox("Lab results not released, cannot sign COA.");
+		return;
+	}
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	signerd = (woly == 1) ? "sign1_date" : "sign2_date";
+
+	sqlstm = "update jobfolders set " + signerd + "='" + todate + "' where origid=" + selected_folderorigid;
+	
+	// admin debug purposes
+	/*
+	if(useraccessobj.accesslevel == 9)
+		sqlstm = "update jobfolders set sign1_date='" + todate + "' where origid=" + selected_folderorigid;
+	*/
+	
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listFolders(last_foldersearch_type); // refresh
+	guihand.showMessageBox("Signed..");
+}
+
+// Admin funcs: 1=set released, 2=set wip, 3=clear signed date-stamp
+void adminfuncs(int itype)
+{
+	if(selected_folderorigid.equals("")) return;
+
+	sqlstm = "update jobfolders ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "set labfolderstatus='RELEASED' ";
+			break;
+		case 2:
+			sqlstm += "set labfolderstatus='WIP' ";
+			break;
+		case 3:
+			sqlstm += "set sign1_date=null, sign2_date=null ";
+			break;
+	}
+
+	sqlstm += "where origid=" + selected_folderorigid;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listFolders(last_foldersearch_type); // refresh
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="signcoa_panel" title="Digitally sign COA ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+	<grid>
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+				<button label="Load" style="font-size:9px" onClick="listFolders(1)" />
+			</row>
+			<row spans=",3,">
+				<label value="Customer" style="font-size:9px" />
+				<textbox id="customer_tb" width="99%" style="font-size:9px" />
+				<button label="Search" style="font-size:9px" onClick="listFolders(2)" />
+			</row>
+		</rows>
+	</grid>
+
+	<grid>
+		<rows>
+			<row>
+				<label value="Folder number" style="font-size:9px" />
+				<textbox id="folderno_tb" style="font-size:9px" />
+				<button label="by folder" style="font-size:9px" onClick="listFolders(3)" />
+			</row>
+			<row>
+				<label value="Sample-ID" style="font-size:9px" />
+				<textbox id="sampleid_tb" style="font-size:9px" />
+				<button label="by sample-id" style="font-size:9px" onClick="listFolders(4)" />
+			</row>
+		</rows>
+	</grid>
+
+	<grid>
+		<rows>
+			<row>
+				<listbox id="signator_dd" mold="select" style="font-size:9px" />
+				<button label="by signator" style="font-size:9px" onClick="listFolders(5)" />
+			</row>
+		</rows>	
+	</grid>
+</hbox>
+
+<separator height="2px" />
+
+<hbox>
+	<vbox>
+		<label value="(Max. 200 folders per search)" style="font-size:8px" />
+		<div id="folders_holder" width="700px" />
+	</vbox>
+	
+	<vbox>
+		<button id="signcoa_btn" label="Digital sign COA" onClick="digitalSignCOA()" disabled="true" />
+		
+		<div id="admin_stuff" style="background:#DD0000;padding:2px" visible="false">
+			<hbox>
+				<button label="set RELEASED" style="font-size:9px" onClick="adminfuncs(1)" />
+				<button label="set WIP" style="font-size:9px" onClick="adminfuncs(2)" />
+				<button label="clear signature date-stamp" style="font-size:9px" onClick="adminfuncs(3)" />
+			</hbox>
+		</div>
+		
+	</vbox>
+</hbox>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+//populateDropdownListbox(signator_dd,signators);
+luhand.populateListbox_ByLookup(signator_dd,"dd_signators",2);
+
+if(useraccessobj.accesslevel == 9) admin_stuff.setVisible(true);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

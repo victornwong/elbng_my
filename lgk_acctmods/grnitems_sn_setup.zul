@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="grnitems_serialnumbers_win"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: GRN Items serial numbers setup -
+Written by: Victor Wong
+Notes:
+Get it out from the main grnmaker.zul .. will get too big to maintain later
+*/
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+grn_vouchernum = Executions.getCurrent().getParameter("grnvn");
+grn_id = Executions.getCurrent().getParameter("grnid");
+
+stockinmaster_record = getStockInMaster_rec(grn_id);
+
+selected_grnitem_id = "";
+selected_grnitem_stockcode = "";
+
+last_track_quantity = 0;
+selected_track_id = "";
+
+
+]]>
+</zscript>
+
+<window id="grnitems_serialnumbers_box" width="800px" height="420px" title="GRN Items - Serial-number Assignment" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<!-- <button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />	 -->
+<separator height="3px" />
+<label id="error_msg" style="font-size:12px;font-weight:bold" />
+<div style="padding:3px">
+
+<hbox>
+	<groupbox mold="3d">
+		<caption label="Items" />
+		<div id="grn_items_holder" width="300px" />
+		<separator height="5px" />
+		<hbox>
+		</hbox>
+	</groupbox>
+	
+	<groupbox id="items_groupbox" mold="3d" visible="false">
+		<caption id="item_lbl" label="Item.." />
+		<div id="items_sn_holder" />
+		<separator height="5px" />
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row>
+				<label value="Supplier.SN" style="font-size:9px" />
+				<textbox id="itm_pre_serialnumber" width="300px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Logged.SN" style="font-size:9px" />
+				<textbox id="itm_real_serialnumber" width="300px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Notes" style="font-size:9px" />
+				<textbox id="itm_notes" multiline="true" height="80px" width="300px" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+		<separator height="5px" />
+		<hbox>
+			<button label="Update SN/Notes" style="font-size:9px" onClick="updateSN_clicker()" />
+		</hbox>
+	</groupbox>
+	
+</hbox>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+// onSelect for makeQtyListbox()
+class itemsnlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_track_id = getListcellItemLabel(selitem,0);
+		supsn = getListcellItemLabel(selitem,2);
+		realsn = getListcellItemLabel(selitem,3);
+		notes = getListcellItemLabel(selitem,5);
+
+		itm_pre_serialnumber.setValue(supsn);
+		itm_real_serialnumber.setValue(realsn);
+		itm_notes.setValue(notes);
+	}
+}
+
+void makeQtyListbox(String iqty)
+{
+	Object[] itemsnlb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("Supp.SN",true),
+	new listboxHeaderObj("Log.SN",true),
+	new listboxHeaderObj("Recv.Date",true),
+	new listboxHeaderObj("Notes",true),
+	};
+
+	tomake = Integer.parseInt(iqty);
+	if(tomake == 0) return;
+	
+	last_track_quantity = tomake;
+	
+	makenewentry = false;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	// StockUnits_Tracker juggling..
+	// Count how many if any already in table
+	countme = "select count(origid) as itemcount from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+	"' and parent_stock_in='" + grn_vouchernum + "'";
+	kkr = sql.firstRow(countme);
+	if(kkr != null)
+	{
+		itmc = kkr.get("itemcount");
+		if(itmc != 0 && tomake < itmc) // whops, user changed qty in grn, remove some of them
+		{
+			// get list of origid
+			sqlstm = "select origid from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+			"' and parent_stock_in='" + grn_vouchernum + "' order by origid";
+
+			kkr2 = sql.rows(sqlstm);
+			Integer[] origids = new Integer[kkr2.size()];
+			kki = 0;
+
+			for(dki : kkr2)
+			{
+				origids[kki] = dki.get("origid");
+				kki++;
+			}
+
+			delorigids = "(";
+			// now make the string of origids to delete
+			for(i=tomake; i<kkr2.size(); i++)
+			{
+				delorigids += origids[i].toString() + ",";
+			}
+
+			mangled = delorigids.substring(0,delorigids.length()-1) + ")";
+
+			deltracker = "delete from stockunits_tracker where origid in " + mangled;
+			sql.execute(deltracker);
+		}
+		
+		insertrec = "insert into stockunits_tracker (parent_stock_code,pre_serialnumber,real_serialnumber," + 
+		"parent_stock_in,parent_stock_out,received_date,out_date,transfer_to,notes) values (" +
+		"'" + selected_grnitem_stockcode + "','','','" + grn_vouchernum + "','','','','','')" ;
+		
+		if(itmc != 0 && tomake > itmc) // user add more units for the grn item
+		{
+			// create the extra blanks
+			for(i=itmc; i<tomake; i++)
+			{
+				sql.execute(insertrec);
+			}
+		}
+
+		if(itmc == 0) // zero unit-tracking, make some
+		{
+			for(i=0;i<tomake;i++)
+			{
+				sql.execute(insertrec);
+			}
+		}
+	}
+
+	sqlstm = "select origid,pre_serialnumber,real_serialnumber,received_date,notes from stockunits_tracker where parent_stock_code='" + selected_grnitem_stockcode + 
+	"' and parent_stock_in='" + grn_vouchernum + "'";
+
+	stktrks = sql.rows(sqlstm);
+	sql.close();
+	
+	if(stktrks.size() == 0) return;
+
+	Listbox newlb = makeVWListbox(items_sn_holder,itemsnlb_headers,"itemsn_lb",tomake+1);
+	newlb.addEventListener("onSelect", new itemsnlb_Listener());
+	lncount = 1;
+	
+	for(dpi : stktrks)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(lncount.toString());
+		kabom.add(dpi.get("pre_serialnumber"));
+		kabom.add(dpi.get("real_serialnumber"));
+
+		recvd = dpi.get("received_date").toString().substring(0,10);
+		if(recvd.equals("1900-01-01")) recvd = "-----";
+		kabom.add(recvd);
+
+		kabom.add(dpi.get("notes"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		lncount++;
+	}
+}
+
+// onSelect for showGRNItemsListbox()
+class grnitemslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_grnitem_id = getListcellItemLabel(selitem,0);
+		selected_grnitem_stockcode = getListcellItemLabel(selitem,1);
+
+		itemname = getListcellItemLabel(selitem,2);
+		item_lbl.setLabel(itemname);
+
+		qty = getListcellItemLabel(selitem,3);
+		makeQtyListbox(qty);
+		
+		items_groupbox.setVisible(true);
+	}
+}
+
+// chopped from grnmaker.zul - might customize a bit
+void showGRNItemsListbox(String grnvoucher)
+{
+Object[] grnitemslb_headers = {
+	new listboxHeaderObj("stkindet_id",false),
+	new listboxHeaderObj("stock_code",false),
+	new listboxHeaderObj("Item.Name",true),
+	new listboxHeaderObj("Qty",true),
+	};
+
+	Listbox newlb = makeVWListbox(grn_items_holder,grnitemslb_headers,"grnitems_lb",5);
+	sqlstm = "select id,stockcode,description,quantity from tblstockindetail where voucherno='" + grnvoucher + "'";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	grnitems = sql.rows(sqlstm);
+	sql.close();
+
+	if(grnitems.size() == 0) return;
+
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new grnitemslb_Listener());
+
+	for(dpi : grnitems)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("stockcode"));
+		kabom.add(dpi.get("description"));
+		kabom.add(dpi.get("quantity").toString());
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void updateSN_clicker()
+{
+	if(selected_track_id.equals("")) return;
+	
+	presn = replaceSingleQuotes(itm_pre_serialnumber.getValue());
+	rsn = replaceSingleQuotes(itm_real_serialnumber.getValue());
+	notes = replaceSingleQuotes(itm_notes.getValue());
+
+	sqlstm = "update stockunits_tracker set pre_serialnumber='" + presn + "', real_serialnumber='" + rsn + "',notes='" + notes + 
+	"' where origid=" + selected_track_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	makeQtyListbox(last_track_quantity.toString()); // refresh
+}
+
+// STARTUP CODES
+
+// Load GRN items if there's a stockinmaster(grn) record
+if(stockinmaster_record != null)
+{
+	showGRNItemsListbox(grn_vouchernum);
+}
+else
+{
+	error_msg.setValue("[ERROR] Cannot retrieve GRN record");
+}
+
+grnitems_serialnumbers_box.setTitle("GRN Items - Serial-number Assignment : " + grn_vouchernum);
+
+]]>
+</zscript>
+</window>
+</zk>

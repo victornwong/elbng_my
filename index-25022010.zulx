@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="als_portal_main" ?>
+<?page title="ALS Technichem (M) Sdn Bhd - Management Portal"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+
+<!--
+index.zul
+
+{{IS_NOTE
+	Title: ALS Technichem Malaysia Sdn Bhd Portal
+	Description: Portal for internal usage - will contains modules for acct-dept, lab, sample-registration , etc.
+    Developers: Victor Wong
+    Date Started: 17/08/2009
+
+	History:
+
+}}IS_NOTE
+
+Copyright (C) 2009 ALS Technichem Malaysia Sdn Bhd
+
+{{IS_RIGHT
+}}IS_RIGHT
+-->
+<zk>
+
+<zscript src="alsglobal\alsglobaldefs.zs" />
+<zscript src="alsglobal\alsglobalfuncs.zs" />
+<zscript src="alsglobal\alsglobal_guifuncs.zs" />
+<zscript src="alsglobal\alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal\securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import org.zkoss.zk.ui.*;
+
+int includeCounter = 0;
+
+/*
+void showMyDate()
+{
+	sql = LIS_StatisticalSQL();
+
+	for(int i=733407; i<733438; i++)
+	{
+		sqlstatem = "select from_days(" + i + ") as kkk";
+		woo = sql.firstRow(sqlstatem);
+
+		Listitem litem = new Listitem();
+		String datestr = woo.get("kkk").toString();
+		litem.setLabel(datestr);
+		litem.setParent(mydate);
+
+		//mydate.setValue("date converted: " + woo.get("kkk"));
+	}
+
+	sql.close();
+}
+
+*/
+
+// Some security checking codes here
+	
+// Logout from the program WebReport
+void logoutSystem()
+{
+	Window loginwindow = Path.getComponent("//als_clientxs_login/loginwin");
+	loginwindow.setVisible(true);
+				
+	Include logininc = Path.getComponent("//als_clientxs_login/mainprogram");
+	logininc.setSrc("");
+				
+	useraccessobj.clearAll();
+
+} // end of logoutSystem()
+
+]]>
+</zscript>
+
+<div id="mainding" width="1578px">
+
+<borderlayout width="100%" height="10000px">
+
+<!-- northside -->
+<north border="none">
+<div>
+
+<div style="background:#008899">
+ <label id="programtitle" value="-" style="padding:10px ;font-size:16px;font-weight:bold; font-family:Arial;color:#FFFFFF" />
+ 
+<zscript>
+ programtitle.value = "ALS Technichem (M) Sdn Bhd - Management Portal";
+</zscript>
+ 
+</div>
+
+  <menubar width="100%">
+
+	<menu label="Sample Registration">
+		<menupopup>
+			<menuitem label="Register new samples" onClick='runexternal(SAMPLEREG)' />
+			<menuitem label="Assign test parameters" onClick='runexternal(ASSIGNTESTS)' />
+			<menuseparator />
+			<!-- allow user to barcode scan the sticker and find out who this sample belongs to -->
+			<menuitem label="Check sample ID" />
+		</menupopup>
+     </menu>
+	 
+ 	<menu label="Labs">
+		<menupopup>
+			<menuitem label="Folders/Jobs schedule" onClick='runexternal(FOLDERSCHEDULE)'/>
+			<menuitem label="CAO" />
+		</menupopup>
+	</menu>
+
+	<menu label="Dispatch">
+		<menupopup>
+			<menuitem label="Today destinations" onClick="runexternal(TODAYDESTINATIONS)" />
+			<menuitem label="Update status" onClick="runexternal(DISPATCHUPDATESTATUS)" />
+			<menuitem label="Dispatch scheduling" onClick="runexternal(DISPATCHSCHEDULING)"/>
+			<menuseparator />
+			<menuitem label="Customers additional address" onClick="runexternal(CUSTOMEREXTRA_ADDRESS)" />
+			<menuitem label="Dispatcher management" onClick="runexternal(DISPATCHERMANAGER)" />
+		</menupopup>
+	</menu>
+	
+    <menu label="Billing">
+        <menupopup>
+			<menuitem label="Folder/Jobs management" onClick='runexternal(FOLDERSMANAGER)' />
+			<menuseparator />
+			<menuitem label="Billing documents management" onClick='runexternal(BILLDOCSMAN)'/>
+			<menuseparator />
+			<menuitem label="Retrieve invoices by client-code(AR Code)" onClick='runexternal(BIRT_INVOICES_BY_CLIENT_CODE)' />
+			<menuitem label="Retrieve invoices by branch (HQ/JB)" onClick='runexternal(BIRT_INVOICES_BY_BRANCH)' />
+			<menuitem label="Check samples ID in Invoices (12/02/2010 backwards)" onClick='runexternal(BIRT_SAMPLES_IN_INVOICE)' />
+         </menupopup>
+     </menu>
+
+	 <menu label="Sales/Marketing">
+		<menupopup>
+		<!--
+		onClick='runexternal(QUOTATIONMODULE)'
+		onClick='runexternal(INVOICEMODULE)'
+		-->
+            <menuitem label="Quotations"  />		
+			<menuitem label="Invoices" />
+		</menupopup>
+	 </menu>
+ 
+	 <menu label="Packing/Containers">
+		<menupopup>
+			<menu label="Chiller box management">
+				<menupopup>
+					<menuitem label="Box rental" onClick='runexternal(BOX_RENTAL)' />
+					<menuitem label="New boxes" onClick='runexternal(BOX_MANAGER)' />
+				</menupopup>
+			</menu>
+			
+			<menuitem label="Containers request" onClick='runexternal(PACKING_MANAGER)' />
+		</menupopup>
+	 </menu>
+
+	<menu label="Admin">
+		<menupopup>
+			<menu label="Users management">
+				<menupopup>
+					<menuitem label="Users" onClick='runexternal(USERSETUP)'/>
+					<menuitem label="Usergroup" onClick='runexternal(USERGROUPSETUP)'/>
+					<menuseparator />
+					<menuitem label="Access setup" onClick='runexternal(USERACCESS)' />
+				</menupopup>
+			</menu>
+			
+			<menu label="Database management">
+				<menupopup>
+					<menuitem label="Job/Folders/Samples" />
+					<menuitem label="Dispatch" />
+					<menuitem label="Documents" />
+				</menupopup>
+			</menu>
+		</menupopup>
+	</menu>
+
+    <menu label="Help">
+         <menupopup>
+             <menuitem label="General help" onClick='runexternal(HELPBOX)' />
+             <menuitem label="About" onClick='runexternal(ABOUTBOX)' />
+         </menupopup>
+     </menu>
+
+ </menubar>
+
+ </div>
+
+</north>
+
+<!-- this is the content part, everything will play here. -->
+<center>
+<div>
+
+	<borderlayout width="100%" height="10000px">
+	
+	<east splittable="true" collapsible="true">
+	</east>
+
+	<center>
+		<div>
+			<hbox>
+			
+				<div width="80px">
+				<fisheyebar id="fisheyemenubar" attachEdge="center" labelEdge="center" orient="vertical"
+				style="margin-top:100px; margin-left:12px">
+
+					<fisheye image="/mirisimg/user.png" label="Address" onClick='globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", "adrpopup", "getcust=1")' />
+
+					<fisheye image="/mirisimg/browse.png" label="Documents" onClick='runexternal(BILLDOCSMAN)' />
+		
+					<fisheye image="/mirisimg/addform.png" label="Folder/Jobs" onClick='runexternal(SAMPLEREG)' />
+
+					<fisheye image="/mirisimg/manincident.png" label="Dispatch" onClick="runexternal(TODAYDESTINATIONS)" />
+
+					<fisheye image="/mirisimg/setup.png" label="To be added" />
+		
+				</fisheyebar>
+				</div>
+		
+			<div id="workbox" />
+			<div id="worksandbox" />
+			</hbox>
+			
+		</div>
+	</center>
+	
+	</borderlayout>
+</div>
+</center>
+
+<south border="none">
+<div>
+    <div id="miscwindows" />
+</div>
+</south>
+
+</borderlayout>
+
+<zscript>
+<![CDATA[
+
+    boolean somethingOpened(Div iparentdiv)
+    {
+        Component anyt = iparentdiv.getFirstChild();
+
+        retval = (anyt != null) ? true : false;
+
+        return retval;
+
+    }
+
+	// run modules in Window
+    void activateWindow(Div iparentdiv, String winfn, int imodal_flag)
+    {
+        // modal window check
+        if(imodal_flag == 1)
+        {
+            // make sure the Div has only 1 child.. nothing else.
+            if(somethingOpened(iparentdiv) == true)
+            {
+                //alert("some window already opened");
+                return;
+            }
+        }
+
+        Include newinclude = new Include();
+
+        newid = "alswind" + includeCounter;
+        includeCounter++;
+
+        newinclude.setId(newid);
+
+        includepath = winfn + "?myid=" + newid;
+
+        newinclude.setSrc(includepath);
+
+        newinclude.setParent(iparentdiv);
+    }
+	
+// actually execute the modules
+void activateModule(Object apmod)
+{
+	// make use of global counter includeCounter
+	newid = apmod.module_name + includeCounter;
+	includeCounter++;
+		
+	apfn = apmod.module_fn;
+	mydivname = (apmod.module_gui == GUI_PANEL) ? "workbox" : "miscwindows" ;
+	
+	globalActivateWindow(mydivname,apfn,newid,"from=main");
+}
+
+
+// Run other modules
+void runexternal(int whichone)
+{
+	// security checkpoint - to be coded in securityfuncs.zs
+	
+	// now run the module
+	for(i=0; i < applicationModules.length; i++)
+	{
+		if(whichone == applicationModules[i].module_num)
+		{
+			activateModule(applicationModules[i]);
+		}
+	}
+}
+
+]]>
+</zscript>
+
+</div>
+
+<!--
+</window>
+-->
+
+</zk>
+
+

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="cocmanager_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title: COC maker - create COC and allow linking later to sample-marking for real jobfolder.
+Written by: Victor Wong
+
+**NOTES**
+This module could be used by client to create COC form later
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<div width="1200px">
+<panel id="cocmanager_panel" title="Chain Of Custody (COC) Manager" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+Middle of developing this bugga.. hangon.
+
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+</zk>

@@ -1,0 +1,869 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="equipment_manager_mod"?>
+<!--
+
+Title: Equipment tracking for QC - all sorta tracking information here
+Developers			: Victor
+
+**NOTES**
+
+techvts, I store .pdf files in database. 
+so there is not much more code to show.. only the DB part: 
+
+Media media = Fileupload.get(); 
+InputStream istream = ((AMedia)media).getStreamData(); 
+String fileName = ((AMedia)media).getName(); 
+courseDAO.insertPdf(istream, fileName); 
+istream.close(); 
+
+and in the courseDAO.insertPdr(...) method I do like this: 
+
+con = ds.getConnection(); 
+stmt = con.prepareStatement("INSERT INTO material(data,file_name) VALUES (?,?)"); 
+int fileLength = istream.available(); 
+stmt.setBinaryStream(1, istream, fileLength); 
+stmt.setString(2, fileName); 
+stmt.executeUpdate(); 
+istream.close();
+
+-->
+
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/als_lookuptree.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import java.util.ArrayList;
+import java.util.List;
+import java.sql.ResultSet;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+glob_mysoftcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, QCOFFICER_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+String global_eq_location = "";
+String global_eq_origid = "";
+String global_doculink_origid = "";
+
+EQID_PREFIX = "E";
+
+String global_location_tree = "";
+
+String[] equip_category = { "Analytical instrument" , "Lab-Site equipment", "Supporting equipment" };
+String[] equip_type = { "Measurement" , "Prep" , "Digestion", "Filteration" };
+String[] equip_status = { "Active", "Retired", "Repairing", "Damaged" };
+
+String[] doculink_status = { "ACTIVE", "PENDING" , "EXPIRED" };
+
+void showmeparent(Component icompo)
+{
+	alert("parent=" + icompo.getParent().getId());
+}
+
+void hideButtons()
+{
+	newequip_btn.setVisible(false);
+	removeequip_btn.setVisible(false);
+}
+
+void showButtons()
+{
+	// group-access security check - accesslevel >=3 
+	if(check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, 3))
+	{
+		newequip_btn.setVisible(true);
+		removeequip_btn.setVisible(true);
+	}
+}
+
+void equip_detail_hideButtons()
+{
+	eq_updatedetails_btn.setVisible(false);
+
+	upload_linkingdoc_btn.setVisible(false);
+
+	updatedetails_linkingdoc_btn.setVisible(false);
+	view_linkingdoc_btn.setVisible(false);
+
+	remove_linkingdoc_btn.setVisible(false);	
+	harddelete_linkingdoc_btn.setVisible(false);
+}
+
+void equip_detail_showButtons()
+{
+	// group-access security check - accesslevel >=3 
+	if(check_UsergroupAccess(useraccessobj.origid,QCOFFICER_USERGROUP, 3))
+	{
+		eq_updatedetails_btn.setVisible(true);
+
+		upload_linkingdoc_btn.setVisible(true);
+		updatedetails_linkingdoc_btn.setVisible(true);
+		view_linkingdoc_btn.setVisible(true);
+	}
+
+	// 15/4/2010: set only admin can access delete buttons
+	if(useraccessobj.accesslevel == 9)
+	{
+		remove_linkingdoc_btn.setVisible(true);
+		harddelete_linkingdoc_btn.setVisible(true);
+	}
+}
+
+void clearDetailsInput()
+{
+	equipname_lbl.setLabel("-");
+	tb_eq_name.setValue("");
+	
+	lb_eq_category.setSelectedIndex(0);
+	lb_eq_type.setSelectedIndex(0);
+	
+	lb_eq_status.setSelectedIndex(0);
+	tb_extranotes.setValue("");
+
+}
+
+Object getEquipmentRec(String iorigid)
+{
+	retval = null;
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlstat = "select * from Equipments where origid=" + iorigid;
+	retval = sql.firstRow(sqlstat);
+	
+	sql.close();
+	
+	return retval;
+
+}
+
+Object getLinkingDocumentRec(String iorigid)
+{
+	retval = null;
+	
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == NULL) return;
+	
+	sqlstat = "select * from DocumentTable where origid=" + iorigid;
+	retval = ds_sql.firstRow(sqlstat);
+	
+	ds_sql.close();
+	
+	return retval;
+}
+
+class documentLinksListbox_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		eorigid = getListcellItemLabel(lbitem, 0);
+		
+		global_doculink_origid = eorigid; // save to global so everyone can play
+
+		docrec = getLinkingDocumentRec(eorigid);
+
+		update_file_title.setValue(docrec.get("file_title"));
+		update_file_description.setValue(docrec.get("file_description"));
+
+		matchListboxItems(update_docu_status, docrec.get("docu_status"));
+		
+		// check owner of this document link - if not owner, disable "Update details" button
+		cusername = useraccessobj.username;
+
+		updatedetails_linkingdoc_btn.setDisabled(true);
+
+		if(cusername.equals(docrec.get("username")))
+			updatedetails_linkingdoc_btn.setDisabled(false);
+
+		if(cusername.equals("padmin") || cusername.equals("toymaker"))
+			updatedetails_linkingdoc_btn.setDisabled(false);
+
+	}
+}
+
+Object[] documentLinks_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Title",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("D.Created",true),
+	new listboxHeaderObj("Username",true)
+};
+
+// populate the linking documents listbox
+void populateDocumentLinks(String ieqid)
+{
+	//Listbox newlb = makeDocumentLinks_Listbox(linkingdocs_div); // div def in UI
+	
+	Listbox newlb = makeVWListbox(linkingdocs_div, documentLinks_lb_headers, "doculinks_lb", 5);
+	
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == null) return;
+
+	doculink_str = EQID_PREFIX + ieqid;
+	
+	deleted_str = " and deleted=0";
+	branch_str = " and branch='" + useraccessobj.branch + "'";
+	
+	// check if admin login - able to view deleted-flag items and all documents
+	if(useraccessobj.accesslevel == 9)
+	{
+		deleted_str = "";
+		branch_str = "";
+	}
+
+	sqlst2 = "select * from DocumentTable where docu_link='" + doculink_str + "'" + branch_str + deleted_str;
+	doctab_recs = ds_sql.rows(sqlst2);
+	
+	ds_sql.close();
+	
+	if(doctab_recs == null || doctab_recs.size() == 0) return;
+	
+	newlb.addEventListener("onSelect", new documentLinksListbox_Listener()); // onSelect drill-in
+	newlb.setRows(10);
+	
+	String[] strarray = new String[5];
+	
+	for(doc1rec : doctab_recs)
+	{
+		strarray[0] = doc1rec.get("origid").toString();
+	
+		filetitle = doc1rec.get("file_title");
+		
+		if(doc1rec.get("deleted") == 1)
+			filetitle = filetitle + " [del]";
+		
+		strarray[1] = filetitle;
+		strarray[2] = doc1rec.get("docu_status");
+		strarray[3] = doc1rec.get("datecreated").toString().substring(0,10);
+		strarray[4] = doc1rec.get("username");
+		insertListItems(newlb,strarray,"false");
+	}
+
+}
+
+class equiplistbox_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		
+		eorigid = getListcellItemLabel(lbitem, 0);
+		eqrec = getEquipmentRec(eorigid);
+		
+		if(eqrec == null) return;
+		
+		eqname = checkEmptyString(eqrec.get("EQ_name"));
+		equipname_lbl.setLabel(eqname);
+		
+		global_eq_origid = eorigid; // save eq origid into global-var
+		
+		// populate equip details input
+		tb_eq_name.setValue(eqrec.get("EQ_name"));
+		tb_extranotes.setValue(eqrec.get("extranotes"));
+
+		matchListboxItems(lb_eq_category, eqrec.get("EQ_category"));
+		matchListboxItems(lb_eq_type, eqrec.get("EQ_type"));
+		matchListboxItems(lb_eq_status, eqrec.get("EQ_status"));
+		
+		// show Equipment Details buttons
+		equip_detail_showButtons();
+		
+		// show document-links
+		populateDocumentLinks(global_eq_origid);
+		
+		// clear linking-document origid..
+		global_doculink_origid = "";
+	}
+}
+
+Object[] equipments_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("EQID",true),
+	new listboxHeaderObj("Equip Name",true),
+	new listboxHeaderObj("Type",true),
+	new listboxHeaderObj("Category",true),
+	new listboxHeaderObj("Status",true)
+};
+
+// Show equips at selected location - will populate a listbox
+void showEquipments(Tree wTree)
+{
+	// clear linking-document origid and listbox..
+	global_doculink_origid = "";
+	// makeDocumentLinks_Listbox(linkingdocs_div); 
+	
+	makeVWListbox(linkingdocs_div, documentLinks_lb_headers, "doculinks_lb", 5);
+	
+	equip_detail_hideButtons();
+
+	itreeitm = wTree.getSelectedItem();
+		
+	// alert(itreeitm.getChildren());
+	
+	ilocation = getTreecellItemLabel(itreeitm, 0);
+	if(ilocation.equals("")) return;
+	
+	global_eq_location = ilocation; // save eq location to global var
+	
+	ilocationdesc = getTreecellItemLabel(itreeitm, 1); // get location description from tree-branch
+	equip_location_lbl.setValue("Location: " + ilocationdesc);
+	
+	// Listbox newlb = makeEquipments_Listbox(equipments_div);
+	Listbox newlb = makeVWListbox(equipments_div, equipments_lb_headers, "equips_lb", 28);
+	
+	clearDetailsInput();
+	global_eq_origid = "";
+	
+	showButtons();
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "select * from Equipments where location_id='" + ilocation + "' and deleted=0";
+	eqrecs = sql.rows(sqlst);
+
+	sql.close();
+
+	// no equip recs, just return
+	if(eqrecs == null || eqrecs.size() == 0)
+	{
+		newlb.setRows(10);
+		return;
+	}
+	
+	newlb.addEventListener("onSelect", new equiplistbox_Listener()); // onSelect listener to drill-in
+
+	String[] strarray = new String[6];
+	
+	for( eqsatu : eqrecs)
+	{
+		strarray[0] = eqsatu.get("origid").toString();
+		strarray[1] = EQID_PREFIX + strarray[0]; // equipment id to show to user
+
+		strarray[2] = checkEmptyString(eqsatu.get("EQ_name"));
+		strarray[3] = checkEmptyString(eqsatu.get("EQ_type"));
+		
+		strarray[4] = checkEmptyString(eqsatu.get("EQ_category"));
+		strarray[5] = checkEmptyString(eqsatu.get("EQ_status"));
+
+		insertListItems(newlb,strarray,"false");
+	}
+
+}
+
+// Create a new entry in the Equipment table, make use of location -> global_eq_location .. important to keep track on things
+void newEquipment()
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	mybranch = useraccessobj.branch;
+	
+	sqlstat = "insert into Equipments values ( '','','','', '" + mybranch +"' , '" + global_eq_location + "', '', '', 0, '', 0, '', '', '', '','' )";
+	sql.execute(sqlstat);
+	
+	sql.close();
+	
+	// refresh equipments listbox
+	showEquipments(location_tree);
+}
+
+void removeEquipment()
+{
+	if (Messagebox.show("Remove this equipment..", "Are you sure?", 
+	Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+	
+		sqlst = "update Equipments set deleted=1 where origid=" + global_eq_origid;
+		sql.execute(sqlst);
+
+		// alert(sqlst);
+
+		sql.close();
+
+		// refresh equipments listbox
+		showEquipments(location_tree);
+
+		clearDetailsInput();
+		global_eq_origid = "";
+	}
+
+}
+
+void updateEquipmentDetails()
+{
+	if(global_eq_origid.equals("")) return;
+	if(global_eq_location.equals("")) return;
+
+	ieqname = replaceSingleQuotes(tb_eq_name.getValue());
+	ieqcategory = lb_eq_category.getSelectedItem().getLabel();
+
+	ieqtype = lb_eq_type.getSelectedItem().getLabel();
+	ieqstatus = lb_eq_status.getSelectedItem().getLabel();
+
+	ieqextranotes = replaceSingleQuotes(tb_extranotes.getValue());
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlstat = "update Equipments set eq_name='" + ieqname + "', eq_category='" + ieqcategory + "', eq_type='" + ieqtype + "', eq_status='" + ieqstatus + "', " +
+		"extranotes='" + ieqextranotes + "' where origid=" + global_eq_origid;
+		
+	sql.execute(sqlstat);
+	
+	sql.close();
+
+	// refresh
+	showEquipments(location_tree);
+	
+	clearDetailsInput();
+	global_eq_origid = "";
+
+}
+
+void uploadLinkingDocument()
+{
+	uploaded_file = Fileupload.get(true);
+	
+	if(uploaded_file == null) return;
+	
+	formatstr = uploaded_file.getFormat();
+	contenttype = uploaded_file.getContentType();
+	ufilename = uploaded_file.getName();
+	
+	Object uploaded_data;
+	int fileLength = 0;
+	
+	f_inmemory = uploaded_file.inMemory();
+	f_isbinary = uploaded_file.isBinary();
+	
+	if(f_inmemory && f_isbinary)
+	{
+		uploaded_data = uploaded_file.getByteData();
+	}
+	else
+	{
+		uploaded_data = uploaded_file.getStreamData();
+		fileLength = uploaded_data.available(); 
+	}
+	
+	if(uploaded_data == null)
+	{
+		showMessageBox("Invalid file-type uploaded..");
+		return;
+	}
+	
+	// alert("formatstr: " + formatstr + " | contenttype: " + contenttype + " | filename: " + ufilename);
+		
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == NULL) return;
+	
+	thecon = ds_sql.getConnection();
+	
+	todaydate = getDateFromDatebox(hiddendatebox);
+	
+	ftitle = fileupl_file_title.getValue();
+	fdesc = fileupl_file_description.getValue();
+	
+	doculink_str = EQID_PREFIX + global_eq_origid;
+	docustatus_str = fileupl_docu_status.getSelectedItem().getLabel();
+	
+	pstmt = thecon.prepareStatement("insert into DocumentTable(file_title,file_description,docu_link,docu_status,username,datecreated,version," +
+		"file_name,file_type,file_extension,file_data,deleted,branch) values (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+		
+	pstmt.setString(1, ftitle);
+	pstmt.setString(2, fdesc);
+	pstmt.setString(3, doculink_str);
+	pstmt.setString(4, docustatus_str);
+	pstmt.setString(5,useraccessobj.username);
+	pstmt.setString(6,todaydate);
+	pstmt.setInt(7,1);
+	pstmt.setString(8,ufilename);
+	pstmt.setString(9,contenttype);
+	pstmt.setString(10,formatstr);
+	
+	if(f_inmemory && f_isbinary)
+		pstmt.setBytes(11, uploaded_data);
+	else
+		pstmt.setBinaryStream(11, uploaded_data, fileLength);
+		
+	pstmt.setInt(12,0); // deleted flag
+	pstmt.setString(13, useraccessobj.branch);
+	
+	pstmt.executeUpdate();
+	
+	ds_sql.close();
+	
+	populateDocumentLinks(global_eq_origid); // refresh linking-documents listbox
+
+}
+
+// clear pop-up input boxes
+void clearUploadDetails_Input()
+{
+	fileupl_file_title.setValue("");
+	fileupl_file_description.setValue("");
+	fileupl_docu_status.setSelectedIndex(0);
+	
+	uploadFileDetails_Popup.open(upload_linkingdoc_btn);
+}
+
+void updateLinkingDocDetails()
+{
+	// if(doculinks_lb.getSelectedIndex() == -1 ) return;
+	
+	if(global_doculink_origid.equals("")) return;
+	
+	ifiletitle = update_file_title.getValue();
+	ifiledesc = update_file_description.getValue();
+	idocustat = update_docu_status.getSelectedItem().getLabel();
+	
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == NULL) return;
+	
+	thecon = ds_sql.getConnection();
+	pstmt = thecon.prepareStatement("update DocumentTable set file_title=? , file_description=? , docu_status = ? where origid=?");
+
+	pstmt.setString(1,ifiletitle);
+	pstmt.setString(2,ifiledesc);
+	pstmt.setString(3,idocustat);
+	pstmt.setString(4,global_doculink_origid);
+	
+	pstmt.executeUpdate();
+
+	ds_sql.close();
+	
+	populateDocumentLinks(global_eq_origid); // refresh linking-documents listbox
+	
+	updateFileDetails_Popup.close();
+
+}
+
+// show the popup
+void updateFileDetails()
+{
+	updateFileDetails_Popup.open(updatedetails_linkingdoc_btn);
+}
+
+void viewLinkingDocument()
+{
+	if(doculinks_lb.getSelectedIndex() == -1 ) return;
+	
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	
+	theparam = "docid=" + eorigid;
+	
+	uniqid = makeRandomId("vdoc");
+	globalActivateWindow("miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+// soft-delete , toggle Deleted flag
+void toggleDeletedFlag_LinkingDocument()
+{
+	if(doculinks_lb.getSelectedIndex() == -1 ) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	
+	docrec = getLinkingDocumentRec(eorigid);
+	if(docrec == null) return;
+	
+	delflag = (docrec.get("deleted") == 0) ? "1" : "0";
+	
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == NULL) return;
+	
+	sqlst = "update DocumentTable set deleted=" + delflag + " where origid=" + eorigid;
+	ds_sql.execute(sqlst);
+	
+	ds_sql.close();
+	
+	populateDocumentLinks(global_eq_origid); // refresh linking-documents listbox
+}
+
+// hard delete
+void hardDelete_LinkingDocument()
+{
+	if(doculinks_lb.getSelectedIndex() == -1 ) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	
+	if (Messagebox.show("Hard delete this document..", "Are you sure?", 
+	Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		ds_sql = als_DocumentStorage();
+		if(ds_sql == NULL) return;
+
+		sqlst = "delete from DocumentTable where origid=" + eorigid;
+		ds_sql.execute(sqlst);
+
+		ds_sql.close();
+		
+		populateDocumentLinks(global_eq_origid); // refresh linking-documents listbox
+	}
+
+}
+
+]]>
+</zscript>
+
+<!-- to show input boxes to get details for uploaded file popup -->
+<popup id="uploadFileDetails_Popup">
+
+<groupbox>
+<caption label="Upload linking document" />
+	
+	<hbox>
+		<label value="Title" />
+		<separator width="1px" />
+		<textbox id="fileupl_file_title" width="200px" />
+	</hbox>
+	
+	<hbox>
+		<label value="Desc" />
+		<textbox id="fileupl_file_description" multiline="true" height="60px" width="200px" />
+	</hbox>
+	
+	<hbox>
+		<label value="Status" />
+		<listbox id="fileupl_docu_status" mold="select" rows="1" style="font-size:9px" />
+		
+	</hbox>
+	
+	<separator width="5px" />
+		
+	<hbox>
+		<button label="Select file" onClick="uploadLinkingDocument()" />
+		<button label="Close" onClick="uploadFileDetails_Popup.close()" />
+	</hbox>
+
+</groupbox>
+
+</popup>
+<!-- end of popup -->
+
+<!-- to show input boxes to update details for linking-document popup -->
+<popup id="updateFileDetails_Popup">
+
+<groupbox>
+<caption label="File details" />
+	<hbox>
+		<label value="Title" />
+		<separator width="3px" />
+		<textbox id="update_file_title" width="200px" />
+	</hbox>
+
+	<hbox>
+		<label value="Desc" />
+		<textbox id="update_file_description" multiline="true" height="60px" width="200px" />
+	</hbox>
+
+	<hbox>
+		<label value="Status" />
+		<listbox id="update_docu_status" mold="select" rows="1" style="font-size:9px" />
+	</hbox>
+	
+	<separator width="5px" />
+		
+	<hbox>
+		<button label="Update" onClick="updateLinkingDocDetails()" />
+		<button label="Close" onClick="updateFileDetails_Popup.close()" />
+	</hbox>
+	
+</groupbox>
+
+</popup>
+<!-- end of popup -->
+
+<div width="1100px">
+<panel id="equipment_manager_panel" title="Equipment Manager" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="500px">
+	<west title="Locations" size="28%" splittable="true" collapsible="true">
+	<div>
+		<tree id="location_tree" zclass="z-dottree" rows="20" onSelect="showEquipments(location_tree)" >
+			<treecols>
+				<treecol label="Where" />
+				<treecol label="Description" />
+			</treecols>
+		</tree>
+	</div>
+	</west>
+	
+	<center>
+		<borderlayout height="500px">
+			<west title="Equipments" size="55%" splittable="true" collapsible="true">
+			<div>
+				<label id="equip_location_lbl" />
+				<separator height="5px" />
+				
+				<div id="equipments_div" />
+
+				<separator height="5px" />
+
+				<hbox>
+					<button id="newequip_btn" label="New equipment" onClick="newEquipment()" />
+					<button id="removeequip_btn" label="Remove equip" onClick="removeEquipment()" />
+				</hbox>
+
+			</div>
+			</west>
+			
+			<center title="Equipment details">
+				<div>
+					<groupbox>
+						<caption id="equipname_lbl" />
+				
+						<hbox>
+							<label value="Name" />
+							<textbox id="tb_eq_name" width="260px" />
+						</hbox>
+						<separator height="3px" />
+						
+						<hbox>
+							<label value="Category" />
+							<listbox id="lb_eq_category" mold="select" rows="1" style="font-size:9px" />
+							
+							<label value="Type" />
+							<listbox id="lb_eq_type" mold="select" rows="1" style="font-size:9px" />
+						</hbox>
+						
+						<separator height="3px" />
+						
+						<hbox>
+							<label value="Status" />
+							<separator width="13px" />
+							<listbox id="lb_eq_status" mold="select" rows="1" style="font-size:9px" />
+						</hbox>
+						
+						<vbox>
+							<label value="Notes" />
+							<textbox id="tb_extranotes" multiline="true" height="60px" width="320px" />
+						</vbox>
+						
+					</groupbox>
+					
+					<separator height="5px" />
+
+					<hbox>
+						<button id="eq_updatedetails_btn" label="Update details"  onClick="updateEquipmentDetails()" />
+					</hbox>
+
+					<separator height="3px" />
+
+					<groupbox>
+						<caption label="Linking documents" />
+						
+						<div id="linkingdocs_div" />
+
+					</groupbox>
+
+					<hbox>
+						<button id="upload_linkingdoc_btn" label="Upload document" onClick="clearUploadDetails_Input()"  />
+						<button id="updatedetails_linkingdoc_btn" label="Update details" onClick="updateFileDetails()" />
+					</hbox>
+					
+					<hbox>
+						<button id="view_linkingdoc_btn" label="View document" onClick="viewLinkingDocument()" />
+						<button id="remove_linkingdoc_btn" label="Un/delete" onClick="toggleDeletedFlag_LinkingDocument()" />
+						<button id="harddelete_linkingdoc_btn" label="Hard delete" onClick="hardDelete_LinkingDocument()" />
+					</hbox>
+
+				</div>
+			</center>
+			
+		</borderlayout>
+	</center>
+	
+	<south>
+	<div>
+	</div>
+	</south>
+
+</borderlayout>
+
+</div>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+
+setTodayDatebox(hiddendatebox);
+
+// set branch for tree-lookup
+// LOCATIONS_TREE_SHAHALAM = "LOCATIONS";
+// LOCATIONS_TREE_JB = "JBLOCATIONS";
+// LOCATIONS_TREE_KK = "KKLOCATIONS";
+// if admin login with branch=ALL, will only see shah-alam locations
+
+global_location_tree = LOCATIONS_TREE_SHAHALAM; // always default to SA
+mybranch = useraccessobj.branch;
+
+if(mybranch.equals("JB")) global_location_tree = LOCATIONS_TREE_JB;
+if(mybranch.equals("KK")) global_location_tree = LOCATIONS_TREE_KK;
+
+showLookupTree(global_location_tree, location_tree);
+
+populateDropdownListbox(lb_eq_category, equip_category);
+populateDropdownListbox(lb_eq_type, equip_type);
+populateDropdownListbox(lb_eq_status, equip_status);
+
+populateDropdownListbox(fileupl_docu_status, doculink_status);
+populateDropdownListbox(update_docu_status, doculink_status);
+
+hideButtons();
+equip_detail_hideButtons();
+
+</zscript>
+
+</zk>
+

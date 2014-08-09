@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="collab_messages_module"?>
+<!--
+
+Version				: Messages
+Coding began date	: 21/6/2010
+Developers			: Nurul
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+
+<zscript>
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+MODULE_DBNAME = "Collab_messages";
+
+String[] dd_boxstatus = { "Normal", "Urgent" };
+
+
+	
+</zscript>
+
+<window id="collab_messages_win" width="430px" height="350px" title="Messages"
+	position="center" mode="overlapped" border="normal" closable="true" 
+    onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+
+<vbox>
+
+<hbox>
+
+<groupbox id="collab_message">
+				<caption label="Send messages" />
+					<separator width="20px" />
+					<vbox>
+					<hbox>
+						<separator width="8px" />
+						<label value="From :" style="font-size:9px" />
+						<textbox id="form" width="200px" disabled="true" />
+					</hbox>
+					
+					<hbox>
+						<separator width="20px" />
+						<label value="To :" style="font-size:9px" />
+						<listbox id="to" mold="select" style="font-size:9px" />
+					
+						<label value="Priority :" style="font-size:9px" />
+						<listbox id="priority" mold="select" />
+						
+					</hbox>
+					</vbox>
+					<separator width="10px" />
+					<vbox>
+					<hbox>
+						<label value="Subject :" style="font-size:9px" />
+						<textbox id="subject" width="200px" style="font-size:9px" />
+					</hbox>
+					</vbox>
+					<separator width="20px" />
+					<vbox>
+					<hbox>
+						<label value="Message" style="font-size:9px" />
+					</hbox>
+					</vbox>
+					<separator width="20px" />
+					<vbox>
+					<hbox>
+						<textbox id="messeages" multiline="true" height="80px" width="350px" style="font-size:9px" />
+						
+					</hbox>
+					</vbox>
+					
+					<separator height="5px" />
+					<hbox>
+						<button label="Send" style="font-size:9px" onClick="()" />
+						<button label="Clear fields" style="font-size:9px" onClick="()" />
+						<button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+					</hbox>
+			</groupbox>
+
+</hbox>
+
+</vbox>
+
+</div>
+</window>
+
+</zk>

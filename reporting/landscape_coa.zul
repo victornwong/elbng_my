@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="potrait_single_coa"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: Landscape COA - folder selecter and launcher
+Written by	: Victor
+
+*NOTES*
+2/11/2010: added scapetype - pass from main as run parameter. 1=lanscape test x sampleid, 2=sampleid x test
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+landscape_type = Executions.getCurrent().getParameter("scapetype");
+wintitle = Executions.getCurrent().getParameter("wintitle");
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+WITHLOGO_FLAG = "YES";
+WITHOUTLOGO_FLAG = "NO";
+INCOMPLETERESULTS_COA = "INCOMP";
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// Useful database util func
+// ifolderno = just the origid, not the whole string
+// return false if number of results no equal to number of tests in samples
+/*
+boolean checkForComplete_Results(String ifolderno)
+{
+	retval = false;
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstm = "select jobsamples.origid as jsorigid, jobtestparameters.origid as jtporigid, " +
+		"jobtestparameters.mysoftcode, elb_chemistry_results.chemcode from " +
+		"jobsamples left join jobtestparameters " +
+		"on jobsamples.origid = jobtestparameters.jobsamples_id " +
+		"left join elb_chemistry_results " +
+		"on elb_chemistry_results.mysoftcode = jobtestparameters.mysoftcode " +
+		"where jobsamples.jobfolders_id=" + ifolderno +
+		" and jobsamples.deleted = 0";
+		
+	samprecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(samprecs.size() > 0)
+	{
+		mecount = 0;
+		
+		for(smrec : samprecs)
+		{
+			if(smrec.get("chemcode") != null)
+				mecount++;
+		}
+		
+		if(mecount == samprecs.size())
+			retval = true;
+	}
+	return retval;
+}
+*/
+
+void reportPrintDriller(String ilogono)
+{
+	if(!check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+
+	jfold = folderjobs_lb.getSelectedItem().getLabel();
+	extfold = extractFolderNo(jfold);
+	extfold = Integer.parseInt(extfold).toString();
+	
+	// 1/7/2010: check if there're any results, otherwise BIRT won't run proper - no resultset error
+	/*
+	if(checkForComplete_Results(extfold) == false)
+	{
+		showMessageBox("Incomplete results for this folder - generating empty template");
+		ilogono = INCOMPLETERESULTS_COA;
+	}
+	*/
+	
+	signatorr = signator_lb.getSelectedItem().getLabel();
+	
+	theparam = "folder_no=" + extfold + "&signator=" + signatorr + "&scapetype=" + landscape_type;
+	uniqwindowid = makeRandomId("lsco");
+	globalActivateWindow("miscwindows","reporting/print_landscape_coa.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+	}
+}
+
+// Do the search and populate listbox
+void startFolderJobsSearch(Datebox startd, Datebox endd, Textbox icustomer_tb)
+{
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("TAT",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Samples",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	cnm = icustomer_tb.getValue();
+	
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	// 11/3/2010: change folderstatus = RELEASED later when results/release module is done
+	//sqlstatem = "select top 510 * from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	//" and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "') order by datecreated desc";
+	sqlstatem = "select top 200 jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.folderno_str," + 
+	"jobfolders.duedate, jobfolders.tat, jobfolders.branch, jobfolders.labfolderstatus from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 order by datecreated desc";
+
+	// 25/3/2010: new select cmd to search based on s.date, e.date and customer-name - req by Zainab
+	if(!cnm.equals(""))
+	{
+		xcnm = replaceSingleQuotes(cnm); // play safe
+		sqlstatem = "select jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus," + 
+			"jobfolders.duedate, jobfolders.tat, jobfolders.branch, jobfolders.labfolderstatus, jobfolders.folderno_str, " + 
+			"customer.ar_code,customer.customer_name " +
+			"from jobfolders left join customer " +
+			"on customer.ar_code = jobfolders.ar_code where " +
+			"jobfolders.datecreated between '" + sdate + "' and '" + edate + "'" + 
+			"and customer.customer_name like '%" + xcnm + "%' " +
+			"and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "')";
+	}
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	reccount = tlist.size();
+
+	Listbox newlb = makeVWListboxWithFooter(folders_searchdiv, folders_lb_headers, "folderjobs_lb", 10, reccount.toString() + " folders");
+	foldersearch_gb.setVisible(true);
+	if(reccount > 10) newlb.setRows(25);
+	if(reccount == 0) return;
+	//newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	total_numsamples = 0;
+
+	for(ilist : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+		ifolderno = ilist.get("origid");
+		folderbranch = ilist.get("branch");
+		folderstr = ilist.get("folderno_str");
+		kabom.add(folderstr);
+
+		kabom.add(ilist.get("datecreated").toString().substring(0,10));
+
+		kabom.add(ilist.get("tat") + " day(s)");
+		kabom.add(ilist.get("duedate").toString().substring(0,10));
+
+		// 27/2/2010: get number of samples for this folder
+		numsamples = getNumberOfSamples_InFolder(ifolderno);
+		kabom.add(numsamples.toString());
+
+		total_numsamples = total_numsamples + numsamples;
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = ilist.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			icompanyname = getCompanyName(iar_code);
+
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				csrec = getCashSalesCustomerInfo_Rec(folderstr); // get rec based on folder no
+				icompanyname = "CshAct: Undefined";
+				if(csrec != null) icompanyname = "CshAct: " + csrec.get("customer_name");
+			}
+		}
+
+		kabom.add(icompanyname);
+		kabom.add(ilist.get("folderstatus"));
+		kabom.add(ilist.get("branch"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+	}
+
+	// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+	numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+
+} // end of startFolderJobsSearch()
+
+void doViewDoculinkPopup()
+{
+	// make sure we've some sampleid selected before showing the worksheet list
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	foldern = folderjobs_lb.getSelectedItem().getLabel();
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+void viewFolderDetails_clicker()
+{
+	if(!check_ListboxExist_SelectItem(folders_searchdiv, "folderjobs_lb")) return;
+	ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+	theparam = "folderno=" + ifolderno;
+	uniqwindowid = makeRandomId("vfld");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<div width="1200px">
+<panel id="landscape_coa_panel" title="COA - Landscape" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<groupbox mold="3d" style="padding:3px" >
+<caption label="Search parameters" />
+<hbox>
+	<label value="Start date" style="font-size:9px" />
+	<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+	<separator width="5px"/>
+	<label value="End date" style="font-size:9px" />
+	<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+	<button label="Search/Refresh" style="font-size:9px" onClick="startFolderJobsSearch(startdate,enddate,customer_tb)" />
+</hbox>
+<hbox>
+	<label value="Customer" style="font-size:9px" />
+	<textbox id="customer_tb" width="220px" style="font-size:9px" />
+</hbox>
+</groupbox>
+
+<!-- search results box -->
+<groupbox id="foldersearch_gb" mold="3d" width="100%" style="padding:3px" visible="false" >
+	<caption label="Folders found.." />
+	<hbox>
+		<button label="Folder details" style="font-size:9px" onClick="viewFolderDetails_clicker()" />
+		<button id="viewdoculinks_btn" label="View COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+		<separator width="10px" />
+		<label value="Signator" style="font-size:9px" />
+		<listbox id="signator_lb" mold="select" style="font-size:9px" />
+		<button label="Generate COA template" style="font-size:9px" onClick="reportPrintDriller(WITHLOGO_FLAG)" />
+		<!-- <button label="COA template w/out logo" style="font-size:9px" onClick="generateCOA_clicker(WITHOUTLOGO_FLAG)" /> -->
+	</hbox>
+	<separator height="3px" />
+	<div id="folders_searchdiv" />
+	<separator height="3px" />
+	<label id="numofsamples_lbl" style="font-size:9px" />
+</groupbox>
+
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+populateDropdownListbox(signator_lb,coa_signatories); // coa_signatories def in alsglobaldefs.zs
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+paneltitle = "COA - Landscape : Type 1 (Tests x Samples)";
+if(wintitle.equals("2")) paneltitle = "COA - Landscape : Type 2 (Samples x Tests)";
+landscape_coa_panel.setTitle(paneltitle);
+
+// startFolderJobsSearch(startdate,enddate,customer_tb);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

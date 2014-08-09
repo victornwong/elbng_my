@@ -1,0 +1,589 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="foldertagger_asma_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title: Folder Tagger
+Written by: Victor Wong
+Date started: 10/09/2011
+
+**NOTES**
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+EASTSIDE = 2;
+WESTSIDE = 1;
+
+ws_last_showfolder_type = 0;
+es_last_showfolder_type = 0;
+
+es_selected_folder = "";
+es_selected_origid = "";
+ws_selected_folder = "";
+ws_selected_origid = "";
+
+old_ws_folder = "";
+old_es_folder = "";
+
+ws_selected_arcode = "";
+es_selected_arcode = "";
+
+Object[] folderslist_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("ASMA-ID",true),
+	new listboxHeaderObj("Station",true),
+	new listboxHeaderObj("S.Mark",true),
+	new listboxHeaderObj("Tagged",true),
+};
+
+// iorigid: folder origid, iside: 1=west, 2=east
+void showASMAStation(String iorigid, int iside)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select top 3 js.asma_id,js.asma_station from jobsamples js left join jobfolders jf on js.jobfolders_id = jf.origid " +
+	"where jf.origid=" + iorigid + " order by js.origid";
+	therecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(therecs.size() == 0) { sql.close(); return; }
+
+	fasmaid = "";
+	fasmastat = "";
+	showasmastuff = false;
+
+	if(iside == WESTSIDE)
+	{
+		ws_asma_id.setValue("");
+		ws_asma_station.setValue("");
+	}
+	else
+	{
+		es_asma_id.setValue("");
+		es_asma_station.setValue("");	
+	}
+
+	for(dpi : therecs)
+	{
+		fasmaid = kiboo.checkNullString(dpi.get("asma_id"));
+		fasmastat = kiboo.checkNullString(dpi.get("asma_station"));
+		if(!fasmaid.equals("") && !fasmastat.equals(""))
+		{
+			showasmastuff = true;
+			break;
+		}
+	}
+
+	rowstyle = "background:#ffffff";
+
+	if(iside == WESTSIDE)
+	{
+		if(showasmastuff)
+		{
+			ws_asma_id.setValue(fasmaid);
+			ws_asma_station.setValue(fasmastat);
+		}
+		else
+			rowstyle = "background:#ee2222";
+
+		ws_asmastuff_row.setStyle(rowstyle);
+		ws_asmastuff.setVisible(true);
+	}
+	else
+	{
+		if(showasmastuff)
+		{
+			es_asma_id.setValue(fasmaid);
+			es_asma_station.setValue(fasmastat);
+		}
+		else
+			rowstyle = "background:#ee2222";
+
+		es_asmastuff_row.setStyle(rowstyle);
+		es_asmastuff.setVisible(true);
+	}
+}
+
+// onSelect for showFoldersRad(int iside, int itype)
+class folderslb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		ws_selitem = null;
+		es_selitem = null;
+
+		if(ws_folders_holder.getFellowIfAny("wsfolders_lb") != null) ws_selitem = wsfolders_lb.getSelectedItem();
+		if(es_folders_holder.getFellowIfAny("esfolders_lb") != null) es_selitem = esfolders_lb.getSelectedItem();
+		
+		if(ws_selitem != null)
+		{
+			ws_selected_folder = lbhand.getListcellItemLabel(ws_selitem,1);
+			ws_selected_origid = lbhand.getListcellItemLabel(ws_selitem,0);
+			ws_selected_arcode = lbhand.getListcellItemLabel(ws_selitem,3);
+		}
+		
+		if(es_selitem != null)
+		{
+			es_selected_folder = lbhand.getListcellItemLabel(es_selitem,1);
+			es_selected_origid = lbhand.getListcellItemLabel(es_selitem,0);
+			es_selected_arcode = lbhand.getListcellItemLabel(es_selitem,3);
+		}
+		
+		if(!old_ws_folder.equals(ws_selected_folder))
+		{
+			showDocumentsList(1,ws_selected_folder);
+			old_ws_folder = ws_selected_folder;
+		}
+		
+		if(!old_es_folder.equals(es_selected_folder))
+		{
+			showDocumentsList(2,es_selected_folder);
+			old_es_folder = es_selected_folder;
+		}
+		
+		// check if ASMA's - show sample-id and station
+
+		ws_asmastuff.setVisible(false); // always hide first
+		es_asmastuff.setVisible(false);
+
+		if(es_selected_arcode.equals("300A/008")) showASMAStation(es_selected_origid,EASTSIDE);
+		if(ws_selected_arcode.equals("300A/008")) showASMAStation(ws_selected_origid,WESTSIDE);
+
+		/*kks = ws_selected_folder + "::" + ws_selected_origid + " " + es_selected_folder + "::" + es_selected_origid;
+		alert(kks);
+		*/
+	}
+}
+
+// 10/09/2011: New list folders thang
+// iside: 1=westside, 2=eastside
+// itype: 1=by date, 2=search text, 3=folder no
+void showFoldersRad(int iside, int itype)
+{
+	// reset vars
+	if(iside == WESTSIDE)
+	{
+		ws_last_showfolder_type = itype;
+		ws_selected_folder = "";
+		ws_selected_origid = "";
+		old_ws_folder = "";
+		ws_asmastuff.setVisible(false);
+	}
+	else
+	{
+		es_last_showfolder_type = itype;
+		es_selected_folder = "";
+		es_selected_origid = "";
+		old_es_folder = "";
+		es_asmastuff.setVisible(false);
+	}
+
+	srchstr = kiboo.replaceSingleQuotes(ws_search.getValue());
+	sdate = kiboo.getDateFromDatebox(ws_startdate);
+	edate = kiboo.getDateFromDatebox(ws_enddate);
+	foldernum = kiboo.replaceSingleQuotes(ws_folder_search.getValue());
+
+	if(iside == EASTSIDE)
+	{
+		srchstr = kiboo.replaceSingleQuotes(es_search.getValue());
+		sdate = kiboo.getDateFromDatebox(es_startdate);
+		edate = kiboo.getDateFromDatebox(es_enddate);
+		foldernum = kiboo.replaceSingleQuotes(es_folder_search.getValue());
+	}
+
+	wopbranch = (iside == WESTSIDE) ? ws_branch.getSelectedItem().getLabel() : es_branch.getSelectedItem().getLabel();
+	branchstr = "and jf.branch='" + wopbranch + "' ";
+	if(wopbranch.equals("ALL")) branchstr = "";
+
+	divholder = (iside == WESTSIDE) ? ws_folders_holder : es_folders_holder;
+	lbidname = (iside == WESTSIDE) ? "wsfolders_lb" : "esfolders_lb";
+
+	Listbox newlb = lbhand.makeVWListbox(divholder, folderslist_headers, lbidname, 5);
+	
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select top 200 jf.origid, jf.folderno_str, jf.datecreated, jf.ar_code, jf.tagfolder, " + 
+	"customer.customer_name, cashsales_customerinfo.customer_name as cash_customer from jobfolders jf " + 
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo on cashsales_customerinfo.folderno_str = jf.folderno_str " +
+	"where jf.datecreated between '" + sdate + "' and '" + edate + "' " +
+	"and jf.ar_code='300A/008 ' " +
+	"and jf.deleted=0 " + branchstr;
+
+	otherfilter = "";
+
+	switch(itype)
+	{
+		case 2:
+			otherfilter = "and (customer.customer_name like '%" + srchstr + "%' or jf.ar_code like '%" + srchstr + "%') ";
+			break;
+			
+		case 3:
+			otherfilter = "and jf.folderno_str like '%" + foldernum + "%' ";
+			break;
+	}
+	
+	sqlstm = sqlstm + otherfilter + " order by jf.origid";
+	therows = sql.rows(sqlstm);
+
+	if(therows.size() == 0) { sql.close(); return; }
+	if(therows.size() > 5) { newlb.setRows(20); newlb.invalidate(); }
+
+	newlb.addEventListener("onSelect", new folderslb_onSelect());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+
+		origid = dpi.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+
+		sqlstm = "select top 3 js.asma_id,js.asma_station,js.samplemarking from jobsamples js left join jobfolders jf on js.jobfolders_id = jf.origid " +
+		"where jf.origid=" + origid + " order by js.origid";
+
+		asmadats = sql.rows(sqlstm);
+
+		fasmaid = "";
+		fasmastat = "";
+		smarking = "";
+		
+		if(asmadats.size() != 0)
+		{
+			for(asi : asmadats)
+			{
+				fasmaid = kiboo.checkNullString(asi.get("asma_id"));
+				fasmastat = kiboo.checkNullString(asi.get("asma_station"));
+				smarking = kiboo.checkNullString(asi.get("samplemarking"));
+				
+				if(!fasmaid.equals("") && !fasmastat.equals("")) break;
+			}
+		}
+
+		kabom.add(fasmaid);
+		kabom.add(fasmastat);
+		kabom.add(smarking);
+
+		kabom.add(kiboo.checkNullString(dpi.get("tagfolder")));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	sql.close();
+}
+
+// Tag them selected folders - update jobfolders.tagfolder
+void tagFolder()
+{
+	shwmsg = false;
+	themsg = "";
+
+	if(ws_selected_folder.equals("") || es_selected_folder.equals(""))
+	{
+		themsg = "Please select folder from west-side and east-side for this tagging to work";
+		shwmsg = true;
+	}
+
+	if(ws_selected_folder.equals(es_selected_folder))
+	{
+		themsg = "No point tagging me to meself..";
+		shwmsg = true;	
+	}
+
+	if(shwmsg)
+	{
+		showMessageBox(themsg);
+		return;
+	}
+
+	if (Messagebox.show("Tagging " + es_selected_folder + " to " + ws_selected_folder, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "update jobfolders set tagfolder='" + ws_selected_folder + "' where origid=" + es_selected_origid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	// refresh both side
+	showFoldersRad(WESTSIDE,ws_last_showfolder_type);
+	showFoldersRad(EASTSIDE,es_last_showfolder_type);
+}
+
+// iside: 1=westside, 2=eastside
+void removeTag(int iside)
+{
+	if(iside == WESTSIDE && ws_selected_origid.equals("")) return;
+	if(iside == EASTSIDE && es_selected_origid.equals("")) return;
+
+	if (Messagebox.show("Removing tag on selected " + ((iside == 1) ? "westside" : "eastside"), "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	torigid = (iside == WESTSIDE) ? ws_selected_origid : es_selected_origid;
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "update jobfolders set tagfolder='' where origid=" + torigid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	// refresh both side
+	showFoldersRad(WESTSIDE,ws_last_showfolder_type);
+	showFoldersRad(EASTSIDE,es_last_showfolder_type);
+}
+
+//--- Documents attachment funcs --- knockoff from quotemaker_v2_develop.zul
+
+// iside: 1=westside, 2=eastside
+void showDocumentsList(int iside, String ifolder)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + ifolder;
+
+	ds_sql = sqlhand.als_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can see everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	docsdiv = (iside == WESTSIDE) ? ws_docs_holder : es_docs_holder;
+	docslbname = (iside == WESTSIDE) ? "ws_doculinks_lb" : "es_doculinks_lb";
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(docsdiv,documentLinks_lb_headers,docslbname,6,ds_sql,sqlstm);
+	//newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+}
+
+// iside: 1=westside, 2=eastside
+void viewDocument(int iside)
+{
+	if(iside == WESTSIDE && !lbhand.check_ListboxExist_SelectItem(ws_docs_holder,"ws_doculinks_lb")) return;
+	if(iside == EASTSIDE && !lbhand.check_ListboxExist_SelectItem(es_docs_holder,"es_doculinks_lb")) return;
+
+	eorigid = (iside == WESTSIDE) ? ws_doculinks_lb.getSelectedItem().getLabel() : es_doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = kiboo.makeRandomId("vd");
+	guihand.globalActivateWindow("//als_portal_main","miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+//--- ENDOF documents attachement funcs ---
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="foldertag_asma_panel" title="Folder Tagger (ASMA ONLY) v.1" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<!-- <button label="Print quote tracks" style="font-size:9px" onClick="printQuoteTracks()" /> -->
+<separator height="3px" />
+<hbox>
+<groupbox mold="3d" width="500px">
+<caption label="West side" />
+<grid>
+	<rows>
+		<row>
+			<hbox>
+				<label value="Start" style="font-size:9px" />
+				<datebox id="ws_startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			</hbox>
+			<hbox>
+				<label value="End" style="font-size:9px" />
+				<datebox id="ws_enddate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="Branch" style="font-size:9px" />
+				<listbox id="ws_branch" mold="select" style="font-size:9px" />
+			</hbox>
+			<button label="Load by date" style="font-size:9px" onClick="showFoldersRad(1,1)" />
+		</row>
+		<row visible="false">
+			<label value="Search" style="font-size:9px" />
+			<textbox id="ws_search" style="font-size:9px" width="99%" />
+			<button label="Dig" style="font-size:9px" onClick="showFoldersRad(1,2)" />
+		</row>
+		<row visible="false">
+			<label value="Folder" style="font-size:9px" />
+			<textbox id="ws_folder_search" style="font-size:9px" />
+			<button label="by folder" style="font-size:9px" onClick="showFoldersRad(1,3)" />
+		</row>
+		<row spans="3">
+			<label style="font-size:8px" value="(Max. 200 records per search)" />		
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+
+<grid id="ws_asmastuff" visible="false">
+	<rows>
+		<row id="ws_asmastuff_row">
+			<label value="ASMA-ID" style="font-size:9px" />
+			<label id="ws_asma_id" style="font-size:9px" />
+			<label value="Station" style="font-size:9px" />
+			<label id="ws_asma_station" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+
+<div id="ws_folders_holder" />
+<separator height="3px" />
+
+<groupbox mold="3d">
+<div id="ws_docs_holder" />
+</groupbox>
+<separator height="3px" />
+<button label="View document" style="font-size:9px" onClick="viewDocument(1)" />
+</groupbox>
+
+<groupbox mold="3d" width="500px">
+<caption label="East side" />
+<grid>
+	<rows>
+		<row>
+			<hbox>
+				<label value="Start" style="font-size:9px" />
+				<datebox id="es_startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			</hbox>
+			<hbox>
+				<label value="End" style="font-size:9px" />
+				<datebox id="es_enddate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="Branch" style="font-size:9px" />
+				<listbox id="es_branch" mold="select" style="font-size:9px" />
+			</hbox>
+			<button label="Load by date" style="font-size:9px" onClick="showFoldersRad(2,1)" />
+		</row>
+		<row visible="false">
+			<label value="Search" style="font-size:9px" />
+			<textbox id="es_search" style="font-size:9px" width="99%" />
+			<button label="Dig" style="font-size:9px" onClick="showFoldersRad(2,2)" />
+		</row>
+		<row visible="false">
+			<label value="Folder" style="font-size:9px" />
+			<textbox id="es_folder_search" style="font-size:9px" />
+			<button label="by folder" style="font-size:9px" onClick="showFoldersRad(2,3)" />
+		</row>
+		<row spans="3">
+			<label style="font-size:8px" value="(Max. 200 records per search)" />		
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+
+<grid id="es_asmastuff" visible="false">
+	<rows>
+		<row id="es_asmastuff_row">
+			<label value="ASMA-ID" style="font-size:9px" />
+			<label id="es_asma_id" style="font-size:9px" />
+			<label value="Station" style="font-size:9px" />
+			<label id="es_asma_station" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+
+<div id="es_folders_holder" />
+<separator height="3px" />
+
+<groupbox mold="3d">
+<div id="es_docs_holder" />
+</groupbox>
+<separator height="3px" />
+<button label="View document" style="font-size:9px" onClick="viewDocument(2)" />
+</groupbox>
+
+<groupbox mold="3d">
+<button id="tagthem_btn" label="Tag them" style="font-size:9px" onClick="tagFolder()" />
+
+<separator height="3px" />
+
+<div id="adminstuff" style="background:#ff0000;padding:2px" visible="false">
+<button label="WS Remove tag" style="font-size:9px" onClick="removeTag(1)" />
+<button label="ES Remove tag" style="font-size:9px" onClick="removeTag(2)"/>
+</div>
+
+</groupbox>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(ws_startdate);
+kiboo.setTodayDatebox(ws_enddate);
+kiboo.setTodayDatebox(es_startdate);
+kiboo.setTodayDatebox(es_enddate);
+
+lbhand.populateDropdownListbox(es_branch, dd_branches);
+lbhand.populateDropdownListbox(ws_branch, dd_branches);
+
+//documentLinkProp.document_idprefix = "DOCS";
+//setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+// Admin only stuff to show else hidden
+if(useraccessobj.accesslevel > 8)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</zk>

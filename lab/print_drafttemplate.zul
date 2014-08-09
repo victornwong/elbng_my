@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="print_drafttemplate_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+
+<zscript>
+<![CDATA[
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+
+Title				: Print out draft template for chemist's result entry task
+Developer			: Victor
+*/
+
+import org.victor.*;
+guihand = new GuiFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_jobfolder_id = Executions.getCurrent().getParameter("folder_no");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+	thesrc = BIRT_WEBVIEWER + BIRT_DRAFT_TEMPLATE + "&folderjob_id=" + param_jobfolder_id;
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_drafttemplate_box" width="900px" height="700px" title="Draft Template" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true">
+<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<separator height="3px" />
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>
+

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="print_labels_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title		: Print barcode label wrapper
+Dated		: very first version back in 2009
+Written by	: Victor Wong
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+guihand = new GuiFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_jobfolder_id = Executions.getCurrent().getParameter("folder_id");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("230px");
+	//thesrc = birtURL() + BIRT_SAMPLELABELS_FILENAME + "&FolderNo=" + param_jobfolder_id;
+	thesrc = birtURL() + BIRT_SAMPLELABELS_FILENAME_V3 + "&FolderNo=" + param_jobfolder_id;
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_labels_box" width="650px" height="380px" title="Print Samples Labels" position="center" mode="overlapped" closable="true" sizable="true" >
+<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<separator height="3px" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

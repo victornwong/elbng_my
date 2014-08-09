@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id=""?>
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Some security checking codes here
+// useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// hardcoded html-post parameter name: ar_code (set in customer_extra_address.zul -> playDocsDeliveryDetails()
+// the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+MODULE_DBNAME = "ContainerAvailable";
+
+Object whathuh;
+
+String[] typeofContainer_array = { "ALL", "1L Plastic", "100ml Plastic", "1L Amber Glass", "250ml Amber Glass", "40ml vial",  "Sterile Container", "Trip Blank", "COC", "Ice Brick" };
+
+String[] typeofPrservative_array = { "ALL", "None", "H2SO4", "HCl", "HNO3", "HaOH",  "Zn Acetate/NaOH", "Sterile" };
+
+void startSearchContainer(Listbox itypeofcontainer)
+{
+	if(itypeofcontainer.getSelectedItem() == null) return;
+	
+	iselected = itypeofcontainer.getSelectedItem().getLabel();
+	wheretype = "";
+	
+	if(iselected.equals("1L Plastic"))
+		wheretype="where containerstype='1L PLASTIC'";
+		
+		
+	if(iselected.equals("100ml Plastic"))
+		wheretype="where containerstype='100ml PLASTIC";
+		
+	sqlstatem = "select * from containers " + wheretype;
+	
+	alert(sqlstatem);
+
+}
+
+void startSearchPrservative(Listbox itypeofprservative)
+{
+	if(itypeofprservative.getSelectedItem() == null) return;
+	
+	iselected = itypeofprservative.getSelectedItem().getLabel();
+	wheretype = "";
+		
+	sqlstatem = "select * from prservative " + wheretype;
+	
+	alert(sqlstatem);
+
+}
+
+]]>
+</zscript>
+
+<window id="assign_new_container_wind" title="Container Available" width="700px" height="300px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<groupbox mold="3d" width="100%">
+<caption label="Search Container" />
+	<vbox>
+ <hbox>
+	
+	<label value="Type of container" />
+	<listbox id="typeofcontainer" rows="1" mold="select" />
+
+	<zscript>
+		populateDropdownListbox(typeofcontainer, typeofContainer_array);
+	</zscript>
+
+	<label value="Type of Prservative" />
+	<listbox id="typeofprservative" rows="1" mold="select" />
+
+	<zscript>
+		populateDropdownListbox(typeofprservative, typeofPrservative_array);
+	</zscript>
+
+	<button label="Start search" onClick="startSearchContainerAvailable(containertype, containerprservative)" />
+
+ </hbox>
+</vbox>
+
+<separator height="5px" />
+
+<!-- search results box -->
+<groupbox mold="3d" width="100%">
+<caption label="Search results" />
+
+	<listbox id="boxes_lb">
+		<listhead>
+			<listheader label="Box Code" />
+			<listheader label="Box Description" />
+			<listheader label="Status" sort="auto"/>
+			<listheader label="Quantity" />
+		</listhead>
+	</listbox>
+	
+</groupbox>
+</groupbox>
+
+<hbox>
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+</hbox>
+
+</div>
+
+</window>
+
+</zk>

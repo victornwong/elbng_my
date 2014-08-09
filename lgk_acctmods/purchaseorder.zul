@@ -1,0 +1,673 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="purchaseorders_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/emailfuncs.zs" />
+<zscript src="../lgkglobal/bpm_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Purchase Order Mangler
+Written by: Victor Wong
+
+**NOTES**
+convert PO to GRN and whatever in here
+
+popheader.newfield1 = PR number
+popheader.newfield2 = GRN number / code
+popheader.newfield3 = job code
+popheader.newfield4 = sub job code - linking to parent newfield3
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+selected_po_id = "";
+selected_po_code = "";
+selected_po_apcode = "";
+selected_grncode = "";
+selected_linking_prid = "";
+POloadtype = 1;
+
+// --- PR related funcs
+// Show the PR supporting documents - uses DocumentStorage
+void populateSupportingDocuments(String iprorigid)
+{
+
+Object[] suppdocs_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("Description",true,"file_description",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+	
+	pr_id_str = lgk_makePurchaseReq_ID(iprorigid);
+	ds_sql = lgk_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable where docu_link='" + pr_id_str + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+		sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable where docu_link='" + pr_id_str + "' ";
+
+	Listbox newlb = makeVWListbox_onDB(supportingdocs_div,suppdocs_lb_headers,"supportdocs_lb",5,ds_sql,sqlstm);
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+}
+
+void view_PR_LinkingDocument()
+{
+	if(!check_ListboxExist_SelectItem(supportingdocs_div,"supportdocs_lb")) return;
+	eorigid = supportdocs_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vdoc");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+// Show watever PR related metadata
+void showPRMetadata()
+{
+	prorigid = selected_linking_prid.substring(5); // chop PR-origid
+	if(prorigid.equals("")) return;
+
+	pr_rec = getPurchaseReq_Rec(prorigid);
+	if(pr_rec == null) return;
+
+	prf_notes_tb.setValue(pr_rec.get("notes")); // the justification notes!!!
+	populateSupportingDocuments(prorigid);
+}
+
+// --- ENDOF PR related funcs
+
+
+// --- PO Documents funcs
+void populate_PO_Documents(String iorigid)
+{
+
+Object[] podocs_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("Description",true,"file_description",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+	
+	pr_id_str = lgk_makePurchaseOrder_ID(iorigid);
+	ds_sql = lgk_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable where docu_link='" + pr_id_str + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+		sqlstm = "select origid,file_title,file_description,datecreated,username from DocumentTable where docu_link='" + pr_id_str + "' ";
+
+	Listbox newlb = makeVWListbox_onDB(podocs_holder,podocs_lb_headers,"podocs_lb",5,ds_sql,sqlstm);
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+}
+
+void view_PO_LinkingDocument()
+{
+	if(!check_ListboxExist_SelectItem(podocs_holder,"podocs_lb")) return;
+	eorigid = podocs_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("pod");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+void attach_PODoc_Clicker()
+{
+	if(selected_po_id.equals("")) return;
+
+	fileupl_file_title.setValue("");
+	fileupl_file_description.setValue("");
+	fileupl_docu_status.setSelectedIndex(0);
+	uploadFileDetails_Popup.open(pod_new_btn);
+}
+
+// popup button clicker
+void uploadLinkingDocument_clicker()
+{
+	if(selected_po_id.equals("")) return;
+	doculink_str = lgk_makePurchaseOrder_ID(selected_po_id);
+
+	docustatus_str = fileupl_docu_status.getSelectedItem().getLabel();
+	ftitle = replaceSingleQuotes(fileupl_file_title.getValue());
+	fdesc = replaceSingleQuotes(fileupl_file_description.getValue());
+	lgk_uploadLinkingDocument(useraccessobj.username, useraccessobj.branch, getDateFromDatebox(hiddendatebox), doculink_str, docustatus_str, ftitle, fdesc);
+
+	populate_PO_Documents(selected_po_id); // refresh supporting docu LB
+}
+
+void delete_PO_Document()
+{
+	if(selected_po_id.equals("")) return;
+	if(!check_ListboxExist_SelectItem(podocs_holder,"podocs_lb")) return;
+
+	eorigid = podocs_lb.getSelectedItem().getLabel();
+	docurec = lgk_getLinkingDocumentMetadataRec(eorigid);
+	docu_username = docurec.get("username");
+
+	// security: check if user is owner of document - admin can delete whateva
+	if(!docu_username.equals(useraccessobj.username))
+	{
+		if(useraccessobj.accesslevel < 9)
+		{
+			showMessageBox("Sorry.. not owner, cannot delete document");
+			return;
+		}
+	}
+
+	if (Messagebox.show("Delete this document: " + docurec.get("file_title"), "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		ds_sql = lgk_DocumentStorage();
+		if(ds_sql == NULL) return;
+		sqlstatem = "delete from DocumentTable where origid=" + eorigid;
+		ds_sql.execute(sqlstatem);
+		ds_sql.close();
+		populate_PO_Documents(selected_po_id); // refresh
+		
+		// should do an audit trail here later..
+	}
+}
+
+// --- ENDOF PO Documents funcs
+
+// Show all PO metadata
+void showPOMetadata()
+{
+	if(selected_po_id.equals("")) return;
+	
+	porec = getPO_byid(selected_po_id);
+	if(porec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve PO record..");
+		return;
+	}
+
+	DecimalFormat nf = new DecimalFormat("##.00");
+
+	supname = porec.get("name");
+	apcode = porec.get("account_ref");
+	add1 = porec.get("address_1");
+	add2 = porec.get("address_2");
+	add3 = porec.get("address_3");
+	curcode = porec.get("CurCode");
+	ordernet = nf.format(porec.get("order_net"));
+	cperson = porec.get("contact_name");
+	suptel = porec.get("supp_tel_number");
+
+	po_name.setValue(supname);
+	po_account_ref.setValue(apcode);
+	po_address_1.setValue(add1);
+	po_address_2.setValue(add2);
+	po_address_3.setValue(add3);
+
+	po_contact_name.setValue(cperson);
+	po_supp_tel_number.setValue(suptel);
+	po_order_net.setValue(curcode + " " + ordernet);
+	
+	po_tab_lbl.setLabel("1. Purchase Order : " + selected_po_code);
+	posupp_grid.invalidate();
+	posupp_grid.setVisible(true);
+	
+//po_status
+}
+
+// Show all the PO items .. watelse
+void showPO_Items()
+{
+Object[] poitems_lb_headers = {
+	new listboxHeaderObj("stockcode",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Item.Name",true),
+	new listboxHeaderObj("U.Price",true),
+	new listboxHeaderObj("Qty",true),
+	new listboxHeaderObj("Amount",true),
+};
+
+	if(selected_po_code.equals("")) return;
+	Listbox newlb = makeVWListbox(poitems_holder, poitems_lb_headers, "po_items_lb", 5);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select description,stock_code,qty_order,unit_price,net_amount	from pop_detail " + 
+	"where order_number='" + selected_po_code + "' order by item_number";
+	poitmrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(poitmrecs.size() == 0) return;
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+
+	itmcount = 1;
+	DecimalFormat nf = new DecimalFormat("##.00");
+	DecimalFormat nfnodecimal = new DecimalFormat("###");
+
+	for(dpi : poitmrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("stock_code"));
+		kabom.add(itmcount.toString());
+		kabom.add(dpi.get("description"));
+		kabom.add(nf.format(dpi.get("unit_price")));
+		kabom.add(nfnodecimal.format(dpi.get("qty_order")));
+		kabom.add(nf.format(dpi.get("net_amount")));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		itmcount++;
+	}
+}
+
+// onSelect for loadPO_Records()
+class POs_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_po_id = getListcellItemLabel(selitem,0);
+		selected_po_apcode = getListcellItemLabel(selitem,1);
+		selected_po_code = getListcellItemLabel(selitem,3);
+		selected_grncode = getListcellItemLabel(selitem,7);
+		selected_linking_prid = getListcellItemLabel(selitem,6);
+
+		showPOMetadata();
+		showPO_Items();
+		populate_PO_Documents(selected_po_id);
+		showPRMetadata();
+	}
+}
+
+Object[] pos_lb_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("apcode",false),
+	new listboxHeaderObj("prid",false),
+	new listboxHeaderObj("PO.Num",true),
+	new listboxHeaderObj("Vendor",true),
+	new listboxHeaderObj("Ord.Date",true),
+	new listboxHeaderObj("PR.Num",true),
+	new listboxHeaderObj("GRN.Num",true),
+	new listboxHeaderObj("Total",true),
+};
+
+void loadPO_Records(int loadtype)
+{
+	POloadtype = loadtype; // save for later refresh usage
+
+	Listbox newlb = makeVWListbox(pos_holder, pos_lb_headers, "purchaseorders_lb",10);
+	sqlstm = "select top 200 order_number,id,account_ref,reference,name,order_date,curcode,order_net,newfield1,newfield2 from popheader";
+	
+	switch(loadtype)
+	{
+		case 2: // load POs without GRN-num (popheader.newfield2)
+			break;
+
+		case 3: // load POs by date
+			sdate = getDateFromDatebox(startdate);
+			edate = getDateFromDatebox(enddate);
+			sqlstm = "select top 200 order_number,id,account_ref,reference,name,order_date,curcode,order_net from popheader " +
+			"where order_date between '" + sdate + "' and '" + edate + "' order by order_date desc";
+			break;
+	}
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	porecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(porecs.size() == 0) return;
+	newlb.setRows(18);
+	newlb.addEventListener("onSelect", new POs_Listener());
+	DecimalFormat nf = new DecimalFormat("##.00");
+
+	for(dpi : porecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("account_ref"));
+		kabom.add(dpi.get("newfield1")); // linking PR number
+		kabom.add(dpi.get("order_number"));
+		kabom.add(dpi.get("name"));
+		kabom.add(dpi.get("order_date").toString().substring(0,10));
+		kabom.add(dpi.get("reference"));
+
+		tgrnid = dpi.get("newfield2");
+		grnstr = "-----";
+
+		if(tgrnid != null)
+		{
+			grnid = Integer.parseInt(dpi.get("newfield2"));
+			grnstr = GRNPREFIX + padZeros5(grnid);
+		}
+
+		kabom.add(grnstr);
+
+		kabom.add(dpi.get("curcode") + " " + nf.format(dpi.get("order_net")));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// whatelse
+void printPO_clicker()
+{
+
+
+}
+
+// abit more codes to convert PO to GRN
+void poToGRN_clicker()
+{
+	if(selected_po_id.equals("")) return;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	// get existing GRN if any
+	sqlstm = "select vouchernumber from tblstockinmaster where reference='" + selected_po_code + "'";
+	exgrn = sql.firstRow(sqlstm);
+	if(exgrn != null)
+	{
+		// delete existing GRN based on PO - tblstockinmaster.reference and items
+		sqlstm = "delete from tblstockinmaster where reference='" + selected_po_code + "'";
+		sql.execute(sqlstm);
+
+		vcnum = exgrn.get("vouchernumber");
+		sqlstm = "delete from tblstockindetail where voucherno='" + vcnum + "'";
+		sql.execute(sqlstm);
+	}
+
+	grnid = "";
+	grncode = "";
+
+	// insert a new GRN ..
+	sqlstm = "insert into tblstockinmaster (strDate,posted,vouchernumber,reference,documenttype," + 
+	"newfield10,description,entrydate) values " +
+	"('" + todaydate + "',0,'-U-','" + selected_po_code + "','GI','" + selected_po_apcode + "','','')";
+
+	sql.execute(sqlstm);
+
+	// retrv the GRN and update vouchernumber
+	sqlstm = "select id from tblstockinmaster where reference='" + selected_po_code + "' and vouchernumber='-U-'";
+	grec2 = sql.firstRow(sqlstm);
+	if(grec2 != null)
+	{
+		// update the GRN code
+		tmpid = grec2.get("id").intValue();
+		grnid = tmpid.toString();
+		grncode = GRNPREFIX + padZeros5(tmpid);
+		sqlstm = "update tblstockinmaster set vouchernumber='" + grncode + "' where id=" + grnid;
+		sql.execute(sqlstm);
+	}
+
+	// Can insert PO items as GRN items
+	if(!grncode.equals(""))
+	{
+		// delete any existing items in GRN
+		sqlstm = "delete from tblstockindetail where voucherno='" + grncode + "'";
+		sql.execute(sqlstm);
+
+		// grab items from pop_detail and insert into tblstockindetail
+		sqlstm = "select stock_code,description,qty_order,unit_price,net_amount from pop_detail " + 
+		"where order_number='" + selected_po_code + "'";
+
+		poitems = sql.rows(sqlstm);
+		
+		// got PO items .. insert
+		if(poitems.size() != 0)
+		{
+			for(dpi : poitems)
+			{
+				stkcode = dpi.get("stock_code");
+				desc = dpi.get("description");
+				qty = dpi.get("qty_order");
+				unitp = dpi.get("unit_price");
+				amount = dpi.get("net_amount");
+
+				insql = "insert into tblstockindetail (voucherno,stockcode,description,quantity,cost,amount) values " +
+				"('" + grncode + "','" + stkcode + "','" + desc + "'," + qty.toString() + "," + unitp.toString() + "," + amount + ")";
+
+				sql.execute(insql);
+			}
+		}
+	}
+
+	// update popheader - set the GRN code popheader.newfield2
+	sqlstm = "update popheader set newfield2='" + grnid + "' where id=" + selected_po_id;
+	sql.execute(sqlstm);
+
+	sql.close();
+	showMessageBox("COMPLETED : Generate GRN from PO .. ");
+}
+
+// Setup serial-numbers(barcode) from supplier for each item->units
+void doItemSerialNumbers_clicker()
+{
+	if(selected_grncode.equals("-----")) return;
+	grnid = selected_grncode.substring(4);
+	theparam = "grnvn=" + selected_grncode + "&grnid=" + grnid;
+	uniqid = makeRandomId("gsn");
+	globalActivateWindow("miscwindows","lgk_acctmods/grnitems_sn_setup.zul", uniqid, theparam, useraccessobj);
+}
+
+
+]]>
+</zscript>
+
+<!-- to show input boxes to get details for uploaded file popup -->
+<popup id="uploadFileDetails_Popup">
+<groupbox mold="3d" width="300px">
+<caption label="Upload document" />
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+	<row>
+		<label value="Title" style="font-size:9px" />
+		<textbox id="fileupl_file_title" width="200px" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="Description" style="font-size:9px" />
+		<textbox id="fileupl_file_description" multiline="true" height="60px" width="200px" style="font-size:9px" />	
+	</row>
+	<row>
+		<label value="Status" style="font-size:9px" />
+		<listbox id="fileupl_docu_status" mold="select" rows="1" style="font-size:9px" />
+	</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+	<button label="Select file" style="font-size:9px" onClick="uploadLinkingDocument_clicker()" />
+	<button label="Close" style="font-size:9px" onClick="uploadFileDetails_Popup.close()" />
+</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<div width="1200px">
+<panel id="purchaseorders_panel" title="Purchase Orders" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<button label="X Close" style="font-size:8px" onClick="globalCloseWindow(myincludeid)" />
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<div style="padding:3px">
+<hbox>
+	<label value="Start date" style="font-size:9px" />
+	<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+	<separator width="5px"/>
+	<label value="End date" style="font-size:9px" />
+	<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+	<button label="Search by date" style="font-size:9px" onClick="loadPO_Records(3)" />
+	<button label="Load PO without GRN" style="font-size:9px" />
+	<button label="Load all PO" style="font-size:9px" onClick="loadPO_Records(1)" />
+	<label value="(Max. 200 PO per click)" style="font-size:9px" />
+</hbox>
+<separator height="3px" />
+
+<hbox>
+<groupbox mold="3d" width="550px">
+	<caption label="PO List" />
+	<div id="pos_holder" />
+</groupbox>
+
+<div width="100%">
+<tabbox mold="accordion">
+	<tabs>
+		<tab id="po_tab_lbl" label="1. Purchase Order" />
+		<tab label="2. Purchase Order Items" />
+		<tab label="3. Invoices / Documents" />
+		<tab label="4. Purchase Requisition Documents" />
+	</tabs>
+	<tabpanels>
+
+	<!-- PO panel -->
+	<tabpanel>
+		<grid id="posupp_grid" visible="false">
+			<columns>
+				<column label="" />
+				<column label="" />
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row spans=",3">
+				<label value="AP.Code" style="font-size:9px" />
+				<label id="po_account_ref" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Vendor" style="font-size:9px" />
+				<label id="po_name" />
+			</row>
+			<row spans=",3">
+				<label value="Address 1" style="font-size:9px" />
+				<label id="po_address_1" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Address 2" style="font-size:9px" />
+				<label id="po_address_2" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Address 3" style="font-size:9px" />
+				<label id="po_address_3" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Contact" style="font-size:9px" />
+				<label id="po_contact_name" style="font-size:9px" />
+				<label value="Tel" style="font-size:9px" />
+				<label id="po_supp_tel_number" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="PO Net total" style="font-size:9px" />
+				<label id="po_order_net" style="font-size:9px" />
+				<label value="Status" style="font-size:9px" />
+				<label id="po_status" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<grid id="job_grid" visible="false">
+			<columns>
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row>
+				<label value="Job.Code" style="font-size:9px" />
+				<label id="po_jobcode_newfield3" />
+			</row>
+			<row>
+				<label value="Sub.Code" style="font-size:9px" />
+				<label id="po_subjobcode_newfield4" />
+			</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<hbox>
+			<button label="Print PO" style="font-size:9px" onClick="printPO_clicker()" />
+		</hbox>
+	</tabpanel>
+
+	<!-- PO Items panel -->
+	<tabpanel>
+		<div id="poitems_holder" />
+		<separator height="3px" />
+		<button label="Generate GRN" style="font-size:9px" onClick="poToGRN_clicker()" />
+		<button id="itemserailnumber_btn" label="Items serial-number" style="font-size:9px" onClick="doItemSerialNumbers_clicker()" />
+	</tabpanel>
+	
+	<!-- Invoice/Docs for PO -->
+	<tabpanel>
+		<div style="padding:3px">
+			<div id="podocs_holder" />
+			<separator height="3px" />
+			<hbox>
+				<button id="pod_new_btn" label="Attach document " style="font-size:9px" onClick="attach_PODoc_Clicker()" />
+				<button id="pod_view_btn" label="View document" style="font-size:9px" onClick="view_PO_LinkingDocument()" />
+				<button id="pod_delete_btn" label="Delete" style="font-size:9px" disabled="true" onClick="delete_PO_Document()" />
+			</hbox>
+		</div>
+	</tabpanel>
+	
+	<!-- PR docs -->
+	<tabpanel>
+		<groupbox mold="3d">
+			<caption label="Justification notes" />
+			<textbox id="prf_notes_tb" multiline="true" width="100%" height="80px" style="font-size:9px" />
+		</groupbox>
+		<groupbox mold="3d">
+			<caption label="Supporting documents" />
+			<div id="supportingdocs_div" />
+			<separator height="3px" />
+			<button id="sjd_view_btn" label="View document" style="font-size:9px" onClick="view_PR_LinkingDocument()" />
+		</groupbox>
+	</tabpanel>
+
+	</tabpanels>
+</tabbox>
+</div>
+
+</hbox>
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+populateDropdownListbox(fileupl_docu_status, doculink_status);
+
+// Admin-stuff
+if(useraccessobj.accesslevel > 8)
+{
+	pod_delete_btn.setDisabled(false);
+}
+
+]]>
+</zscript>
+
+</zk>

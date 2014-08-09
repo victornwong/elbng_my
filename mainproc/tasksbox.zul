@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="tasksbox_id"?>
+<?page title="TasksBox"?>
+
+<zk>
+
+<zscript>
+ /*
+	import groovy.sql.Sql;
+
+	sql = Sql.newInstance("jdbc:mysql://localhost:3306/miris", "mirisproj", "kingkong", "org.gjt.mm.mysql.Driver");
+	sql.eachRow("select * from lookups where myparent like 'GENIN%'")
+		{
+		lookups ->
+		Listitem mylistitem = new Listitem();
+		mylistitem.setLabel(lookups.name + " " + lookups.disptext);
+		mylistitem.setId(lookups.name);
+		mylistitem.setParent(thelist);
+
+		}
+		*/
+
+</zscript>
+
+ <zscript>
+	void clickme()
+	{
+	String moo = new String();
+	Listitem kkk = thelist.getItemAtIndex(thelist.getSelectedIndex());
+	//alert(kkk.getId());
+
+	}
+
+</zscript>
+
+<hbox>
+    <groupbox mold="3d" width="300px">
+        <caption label="Alerts" style="color:#FF1100; font-weight:bold" />
+        Alerts/alarms to be placed here.
+    </groupbox>
+    
+    <separator width="20px"/>
+    
+    <groupbox mold="3d" width="300px">
+        <caption label="To Do" />
+        To-do list for user
+    </groupbox>
+
+</hbox>
+
+</zk>

@@ -1,0 +1,1097 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="ehresultentry_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "EH(Blood/Urine) Results and Reports Generation";
+MYVERSION = "v0.1";
+MYPANEL = "ehresu_panel";
+/*
+Title		: EH blood/urine results entry using vicForm and excel-template gen
+Written by	: Victor Wong
+Start date	: 04/01/2013
+
+Dedicated module to let users enter EH blood/urine related results -- with calculation and stuff
+
+Urine metal form = 16
+Urine organic form = 17
+Blood metal = 18
+Blood organic = 19
+
+**KNOCKOFF from nutriResultsEntry_v1.zul -- remember to update codes in the source files if required
+
+06/12/2012: add codes to do inline update sample-marking
+
+*/
+import java.util.*;
+import java.text.*;
+import java.io.*;
+import java.math.BigDecimal;
+
+import java.awt.Color;
+import java.io.FileOutputStream;
+
+import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.Rectangle;
+import com.itextpdf.text.pdf.PdfReader;
+import com.itextpdf.text.pdf.parser.*;
+
+/*
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+*/
+
+import org.zkoss.util.media.AMedia;
+import org.apache.poi.ss.*;
+import org.apache.poi.ss.usermodel.*;
+
+import org.zkoss.zul.*;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+NUTRI_FORM = "15";
+
+DecimalFormat nf = new DecimalFormat("###0.0");
+DecimalFormat nf2 = new DecimalFormat("####0.00");
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+int last_loadtype = 0;
+String glob_selected_folderno = "";
+String glob_selected_jobsample = "";
+String glob_selected_jtp = "";
+String glob_selected_mysoft = "";
+String glob_selected_formkeeper = "";
+String glob_selected_testname = "";
+String glob_selected_method = "";
+
+signator_recs = null;
+boolean cangenreport = false;
+
+vicFormMaker glob_formmaker = null;
+
+// TODO: put this into a separate zs
+void excelInsertString(Sheet isheet, int irow, int icol, String iwhat)
+{
+	org.apache.poi.hssf.usermodel.HSSFRow row = isheet.getRow(irow);
+	Cell cell = row.getCell(icol);
+	if(cell == null) cell = row.createCell(icol);
+	cell.setCellType(Cell.CELL_TYPE_STRING);
+	cell.setCellValue(iwhat);
+}
+
+// knockoff from the web - to be used later
+String getKeyByValue(HashMap ihmap, String istring)
+{
+	ffe = "";
+	for(tentry : ihmap.entrySet())
+	{
+		ffe += tentry.getKey() + "->" + tentry.getValue() + ", ";
+		if( istring.equals(tentry.getValue()) ) break; //return tentry.getKey();
+	}
+	alert(ffe);
+	return null;
+}
+
+void clearSomeFields()
+{
+	keyin_by.setValue("");
+	keyin_date.setValue("");
+	saved_msg.setValue("");
+}
+
+void showTestForms()
+{
+	if(glob_selected_jtp.equals("")) return;
+	
+	workarea.setVisible(false);
+	//nutricalc_btn.setVisible(false);
+	//ehreport_box.setVisible(false);
+
+	// check got formkeeper-id, if not, try loading from stockmasterdetails
+	if(glob_selected_formkeeper.equals("") && !glob_selected_mysoft.equals(""))
+	{
+		smd = sqlhand.getMySoftMasterProductRec(glob_selected_mysoft);
+		if(smd == null) return;
+		fkfsmd = kiboo.checkNullString(smd.get("NewField5"));
+		if(fkfsmd.equals("")) return;
+
+		fmobj = sqlhand.getFormKeeper_rec(fkfsmd);
+		if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+
+		glob_selected_formkeeper = fmobj.get("origid").toString();
+
+		formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+		exmres = sqlhand.clobToString(fmobj.get("exampleresult"));
+		glob_formmaker = new vicFormMaker(form_holder,"thebigform",formxml);
+		glob_formmaker.generateForm();
+		glob_formmaker.populateFormValues(exmres);
+
+		form_sampleid.setValue(glob_selected_jobsample);
+
+		clearSomeFields();
+
+		// check if any previous results entered
+		lresult = sqlhand.getLatestResult(glob_selected_jobsample,glob_selected_mysoft);
+		if(lresult != null)
+		{
+			kuser = lresult.get("username");
+			kdate = (lresult.get("Analysed_Date") != null) ? lresult.get("Analysed_Date").toString().substring(0,10) : "";
+			keyin_by.setValue(kuser);
+			keyin_date.setValue(kdate);
+
+			kres = lresult.get("formresults");
+			if(kres != null)
+			{
+				resl = sqlhand.clobToString(kres);
+				glob_formmaker.populateFormValues(resl);
+			}
+		}
+
+		workarea.setVisible(true);
+	}
+
+	/*
+	
+	if(glob_selected_formkeeper.equals(NUTRI_FORM))
+	{
+		nutricalc_btn.setVisible(true);
+		if(cangenreport) ehreport_box.setVisible(true);
+	}
+	*/
+}
+
+class sampletests_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = sampletests_lb.getSelectedItem();
+		glob_selected_jtp = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_mysoft = lbhand.getListcellItemLabel(isel,1);
+		glob_selected_formkeeper = lbhand.getListcellItemLabel(isel,2);
+		glob_selected_testname = lbhand.getListcellItemLabel(isel,3);
+		glob_selected_method = lbhand.getListcellItemLabel(isel,4);
+		showTestForms();
+	}
+}
+
+void showJobSampleTests(String iwhat)
+{
+Object[] jtplist_headers =
+{
+	new listboxHeaderWidthObj("jtpid",false,""),
+	new listboxHeaderWidthObj("mysc",false,""),
+	new listboxHeaderWidthObj("formkeeper",false,""),
+	new listboxHeaderWidthObj("Test with results-form",true,""),
+	new listboxHeaderWidthObj("Method",true,""),
+};
+
+	sqlstm = "select jtp.origid,jtp.mysoftcode,jtp.formkeeper_id, smd.description, smd.description2 " + 
+	"from jobtestparameters jtp " +
+	"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+	"where jobsamples_id=" + iwhat + " order by origid";
+
+	Listbox newlb = lbhand.makeVWListbox_Width(sampletests_holder, jtplist_headers, "sampletests_lb", 15);
+	jobsample_id.setValue(iwhat);
+
+	jtps = sqlhand.gpSqlGetRows(sqlstm);
+	if(jtps.size() == 0) { return; }
+	newlb.addEventListener("onSelect", new sampletests_onSelect());
+	for(dpi : jtps)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("mysoftcode").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("formkeeper_id")));
+		kabom.add(kiboo.checkNullString(dpi.get("description")));
+		kabom.add(kiboo.checkNullString(dpi.get("description2")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+class jslist_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = jobsamples_lb.getSelectedItem();
+		glob_selected_jobsample = lbhand.getListcellItemLabel(isel,0);
+		showJobSampleTests(glob_selected_jobsample);
+	}
+}
+
+class sample_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget(); //tests_description_lb.getSelectedItem();
+		smak = lbhand.getListcellItemLabel(selitem,1);
+		ch_samplemarking.setValue(smak);
+		sampleMarking_popup.open(selitem);
+	}
+}
+
+void loadSampleTests(int itype)
+{
+Object[] jslist_headers =
+{
+	new listboxHeaderWidthObj("SampID",true,"60px"),
+	new listboxHeaderWidthObj("SampMarking",true,""),
+};
+
+	// hide working boxes - tidier
+	foldermeta_area.setVisible(false);
+	workarea.setVisible(false);
+
+	last_loadtype = itype;
+	foldernum = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+
+	// dev purposes - no need to type
+	if(foldernum.equals("") && useraccessobj.accesslevel==9) foldernum = "ALSM36166";
+
+	if(itype == 1 && foldernum.equals("")) return;
+	if(itype == 2 && sampid.equals("")) return;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(jobsamples_holder, jslist_headers, "jobsamples_lb", 15);
+
+	if(itype == 2)
+	{
+		sqlstm = "select jf.folderno_str " +
+		"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+		"where js.origid=" + sampid + " and " +
+		"jf.deleted = 0 and js.deleted = 0";
+
+		fifold = sqlhand.gpSqlFirstRow(sqlstm);
+		if(fifold == null) return;
+		foldernum = fifold.get("folderno_str");
+	}
+
+	jobfolder_str.setValue(foldernum);
+	glob_selected_folderno = foldernum; // save for usage later
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, js.asma_id, js.asma_station, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.folderno_str = '" + foldernum + "' and " +
+	"jf.deleted = 0 and js.deleted = 0";
+
+	therows = sqlhand.gpSqlGetRows(sqlstm); // grab samples + marking
+	if(therows.size() == 0) { return; }
+	newlb.addEventListener("onSelect", new jslist_onSelect());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("js_origid").toString());
+		kabom.add(dpi.get("samplemarking"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	dc_obj = new sample_DoubleClicker();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+
+	foldermeta_area.setVisible(true);
+}
+
+// 0=jobfolder,1=sampleid,2=todaydate,3=username,4=jtporigid,5=mysoftcode,6=testname,7=method,8=results-ntext,9=formkeeper-id
+void saveImportResults()
+{
+	if(glob_formmaker == null) return;
+
+	String[] resultarray = new String[10];
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	iresults = glob_formmaker.freezeFormValues();
+
+	resultarray[0] = glob_selected_folderno;
+	resultarray[1] = glob_selected_jobsample;
+	resultarray[2] = todaydate;
+	resultarray[3] = useraccessobj.username;
+	resultarray[4] = glob_selected_jtp;
+	resultarray[5] = glob_selected_mysoft;
+	resultarray[6] = glob_selected_testname;
+	resultarray[7] = glob_selected_method;
+	resultarray[8] = iresults;
+	resultarray[9] = glob_selected_formkeeper;
+/*	
+	alert(glob_selected_folderno + ":" + glob_selected_jobsample + ":" + todaydate + ":" + useraccessobj.username + ":" +
+	glob_selected_jtp + ":" + glob_selected_mysoft + ":" + glob_selected_testname + ":" +
+	glob_selected_method + ":" + iresults + ":" + glob_selected_formkeeper);
+*/
+	if(sqlhand.insertChemistryResult_Form(resultarray))
+		saved_msg.setValue("RESULTS SAVED..");
+	else
+		saved_msg.setValue("ERR: CANNOT SAVE RESULTS!");
+}
+
+// 06/12/2012: allow inline updating of sample-marking when user double-click the sample
+void updateSampleMarking()
+{
+	smak = kiboo.replaceSingleQuotes(ch_samplemarking.getValue());
+	if(smak.equals("")) return; // no blank sample-marking allowed
+	sqlstm = "update jobsamples set samplemarking='" + smak + "' where origid=" + glob_selected_jobsample;
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadSampleTests(last_loadtype); // refresh
+	sampleMarking_popup.close();
+}
+
+void downloadFile(Div ioutdiv, String ifilename, String irealfn)
+{
+	File f = new File(irealfn);
+	fileleng = f.length();
+	finstream = new FileInputStream(f);
+	byte[] fbytes = new byte[fileleng];
+	finstream.read(fbytes,0,(int)fileleng);
+
+	AMedia amedia = new AMedia(ifilename, "xls", "application/vnd.ms-excel", fbytes);
+	Iframe newiframe = new Iframe();
+	newiframe.setParent(ioutdiv);
+	newiframe.setContent(amedia);
+}
+
+Object getSignatorRec(String iwho)
+{
+	for(dpi : signator_recs)
+	{
+		knam = dpi.get("disptext");
+		if(knam.equals(iwho)) return dpi;	
+	}
+	return null;
+}
+
+glob_selected_genbutt = null;
+
+void nutriPopupSelector(Component icomp)
+{
+	glob_selected_genbutt = icomp;
+	nutrigen_popup.open(icomp);
+}
+
+glob_chopped_blanks = false; // blanks already chopped and make LB
+
+// Utility funcs we put 'em here..
+void utilFunc(Component iwhat)
+{
+	itype = iwhat.getId();
+
+	if(itype.equals("copystatic_btn"))
+	{
+		if(form_holder.getFellowIfAny("markup_volume") != null)
+		{
+			savedmv_lbl.setValue(markup_volume.getValue());
+		}
+		if(form_holder.getFellowIfAny("sample_weight") != null)
+		{
+			savedsw_lbl.setValue(sample_weight.getValue());
+		}
+	}
+
+	if(itype.equals("pastestatic_btn"))
+	{
+		if(form_holder.getFellowIfAny("markup_volume") != null)
+		{
+			markup_volume.setValue(savedmv_lbl.getValue());
+		}
+		if(form_holder.getFellowIfAny("sample_weight") != null)
+		{
+			sample_weight.setValue(savedsw_lbl.getValue());
+		}
+	}
+}
+
+Object uploaded_csvRaw = null;
+String[] chopped_csv = null;
+
+void clicker()
+{
+				// hardcoded column position in CSV map to textbox
+				acq_time.setValue(remcoma[4]);
+				als_vial.setValue(remcoma[7]);
+
+				//alert(form_holder.getChildren().get(0).getChildren().get(0).getChildren().get(4).getChildren());
+				// blood metals form
+				if(form_holder.getFellowIfAny("bmr_aluminium") != null)
+				{
+					bmr_aluminium.setValue(remcoma[17]);
+					bmr_arsenic.setValue(remcoma[34]);
+					bmr_cadmium.setValue(remcoma[40]);
+					bmr_chromium.setValue(remcoma[23]);
+					bmr_cobalt.setValue(remcoma[28]);
+					bmr_copper.setValue(remcoma[30]);
+					bmr_iron.setValue(remcoma[26]);
+					bmr_mercury.setValue(remcoma[48]);
+					bmr_manganese.setValue(remcoma[25]);
+					bmr_lead.setValue(remcoma[52]);
+					bmr_nickel.setValue(remcoma[29]);
+					bmr_zinc.setValue(remcoma[32]);
+				}
+				// urine metals form
+				if(form_holder.getFellowIfAny("umr_aluminium") != null)
+				{
+					umr_aluminium.setValue(remcoma[17]);
+					umr_arsenic.setValue(remcoma[34]);
+
+					umr_cadmium.setValue(remcoma[40]);
+					umr_chromium.setValue(remcoma[23]);
+					umr_cobalt.setValue(remcoma[28]);
+					umr_copper.setValue(remcoma[30]);
+					umr_iron.setValue(remcoma[26]);
+					umr_mercury.setValue(remcoma[48]);
+					umr_manganese.setValue(remcoma[25]);
+					umr_lead.setValue(remcoma[52]);
+					umr_nickel.setValue(remcoma[29]);
+					umr_zinc.setValue(remcoma[32]);
+				}
+}
+
+int[] metalanalytes_column = new int[12];
+
+// Hard-coded to find urine/blood metals analytes column from the uploaded CSV
+int[] findThemAnalytes(String iheader)
+{
+	int[] retarr = new int[12];
+	remcoma = iheader.split(",");
+	for(i=0; i<remcoma.length; i++)
+	{
+		ostr = remcoma[i].replace("\"","");
+		// hardcoded analyte-codes in header to find
+		if(ostr.indexOf("Al / 27") != -1) retarr[0] = i;
+		if(ostr.indexOf("As / 75") != -1) retarr[1] = i;
+		if(ostr.indexOf("Cd / 111") != -1) retarr[2] = i;
+		if(ostr.indexOf("Cr / 52") != -1) retarr[3] = i;
+		if(ostr.indexOf("Co / 59") != -1) retarr[4] = i;
+		if(ostr.indexOf("Cu / 63") != -1) retarr[5] = i;
+		if(ostr.indexOf("Fe / 56") != -1) retarr[6] = i;
+		if(ostr.indexOf("Hg / 202") != -1) retarr[7] = i;
+		if(ostr.indexOf("Mn / 55") != -1) retarr[8] = i;
+		if(ostr.indexOf("Pb / 208") != -1) retarr[9] = i;
+		if(ostr.indexOf("Ni / 60") != -1) retarr[10] = i;
+		if(ostr.indexOf("Zn / 66") != -1) retarr[11] = i;
+	}
+	return retarr;
+}
+
+Object getPDF2Bytes()
+{
+	uploaded_file = Fileupload.get(true);
+	if(uploaded_file == null) return null;
+	formatstr = uploaded_file.getFormat();
+	contenttype = uploaded_file.getContentType();
+	ufilename = uploaded_file.getName();
+	Object uploaded_data;
+	fileLength = 0;
+
+	f_inmemory = uploaded_file.inMemory();
+	f_isbinary = uploaded_file.isBinary();
+
+	if(f_inmemory && f_isbinary)
+	{
+		uploaded_data = uploaded_file.getByteData();
+	}
+
+	if(!f_inmemory && f_isbinary)
+	{
+		inp = uploaded_file.getStreamData();
+		fileLength = inp.available();
+		uploaded_data = new byte[fileLength];
+		retl = inp.read(uploaded_data,0,fileLength);
+	}
+
+	if(uploaded_data == null)
+	{
+		guihand.showMessageBox("Invalid file-type uploaded..");
+		return null;
+	}
+	
+	return uploaded_data;
+}
+
+// hard-coded results import from RAW csv/pdf/excel
+// this one for ICP-MS -- knockoff some codes from result_metals_liquid.zul
+// itype: 1=upload file, 2=import values
+// iwhat: button or other component, to be used top position popup
+void importResults(int itype, Component iwhat)
+{
+Object[] sampleid_headers =
+{
+	new listboxHeaderWidthObj("Sample-ID",true,"60px"),
+	new listboxHeaderWidthObj("Al",true,"40px"),
+	new listboxHeaderWidthObj("As",true,"40px"),
+	new listboxHeaderWidthObj("Cd",true,"40px"),
+	new listboxHeaderWidthObj("Cr",true,"40px"),
+	new listboxHeaderWidthObj("Co",true,"40px"),
+	new listboxHeaderWidthObj("Cu",true,"40px"),
+	new listboxHeaderWidthObj("Fe",true,"40px"),
+	new listboxHeaderWidthObj("Hg",true,"40px"),
+	new listboxHeaderWidthObj("Mn",true,"40px"),
+	new listboxHeaderWidthObj("Pb",true,"40px"),
+	new listboxHeaderWidthObj("Ni",true,"40px"),
+	new listboxHeaderWidthObj("Zn",true,"40px"),
+};
+
+	switch(itype)
+	{
+		case 1:
+			uploaded_csvRaw = Fileupload.get(true);
+			if(uploaded_csvRaw == null) return;
+			formatstr = uploaded_csvRaw.getFormat();
+			bytearray = uploaded_csvRaw.getByteData();
+			String mystring = new String(bytearray);
+			chopped_csv = mystring.split("\r\n");
+			// some CSV "\n" as new line	
+			if(chopped_csv.length == 1) chopped_csv = mystring.split("\n");
+			if(chopped_csv.length == 0) return;
+			uploaded_filename_lbl.setValue(uploaded_csvRaw.getName());
+			metalanalytes_column = findThemAnalytes(chopped_csv[0]); // get 'em columns
+			glob_chopped_blanks = false; // reset chopped-blanks flag
+
+			// fillup dilutions with default
+			aprfix = "";
+			if(form_holder.getFellowIfAny("bmr_aluminium") != null) aprfix = "bmd_";
+			if(form_holder.getFellowIfAny("umr_aluminium") != null) aprfix = "umd_";
+			fillTextboxes(aprfix, eh_metals_form,"1");
+
+			break;
+
+		case 2:
+			if(chopped_csv == null) return;
+			wostr = "";
+			String[] chopi = new String[56];
+			Listbox newlb = lbhand.makeVWListbox_Width(samples_holder, sampleid_headers, "impsamples_lb", 5);
+			newlb.setMultiple(true);
+
+			for(i=1;i<chopped_csv.length;i++)
+			{
+				kkb = chopped_csv[i];
+				remcoma = kkb.split(",");
+				// remove quotes
+				for(j=0; j<remcoma.length; j++)
+				{
+					ktmp = remcoma[j];
+					remcoma[j] = ktmp.replace("\"","");
+				}
+				// check sample-id match selected one
+				smpstr = remcoma[1].toUpperCase();
+				if(smpstr.indexOf(glob_selected_jobsample) != -1)
+				{
+					ArrayList kabom = new ArrayList();
+					kabom.add(kiboo.checkNullString(remcoma[1]));
+					for(k=0;k<metalanalytes_column.length;k++)
+					{
+						anlstr = kiboo.checkNullString(remcoma[metalanalytes_column[k]]);
+						if(anlstr.indexOf("-") != -1) anlstr = "0"; // replace all -0.* to 0 
+						kabom.add(anlstr);
+					}
+					strarray = kiboo.convertArrayListToStringArray(kabom);	
+					lbhand.insertListItems(newlb,strarray,"false","");
+				}
+			}
+
+			dc_obj = new blanks_DoubleClicker();
+			lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+
+			importsamples_popup.open(iwhat);
+			break;
+
+		case 3: // average selected samples' results and insert into form
+			if(impsamples_lb.getSelectedCount() == 0) return;
+			
+			float[] rltsum = { 0,0,0,0,0,0,0,0,0,0,0,0 };
+			
+			for(prow : impsamples_lb.getSelectedItems())
+			{
+				for(i=0; i< rltsum.length; i++)
+				{
+					celstr = lbhand.getListcellItemLabel(prow,i+1);
+					if(!celstr.equals(""))
+					{
+						try
+						{
+						rltsum[i] += Float.parseFloat(celstr);
+						}
+						catch (Exception e) {}
+					}
+				}
+			}
+			wostr = "";
+			for(i=0;i<rltsum.length; i++)
+			{
+				rltsum[i] = rltsum[i] / impsamples_lb.getSelectedCount(); // div. by selected count to get average
+				//wostr += rltsum[i].toString() + " :: ";
+			}
+			//debug1.setValue(wostr);
+			
+			aprfix = "";
+			if(form_holder.getFellowIfAny("bmr_aluminium") != null) aprfix = "bmr_";
+			if(form_holder.getFellowIfAny("umr_aluminium") != null) aprfix = "umr_";
+			for(i=0;i<eh_metals_form.length;i++)
+			{
+				compid = aprfix + eh_metals_form[i];
+				kcomp = form_holder.getFellowIfAny(compid);
+				if(kcomp != null) kcomp.setValue(nf2.format(rltsum[i]));
+			}
+
+			saved_msg.setValue("");
+			break;
+
+		case 4: // import GC pdf
+			pdfdata = getPDF2Bytes();
+			str = "";
+			PdfReader reader = new PdfReader(pdfdata);
+			PdfReaderContentParser parser = new PdfReaderContentParser(reader);
+			TextExtractionStrategy strategy;
+			strategy = parser.processContent(1,new SimpleTextExtractionStrategy());
+			str += strategy.getResultantText();
+			
+			chopped_str = str.split("\r\n");
+			if(chopped_str.length == 1) chopped_str = str.split("\n");
+			
+			str2 = "";
+			
+			for(i=0;i<chopped_str.length;i++)
+			{
+				str2 += i.toString() + " :: " + chopped_str[i] + "\n";
+			}
+			debug1.setValue(str2);
+
+			break;
+	}
+}
+
+String[] eh_metals_form = { "aluminium", "arsenic", "cadmium", "chromium", "cobalt",
+"copper", "iron", "mercury", "manganese", "lead", "nickel", "zinc" };
+
+// fill textboxes/watever to some values
+// ipref: prefix of the component id
+// iwhat: string array of the components ID
+// ival: what to put in 'em
+void fillTextboxes(String ipref, String[] iwhat, String ival)
+{
+	for(i=0; i<iwhat.length; i++)
+	{
+		compid = ipref + iwhat[i];
+		kcomp = form_holder.getFellowIfAny(compid);
+		if(kcomp != null) kcomp.setValue(ival);
+	}
+}
+
+// this double-click used by showImportedBlanks() and importResults() to insert values from LB to form textboxes
+class blanks_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget(); //tests_description_lb.getSelectedItem();
+		chkparent = selitem.getParent().getId();
+		aprfix = "";
+
+		if(chkparent.equals("blanks_lb"))
+		{
+			if(form_holder.getFellowIfAny("bmr_aluminium") != null) aprfix = "bmb_";
+			if(form_holder.getFellowIfAny("umr_aluminium") != null) aprfix = "umb_";
+			blanks_popup.close();
+		}
+
+		if(chkparent.equals("impsamples_lb"))
+		{
+			if(form_holder.getFellowIfAny("bmr_aluminium") != null) aprfix = "bmr_";
+			if(form_holder.getFellowIfAny("umr_aluminium") != null) aprfix = "umr_";
+			importsamples_popup.close();
+		}
+
+		if(aprfix.equals("")) return;
+		for(i=0;i<eh_metals_form.length;i++)
+		{
+			compid = aprfix + eh_metals_form[i];
+			kcomp = form_holder.getFellowIfAny(compid);
+			if(kcomp != null) kcomp.setValue(lbhand.getListcellItemLabel(selitem,i+1));
+		}
+		saved_msg.setValue("");
+	}
+}
+
+// show CSV imported blanks -- double-click to insert 'em values into textboxes
+void showImportedBlanks(Component iwhat)
+{
+Object[] blanks_headers =
+{
+	new listboxHeaderWidthObj("Blank-ID",true,"60px"),
+	new listboxHeaderWidthObj("Al",true,"40px"),
+	new listboxHeaderWidthObj("As",true,"40px"),
+	new listboxHeaderWidthObj("Cd",true,"40px"),
+	new listboxHeaderWidthObj("Cr",true,"40px"),
+	new listboxHeaderWidthObj("Co",true,"40px"),
+	new listboxHeaderWidthObj("Cu",true,"40px"),
+	new listboxHeaderWidthObj("Fe",true,"40px"),
+	new listboxHeaderWidthObj("Hg",true,"40px"),
+	new listboxHeaderWidthObj("Mn",true,"40px"),
+	new listboxHeaderWidthObj("Pb",true,"40px"),
+	new listboxHeaderWidthObj("Ni",true,"40px"),
+	new listboxHeaderWidthObj("Zn",true,"40px"),
+};
+
+	if(chopped_csv == null) return;
+
+	if(!glob_chopped_blanks)
+	{
+		Listbox newlb = lbhand.makeVWListbox_Width(blanks_holder, blanks_headers, "blanks_lb", 10);
+		for(i=1;i<chopped_csv.length;i++)
+		{
+			kkb = chopped_csv[i];
+			remcoma = kkb.split(",");
+			// remove quotes
+			for(j=0; j<remcoma.length; j++)
+			{
+				ktmp = remcoma[j];
+				remcoma[j] = ktmp.replace("\"","");
+			}
+
+			// check sample-id col = blk
+			blkstr = remcoma[1].toUpperCase();
+			if(blkstr.indexOf("BLK") != -1)
+			{
+				ArrayList kabom = new ArrayList();
+				kabom.add(remcoma[1]);
+				for(k=0;k<metalanalytes_column.length;k++)
+				{
+					anlstr = kiboo.checkNullString(remcoma[metalanalytes_column[k]]);
+					if(anlstr.indexOf("-") != -1) anlstr = "0"; // replace all -0.* to 0 
+					kabom.add(anlstr);
+				}
+				strarray = kiboo.convertArrayListToStringArray(kabom);	
+				lbhand.insertListItems(newlb,strarray,"false","");
+			}
+
+			dc_obj = new blanks_DoubleClicker();
+			lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+		}
+		glob_chopped_blanks = true; // already chopped out blanks from imported file
+	}
+	blanks_popup.open(iwhat);
+}
+
+// specific func for blood/urine metals calc
+// final = ((raw * dilution) - blank) * (markup_volume / sample_weight)
+void doCalc()
+{
+	//float[] calcres = { 0,0,0,0,0,0,0,0,0,0,0,0 };
+
+	try
+	{
+	imv = Float.parseFloat(markup_volume.getValue());
+	isw = Float.parseFloat(sample_weight.getValue());
+	}
+	catch (Exception e) { guihand.showMessageBox("Markup-volume and sample-weight is required for this to work.."); }
+
+	for(i=0; i<eh_metals_form.length; i++)
+	{
+		aprfix = (form_holder.getFellowIfAny("bmr_aluminium") != null) ? "bmr_" : "umr_";
+		kcomp = form_holder.getFellowIfAny(aprfix + eh_metals_form[i]);
+		iraw = Float.parseFloat(kcomp.getValue());
+
+		aprfix = (form_holder.getFellowIfAny("bmr_aluminium") != null) ? "bmd_" : "umd_";
+		kcomp = form_holder.getFellowIfAny(aprfix + eh_metals_form[i]);
+		idilu = Float.parseFloat(kcomp.getValue());
+
+		aprfix = (form_holder.getFellowIfAny("bmr_aluminium") != null) ? "bmb_" : "umb_";
+		kcomp = form_holder.getFellowIfAny(aprfix + eh_metals_form[i]);
+		iblnk = Float.parseFloat(kcomp.getValue());
+
+		calcres = ((iraw * idilu) - iblnk) * (imv / isw);
+
+		aprfix = (form_holder.getFellowIfAny("bmr_aluminium") != null) ? "bmc_" : "umc_";
+		kcomp = form_holder.getFellowIfAny(aprfix + eh_metals_form[i]);
+		kcomp.setValue(nf2.format(calcres));
+	}
+	saved_msg.setValue(""); // computed -- assume new results -- not save till click butt
+}
+
+void readPDFText()
+{
+	str = "";
+	templatefn = session.getWebApp().getRealPath("tmp/ECW-281B.pdf");
+	PdfReader reader = new PdfReader(templatefn);
+	
+	PdfReaderContentParser parser = new PdfReaderContentParser(reader);
+	TextExtractionStrategy strategy;
+	strategy = parser.processContent(1,new SimpleTextExtractionStrategy());
+	str += strategy.getResultantText();
+	
+	alert(str);
+}
+
+LEFTWIDTH = "430px";
+
+]]>
+</zscript>
+
+<popup id="importsamples_popup">
+<groupbox mold="3d" width="650px">
+	<div id="samples_holder" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Average and import" style="font-size:9px" onClick="importResults(3,self)" />
+	</hbox>
+</groupbox>
+</popup>
+
+<popup id="blanks_popup">
+<groupbox mold="3d" width="650px">
+	<div id="blanks_holder" />
+</groupbox>
+</popup>
+
+<!-- popup for additional stuff before gen nutri-label report -->
+<popup id="nutrigen_popup">
+<grid>
+	<rows>
+		<row>
+			<label value="Serving size" style="font-size:9px" />
+			<textbox id="serving_size" value="100" style="font-size:9px" />
+			<label value="SG" style="font-size:9px" />
+			<textbox id="sg_value" value="0" style="font-size:9px" />
+		</row>
+		<row spans="1,1,2">
+			<label value="Serving per package" style="font-size:9px" />
+			<textbox id="serving_perpackage" value="1" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Signator" style="font-size:9px" />
+			<listbox id="signator_lb" mold="select" style="font-size:9px" />
+			<label value="2nd Signator" style="font-size:9px" />
+			<listbox id="signator2_lb" mold="select" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+
+<hbox>
+	<button label="Generate g/100g" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,1)" />
+	<button label="Generate g/100ml" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,2)" />
+	<button label="Close" style="font-size:9px" onClick="nutrigen_popup.close()" />
+</hbox>
+</popup>
+
+<!-- END -->
+
+<!-- popup to let user change sample-marking -->
+<popup id="sampleMarking_popup">
+<vbox>
+	<textbox id="ch_samplemarking" style="font-size:9px" multiline="true" width="350px" height="50px" />
+	<button label="Update sample-marking" style="font-size:9px" onClick="updateSampleMarking()" />
+</vbox>
+</popup>
+
+<!-- formula only popup -->
+<popup id="formulaPopup">
+<groupbox mold="3d" width="400px">
+<label multiline="true" style="font-size:9px">
+Total_carbohydrate = 100 - moisture - ash - fat - protein
+Available_carbohydrate = Total_carbohydrate - dietary_fiber
+
+Total_calorie (MY kcal) = (4 x Total_carbohydrate) + (4 x protein) + (9 x fat)
+Total_calorie (MY kJ) = Total_calorie x 4.2
+
+Total_calorie (US kcal) = (4 x Available_carbohydrate) + (4 x protein) + (9 x fat) + (2 x dietary-fiber)
+Total_calorie (US kJ) = total_calorie(US) x 4.2
+
+Total_milk_solid = 100 - moisture - sucrose
+Non_fat_milk_solid = 100 - moisture - sucrose - fat
+
+Calories from Fat = fat x 9
+
+</label>
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<separator height="2px" />
+<button label="Upload raw GC" style="font-size:9px" onClick="importResults(4,self)" />
+<label id="debug1" multiline="true" width="600px" height="600px" />
+
+<hbox>
+
+<vbox >
+<grid width="${LEFTWIDTH}">
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px" />
+			<button label="by folder" style="font-size:9px" onClick="loadSampleTests(1)" />
+		</row>
+		<row>
+			<label value="Sample-ID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="by sample-id" style="font-size:9px" onClick="loadSampleTests(2)" />
+		</row>
+	</rows>
+</grid>
+
+<div id="foldermeta_area" visible="false">
+	<grid width="300px">
+		<rows>
+			<row style="background:#1e90ff">
+				<label value="Folder #" style="color:#eeeeee" />
+				<label id="jobfolder_str" style="color:#eeeeee" />
+			</row>
+		</rows>
+	</grid>
+	<div id="jobsamples_holder" width="${LEFTWIDTH}" />
+
+	<grid width="300px">
+		<rows>
+			<row style="background:#1e90ff">
+				<label value="Sample ID" style="color:#eeeeee" />
+				<label id="jobsample_id" style="color:#eeeeee" />
+			</row>
+		</rows>
+	</grid>
+	<div id="sampletests_holder" width="${LEFTWIDTH}" />
+</div> <!-- foldermeta_area -->
+
+</vbox>
+
+<vbox id="workarea" visible="false" >
+
+<div > <!-- top workarea -->
+<hbox>
+<grid width="200px">
+	<rows>
+		<row style="background:#1e90ff">
+			<label value="Sample ID" style="color:#eeeeee" />
+			<label id="form_sampleid" style="color:#eeeeee" />
+		</row>
+		<row spans="2">
+			<div style="background:#cc0000;">
+				<label id="saved_msg" style="text-decoration:blink;color:#ffffff;" />
+			</div>
+		</row>
+		<row>
+			<label value="Keyin" style="font-size:9px" />
+			<label id="keyin_by" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Keyin.Date" style="font-size:9px" />
+			<label id="keyin_date" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<grid width="200px">
+	<rows>
+		<row spans="2">
+			<hbox>
+				<button id="copystatic_btn" label="Copy MV/SW" style="font-size:9px" onClick="utilFunc(self)" />
+				<button id="pastestatic_btn" label="Paste MV/SW" style="font-size:9px" onClick="utilFunc(self)" />
+			</hbox>
+		</row>
+		<row>
+			<label value="MV" style="font-size:9px" />
+			<label id="savedmv_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="SW" style="font-size:9px" />
+			<label id="savedsw_lbl" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<grid width="200px">
+	<rows>
+		<row>
+			<label value="Uploaded file" style="font-size:9px" />
+			<label id="uploaded_filename_lbl" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+</hbox>
+</div> <!-- ENDOF top workarea -->
+
+<hbox>
+	<div id="form_holder" height="400px" />
+
+	<vbox>
+		<!--
+		<hbox>
+
+			<button id="nutricalc_btn" label="Nutri-calculation" style="font-size:9px" onClick="doFormula(1)" visible="false" />
+			<button label="?" style="font-size:9px" onClick="formulaPopup.open(self)" />
+		</hbox>
+		-->
+		<div height="398px" width="150px" >
+			<vbox>
+				<button label="Upload raw ICPMS" style="font-size:9px" onClick="importResults(1,self)" />
+				<button label="Upload raw GC" style="font-size:9px" onClick="importResults(4,self)" />
+				<separator height="2px" />
+				<button label="Import values" style="font-size:9px" onClick="importResults(2,self)" />
+				<button label="Select blanks" style="font-size:9px" onClick="showImportedBlanks(self)" />
+				<button label="Compute" style="font-size:9px" onClick="doCalc()" />
+				<button label="Save results" onClick="saveImportResults()" />
+			</vbox>
+			<separator height="8px" />
+			<div id="ehreport_box" style="background:#f1e720;padding:2px" height="100px">
+				<div style="background:#1e90ff;padding:3px">
+					<label style="color:#eeeeee">
+					Generate report
+					</label>
+				</div>
+				<separator height="3px" />
+				<vbox>
+				</vbox>
+			</div>
+		</div>
+	
+	</vbox>
+
+</hbox>
+
+</vbox> <!-- workarea -->
+
+</hbox>
+
+<div id="kasiexport" />
+
+<separator height="5px" />
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(signator2_lb, "dd_signators", 2);
+luhand.populateListbox_ByLookup(signator_lb, "dd_signators", 2);
+signator_lb.setSelectedIndex(1); // set to 2nd name in the signatories list.. 1st name is "nobody"
+signator_recs = luhand.getLookups_ByParent("dd_signators");
+
+// only users def in NUTRI_LABEL_REPORT_USERS can see nutri-label report gen butts
+if(sechand.allowedUser(useraccessobj.username,"NUTRI_LABEL_REPORT_USERS")) cangenreport = true;
+
+if(useraccessobj.accesslevel >= 9)
+{
+	cangenreport = true;
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

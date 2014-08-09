@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="gpformstore_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "General Purpose Form Storage";
+MYVERSION = "v0.1";
+/*
+Title		: General purpose form-storage/retrieval thing
+Written by	: Victor Wong
+Dated		: 07/08/2012
+
+For developement of some general-purpose funcs to get form from elb_formkeeper - 
+generate the form using vicFormMaker(formMaker_v1.zs) and etc.
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+param_parent_id = Executions.getCurrent().getParameter("pi");
+param_formkeeper_id = Executions.getCurrent().getParameter("fk");
+param_wintitle = Executions.getCurrent().getParameter("wt");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+// defaults - can be overidden by params passed by caller
+FORMSTORE_PARENT_ID = "formtest";
+FORMKEEPER_ID = "1";
+
+int rowcount = 0;
+
+int last_list_type = 0;
+String glob_selected_form = "";
+String glob_selected_form_user = "";
+
+vicFormMaker glob_formmaker = null;
+
+Object getFormStorage_rec(String iwhat)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from elb_formstorage where origid=" + iwhat;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+void clearFormDesc()
+{
+	form_origid.setValue("");
+	form_title_tb.setValue("");
+}
+
+void showFormStorageMetadata(String iwhat)
+{
+	fstrec = getFormStorage_rec(iwhat);
+	if(fstrec == null) return;
+
+	fkepid = fstrec.get("formkeeper_id");
+
+	// load form-xml from formkeeper
+	fmobj = sqlhand.getFormKeeper_rec(fkepid.toString());
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	glob_formmaker = new vicFormMaker(formholder,FORMSTORE_PARENT_ID,formxml);
+	glob_formmaker.generateForm();
+
+	forminputs = sqlhand.clobToString(fstrec.get("inputs_value"));
+	if(forminputs != null) glob_formmaker.populateFormValues(forminputs);
+}
+
+class formsstorage_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = forms_lb.getSelectedItem();
+		glob_selected_form = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_form_user = lbhand.getListcellItemLabel(isel,3);
+
+		formdesc = lbhand.getListcellItemLabel(isel,2);
+		form_title_tb.setValue(formdesc); // form-title textbox
+		form_origid.setValue(glob_selected_form);
+
+		showFormStorageMetadata(glob_selected_form);
+	}
+}
+
+// uses FORMSTORE_PARENT_ID to list those forms
+// itype: 1=just load, 2=search text
+void listFormStorage(int itype)
+{
+Object[] formslist_headers = 
+{
+	new listboxHeaderWidthObj("ID",true,"40px"),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("Form.Description",true,"300px"),
+	new listboxHeaderWidthObj("User",true,""),
+};
+
+	last_list_type = itype;
+	Listbox newlb = lbhand.makeVWListbox_Width(formslist_holder, formslist_headers, "forms_lb", 20);
+
+	setxt = kiboo.replaceSingleQuotes(searchtext_tb.getValue());
+
+	sqlstm = "select top 200 origid,form_title,updateby,lastupdate from elb_formstorage " +
+	"where formparent_id='" +  FORMSTORE_PARENT_ID + "'";
+
+	if(itype == 2) sqlstm += " and (inputs_value like '%" + setxt + "%' or form_title like '%" + setxt + "%') ";
+	sqlstm += " order by origid";
+
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.addEventListener("onSelect", new formsstorage_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add( dpi.get("lastupdate").toString().substring(0,10) );
+		kabom.add(dpi.get("form_title"));
+		kabom.add(dpi.get("updateby"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// itype: 1=insert new entry, 2=delete entry, 3=save data entry
+void doFunc(int itype)
+{
+	boolean refresh = false;
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	switch(itype)
+	{
+		case 1: // insert new form
+			sqlstm = "insert into elb_formstorage (formparent_id,inputs_value,formkeeper_id,form_title,lastupdate,updateby,thisform_parent) values " +
+			" ('" + FORMSTORE_PARENT_ID + "',''," + FORMKEEPER_ID + ",'NEW BLANK FORM','" + todate + "','" +
+			useraccessobj.username + "',0)";
+
+			sqlhand.gpSqlExecuter(sqlstm);
+			refresh = true;
+			break;
+
+		case 2: // delete form
+			if(glob_selected_form.equals("")) break;
+
+			if(!glob_selected_form_user.equals(useraccessobj.username) && useraccessobj.accesslevel < 9)
+			{
+				guihand.showMessageBox("Not owner, cannot delete form data");
+				return;
+			}
+
+			if (Messagebox.show("Hard delete - form data will be removed completely.", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+			sqlstm = "delete from elb_formstorage where origid=" + glob_selected_form;
+			sqlhand.gpSqlExecuter(sqlstm);
+
+			glob_formmaker.removeForm();
+			glob_selected_form = ""; // make sure not pointing to empty form
+			clearFormDesc();
+
+			refresh = true;
+
+			break;
+
+		case 3: // save inputs
+			if(glob_selected_form.equals("")) break;
+			if(glob_formmaker == null) break;
+
+			fmtitl = kiboo.replaceSingleQuotes(form_title_tb.getValue());
+			freezv = glob_formmaker.freezeFormValues();
+
+			sqlstm = "update elb_formstorage set form_title='" + fmtitl + "', lastupdate='" + todate + "', " +
+			"updateby='" + useraccessobj.username + "'," +
+			"inputs_value='" + freezv + "' where origid=" + glob_selected_form;
+
+			sqlhand.gpSqlExecuter(sqlstm);
+			guihand.showMessageBox("Form data saved..");
+			refresh = true;
+			break;
+	}
+
+	if(refresh) listFormStorage(last_list_type);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="gpformstorage_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+
+<div width="450px">
+	<grid width="450px">
+		<rows>
+			<row style="background:#c70a0a;padding:2px">
+				<label value="Search text" style="font-size:9px" />
+				<textbox id="searchtext_tb" style="font-size:9px" width="99%" />
+				<button label="Search" style="font-size:9px" onClick="listFormStorage(2)" />
+			</row>
+			<row spans="3">
+			<label style="font-size:9px">
+			(Max. 200 forms per click, empty search-text will load available forms)
+			</label>
+			</row>
+			<row spans="3">
+				<hbox>
+					<button label="New form" style="font-size:9px" onClick="doFunc(1)" />
+					<button label="Delete" style="font-size:9px" onClick="doFunc(2)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+
+	<separator height="2px" />
+	<div id="formslist_holder" />
+</div>
+
+<vbox>
+	<div style="background:#c70a0a;padding:2px" width="100%">
+	<hbox>
+		<button label="Save form data" style="font-size:9px" onClick="doFunc(3)" />
+	</hbox>
+	</div>
+	<grid width="550px">
+		<columns><column width="5%" /><column width="10%" /><column width="15%" /></columns>
+		<rows>
+			<row>
+				<label value="ID" style="font-size:9px" />
+				<label id="form_origid" style="font-size:9px" />
+				<label value="Form description" style="font-size:9px" />
+				<textbox id="form_title_tb" style="font-size:9px" width="99%" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<div id="formholder" />
+</vbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+// overide defaults if params passed
+if(param_parent_id != null) FORMSTORE_PARENT_ID = param_parent_id;
+if(param_formkeeper_id != null) FORMKEEPER_ID = param_formkeeper_id;
+if(param_wintitle != null) gpformstorage_panel.setTitle(param_wintitle);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

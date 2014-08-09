@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="prepaidkit_v1"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title 		: Wearcheck Pre-paid kit manager
+Written by	: Victor Wong
+
+Revisions/NOTES:
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+void listWCPrepaidKits()
+{
+Object[] wcppkits_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ar_code",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Invoice",true),
+	new listboxHeaderObj("Inv.Date",true),
+	};
+
+	sqlstm = "select origid,ar_code,customer_name,datecreated,kitstatus,invoiceno,invoicedate " + 
+	"from elb_wc_prepaidkit order by datecreated desc";
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+    therows = sql.rows(sqlstm);
+    sql.close();
+
+   	Listbox newlb = makeVWListbox(prepaidkits_holder, wcppkits_headers, "wcppkits_lb", 5);
+    if(therows.size() == 0) return;
+
+	newlb.setRows(20);
+	//newlb.addEventListener("onSelect", new folderslb_Listener());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(dpi.get("kitstatus"));
+		kabom.add(dpi.get("invoiceno"));
+		invdate = checkNullDate(dpi.get("invoicedate"));
+		kabom.add(invdate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"");
+	}
+}
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="prepaidkit_panel" title="Wearcheck Prepaid Kit Manager v.1" border="normal" collapsible="true" closable="true"  >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+<groupbox mold="3d" width="350px">
+<div id="prepaidkits_holder" />
+<separator height="3px" />
+<hbox>
+	<button label="New" style="font-size:9px" />
+	<button label="Print/Export" style="font-size:9px" />
+</hbox>
+</groupbox>
+
+</hbox>
+<zscript>
+<![CDATA[
+
+/*
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+*/
+setTodayDatebox(hiddendatebox);
+
+listWCPrepaidKits();
+
+/*
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+*/
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

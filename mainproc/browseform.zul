@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="browsepage"?>
+
+<!--
+
+Browse incidents
+
+-->
+
+<zk>
+
+<window id="browseform" title="Browse" width="300px" position="center"
+	mode="overlapped" border="normal" visible="false">
+
+Please enter pantiet name
+<textbox />
+
+<button label="OK" onClick="browseform.visible = false" />
+
+</window>
+
+</zk>
+

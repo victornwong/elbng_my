@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="xlsdataextractor_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title		: General purpose XLS data extractor
+Written by	: Victor Wong
+
+Can be customized for other data-sucker
+
+NOTES - Revisions:
+06/12/2011: started
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ss.util.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.hssf.usermodel.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// Simple func to allow user upload something to server
+// need to add some pass-back of uploaded file format/contenttype/filename thing or just extend this bugga
+Object getUploadFileData()
+{
+	retval = null;
+
+	uploaded_file = Fileupload.get(true);
+
+	if(uploaded_file == null) return null;
+
+	formatstr = uploaded_file.getFormat();
+	contenttype = uploaded_file.getContentType();
+	ufilename = uploaded_file.getName();
+
+	Object uploaded_data;
+	int fileLength = 0;
+
+	f_inmemory = uploaded_file.inMemory();
+	f_isbinary = uploaded_file.isBinary();
+
+	if(f_inmemory && f_isbinary)
+	{
+	//ByteArrayInputStream upfluf = new ByteArrayInputStream(uploaded_fluff);
+		uploaded_data = new ByteArrayInputStream(uploaded_file.getByteData());
+	}
+	else
+	{
+		uploaded_data = uploaded_file.getStreamData();
+		fileLength = uploaded_data.available(); 
+	}
+
+	//alert("formatstr: " + formatstr + " | contenttype: " + contenttype + " | filename: " + ufilename);
+	// need to check content type - xls or whatever
+
+	return uploaded_data;
+}
+
+// General purpose func to get cell-content, based on POI guide. Won't do formula-cell
+String POI_GetCellContentString(HSSFCell icell)
+{
+	retval = "";
+	switch(icell.getCellType())
+	{
+		case HSSFCell.CELL_TYPE_STRING:
+			retval = icell.getRichStringCellValue().getString();
+			break;
+
+		case HSSFCell.CELL_TYPE_NUMERIC:
+			if(DateUtil.isCellDateFormatted(icell))
+			{
+				retval = icell.getDateCellValue().toString();
+				//retval = icell.getRichStringCellValue().getString();
+			}
+			else
+			{
+				retval = icell.getNumericCellValue().toString();
+			}
+			break;
+	}
+	return retval;
+}
+
+Object[] foundsm_lb_headers = {
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Sample.Marking",true),
+};
+
+// General purpose XLS worksheet splicer - customize to read anything
+void spliceWorksheet_clicker()
+{
+	//wssplicer_caption.setLabel("Folder: " + global_selected_folderno);
+	uploaded_fluff = getUploadFileData();
+	if(uploaded_fluff == null) return;
+
+	//ByteArrayInputStream upfluf = new ByteArrayInputStream(uploaded_fluff);
+
+	HSSFWorkbook excelWB = new HSSFWorkbook(uploaded_fluff);
+	FormulaEvaluator evaluator = excelWB.getCreationHelper().createFormulaEvaluator();
+	numsheets = excelWB.getNumberOfSheets();
+
+	Sheet sheet = excelWB.getSheetAt(0);
+	rows = sheet.getPhysicalNumberOfRows();
+
+	if(rows < 1)
+	{
+		showMessageBox("Nothing to splice huh..");
+		return;
+	}
+
+	// remove previous grid
+	if(splice_holder.getFellowIfAny("spliced_data") != null) spliced_data.setParent(null);
+
+	//foundsampmarking_div regsamples_div
+
+	Listbox newlb = makeVWListbox(foundsampmarking_div, foundsm_lb_headers, "foundsampmarks_lb", 15);
+	smcount = 1;
+
+	// Suck sample-marking from the COC
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		rows = sheet.getPhysicalNumberOfRows();
+
+		// HARDCODED: start scanning from the COC row 14 onwards
+		for(myr=13; myr < rows; myr++)
+		{
+			Row row = sheet.getRow(myr);
+			if(row != null)
+			{
+				HSSFCell cell = row.getCell(0);
+
+				if(cell != null)
+				{
+					kamestr = POI_GetCellContentString(cell);
+					kamestop = "";
+					
+					if(kamestr.length() > 9)
+						kamestop = kamestr.substring(0,10);
+
+					if(!kamestop.equals("Sampled by")) // hardcoded: reading COC worksheet for this string, around A24
+					{
+						if(!kamestr.equals("---"))
+						{
+							ArrayList kabom = new ArrayList();
+							kabom.add(smcount.toString() + ".");
+							kabom.add(kamestr);
+
+							strarray = convertArrayListToStringArray(kabom);
+							insertListItems(newlb,strarray,"false");
+							smcount++;
+						}
+					}
+					else
+						break;
+				}
+			}
+		}
+	}
+	
+	// Suck test parameters from COC - foundtests_div foundtests_lb_headers
+	Listbox newlb3 = makeVWListbox(foundtests_div, foundtests_lb_headers, "foundtests_lb", 15);
+
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		Row row = sheet.getRow(8); // hardcoded, J9 -> U9
+		
+		if(row != null)
+		{
+			for(j=9; j<20; j++)
+			{
+				Cell cell = row.getCell(j);
+
+				if(cell != null)
+				{
+					meme = POI_GetCellContentString(cell);
+
+					if(!meme.equals("---"))
+					{
+						// make sure only uniq test in listbox
+						if(!ExistInListbox(foundtests_lb,meme,0))
+						{
+							ArrayList kabom = new ArrayList();
+							kabom.add(meme);
+							strarray = convertArrayListToStringArray(kabom);
+							insertListItems(newlb3,strarray,"false");
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// show our registered samples - foldern
+	showSamples_MiniMe(global_selected_folderno);
+
+	// show tests from test.package assigned to client - testpackages_div
+	showTestPackage_ByClient(THIS_MODULE_ARCODE);
+
+	ws_splicer_gb.setVisible(true);
+}
+
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="xlsdataextractor_panel" title="General Purpose XLS data extractor v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+	<button label="Upload Excel file" style="font-size:9px" onClick="spliceWorksheet_clicker()" />
+</hbox>
+<separator height="3px" />
+
+<div id="splice_holder" width="450px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

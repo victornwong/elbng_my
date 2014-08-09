@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="reptemphand_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.1";
+/*
+Title		: Report template handler
+Written by	: Victor Wong
+
+Revisions:
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.io.*;
+import org.apache.poi.ss.*;
+import org.apache.poi.ss.usermodel.*;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+void trytempl()
+{
+	inpfn = session.getWebApp().getRealPath("tmp/bitabina.xls");
+	InputStream inp = new FileInputStream(inpfn);
+
+	Workbook wb = WorkbookFactory.create(inp);
+	
+	ksout = "number of sheets: " + wb.NumberOfSheets.toString() + "\n";
+	
+	for(i=0; i<wb.NumberOfSheets; i++)
+	{
+		ksout += "sheet : " + wb.getSheetName(i).toUpperCase().trim() + "\n";
+	}
+	
+	debugg.setValue(ksout);
+
+}
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="reptemphand_panel" title="Report Template Handler ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<vbox>
+<button label="trytempl" onClick="trytempl()" />
+<textbox id="debugg" multiline="true" width="500px" height="300px" />
+</vbox>
+
+<zscript>
+<![CDATA[
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

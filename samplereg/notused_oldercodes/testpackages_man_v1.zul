@@ -1,0 +1,904 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="testpackages_man"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title				: Test packages manager - able to speed up test-commiting task
+Coding began date	:
+Developers			: Victor
+
+**NOTES**
+5/7/2010: added ar_code to test-package - gonna extend this thing to include LOR and such
+
+*/
+
+import java.util.*;
+import java.text.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+String todaydate_str = "";
+String selected_package_id = "";
+Listcell pckname_listcell;
+Object pck_selected_item_children;
+
+ALS_stock_cat = "";
+
+/*
+public class codeToLongNameObj
+{
+	String thecode;
+	String thelongname;
+	
+	public codeToLongNameObj(String ithecode, String ithe_longname)
+	{
+		thecode = ithecode;
+		thelongname = ithe_longname;
+	}
+}
+
+Object[] als_divisions = {
+	new codeToLongNameObj("0","Unsorted"),
+	new codeToLongNameObj("EV","Environmental (EV)"),
+	new codeToLongNameObj("BS","Banned Substances (BS)"),
+	new codeToLongNameObj("IH","Industrial Hygiene (IH)"),
+	new codeToLongNameObj("WC","Wearcheck (WC)"),
+	new codeToLongNameObj("ASMA","ASMA"),
+	new codeToLongNameObj("OF","Oil and Food (OF)"),
+	new codeToLongNameObj("MD","Medical Devices (MD)")
+};
+
+// Convert codes to its long name - uses codeToLongNameObj
+String convertCodeToLongName(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thecode.equals(iwhich))
+		{
+			retval = iobjs[i].thelongname;
+			break;
+		}
+	}
+	return retval;
+}
+
+// Same as convertCodeToLongName() but the reversal
+String convertLongNameToCode(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thelongname.equals(iwhich))
+		{
+			retval = iobjs[i].thecode;
+			break;
+		}
+	}
+	return retval;
+}
+*/
+
+void hideTestParametersBox()
+{
+	mysoft_testparams.setVisible(false);	
+}
+
+void showTestParametersBox()
+{
+	mysoft_testparams.setVisible(true);
+}
+
+void updateTestPackage_ItemRec(String iorigid, String imysoftc)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlst = "update TestPackage_Items set mysoftcode=" + imysoftc + " where origid=" + iorigid;
+	sql.execute(sqlst);
+
+	sql.close();
+}
+
+boolean testItem_InTestPackage(Listbox ilb, String imyc)
+{
+	retval = false;
+
+	for(i=0; i<ilb.getItemCount(); i++)
+	{
+		// children -> item 1 = hidden mysoft code
+		lbim = ilb.getItemAtIndex(i).getChildren().get(1).getLabel();
+
+		if(lbim.equals(imyc))
+		{
+			retval = true;
+			break;
+		}
+	}
+	return retval;
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// get mysoft stockmaster details id from hidden listbox column
+		jcomp = event.getReference();
+		jchilds = jcomp.getChildren();
+		jmysoftc = jchilds.get(0).getLabel();
+		
+		// check if mysoft code already in the package
+		if(testItem_InTestPackage(testpackage_items_lb, jmysoftc))
+		{
+			showMessageBox("Test parameter is in this test package");
+			return;
+		}
+		
+		testdesc = jchilds.get(1).getLabel();
+
+		// now update test-package items listbox with new mysoft code and redraw the item
+		pkitem_origid = pck_selected_item_children.get(0).getLabel();
+		updateTestPackage_ItemRec(pkitem_origid, jmysoftc);
+		
+		// redraw item by taking label from testparameters lb
+		pck_selected_item_children.get(2).setLabel(testdesc);
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSTestParametersListbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("tests_description_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("tests_description_lb");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setSort("auto");
+	hd1.setVisible(false);
+    hd1.setParent(newhead);
+	
+    Listheader hd2 = new Listheader();
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSTestParametersListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select id,description,description2 from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' " +
+		"and groupcode='" + igroupcode + "' " +
+		"order by description" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSTestParametersListbox(iwhichdiv);
+	
+	String[] strarray = new String[2];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		
+		strarray[0] = ilist.get("id").toString();
+		
+		strarray[1] = ilist.get("description") + " (" + ilist.get("description2") + ")" ;
+		
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = section_groupcode_lb.getSelectedItem().getLabel();
+		
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+
+		populateTestParametersColumn(testparameters_column,ALS_stock_cat,iwhat);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSSectionListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("section_groupcode_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("section_groupcode_lb");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSSectionListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+		
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	ALS_stock_cat = istock_cat;
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSSectionListbox(iwhichdiv);
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		strarray[0] = ilist.get("groupcode");
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+
+		// populate section column
+
+		iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+
+		// alert("selected: " +  iwhat + " and code: " + iwhatcode);
+
+		populateSectionColumn(section_column,iwhatcode);
+		
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		Listbox oldlb = testparameters_column.getFellowIfAny("tests_description_lb");
+		if(oldlb != null) oldlb.setParent(null);
+
+		// create a new listbox and attach to div
+		Listbox newlb = makeALSTestParametersListbox(testparameters_column);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSDivisionListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("division_stockcat_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("division_stockcat_lb");
+    newlb.setVflex(true);
+
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSDivisionListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSDivisionListbox(iwhichdiv);
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateDivisionColumn()
+
+// Auto select those test-parameters boxes
+void autoAssignTestBox(String iwhich)
+{
+	istockrec = getStockMasterDetails(iwhich);
+	
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+	
+	populateSectionColumn(section_column,istockcat);
+	populateTestParametersColumn(testparameters_column,istockcat,igroupcode);
+	
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+	
+	matchListboxItems(division_stockcat_lb, divisionln);
+	matchListboxItems(section_groupcode_lb, igroupcode);
+	
+	tscode = istockrec.get("ID").toString();
+	
+	// alert(tsname);
+	
+	// ilist.get("description") + " (" + ilist.get("description2") + ")" ;
+	
+	matchListboxItems(tests_description_lb,tscode);
+
+}
+
+class TPItems_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		jcomp = event.getReference();
+		jchilds = jcomp.getChildren();
+
+		jmysoftc = (Integer.parseInt(jchilds.get(1).getLabel())).toString();
+		
+		pck_selected_item_children = jchilds;
+
+		if(!jmysoftc.equals("0"))
+			autoAssignTestBox(jmysoftc);
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeTestPackageItems_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("testpackage_items_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testpackage_items_lb");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new TPItems_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Origid");
+	hd3.setVisible(false);
+    hd3.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("mysoftcode");
+	hd2.setVisible(false);
+    hd2.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Test parameters");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    newlb.setRows(21);
+
+    return newlb;
+
+} // end of makeTestPackageItems_Listbox()
+*/
+
+Object[] testpackageItems_lb_headers = {
+
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test parameters",true)
+};
+
+void populateTestPackageItems(Div idiv, String tp_origid)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select * from TestPackage_Items where deleted=0 and testpackage_id=" + tp_origid;
+	tp_recs = sql.rows(sqlstatem);
+	sql.close();
+	
+	// Listbox newlb = makeTestPackageItems_Listbox(idiv);
+	
+	Listbox newlb = makeVWListbox(idiv, testpackageItems_lb_headers, "testpackage_items_lb", 20);
+	newlb.addEventListener("onSelect", new TPItems_Listener());
+
+	if(tp_recs != null && tp_recs.size() > 0)
+	{
+		String[] strarray = new String[3];
+
+		for(tpi : tp_recs)
+		{
+			strarray[0] = tpi.get("origid").toString();
+
+			pmysoftc = tpi.get("mysoftcode");
+			
+			strarray[1] = pmysoftc.toString();
+			
+			wops = "-NO TEST SELECTED-";
+			
+			// mysoftcode not 0, try to get stock details
+			if(pmysoftc != 0)
+			{
+				stokmast = getStockMasterDetails(pmysoftc.toString());
+
+				if(stokmast != null)
+				{
+					wops = stokmast.get("Description") + "(" + stokmast.get("Description2") + ")";
+				}
+			}
+
+			// wops = trimListitemLabel(wops,50);
+			strarray[2] = wops;
+
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+	else
+		newlb.setRows(11);
+
+}
+
+class TestPackages_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		jcomp = event.getReference();
+		origid = jcomp.getLabel(); // get origid from hidden column 1
+		
+		selected_package_id = origid; // store for later use
+		
+		ochilds = jcomp.getChildren();
+		pckname_listcell = ochilds.get(1);
+		
+		packname = ochilds.get(1).getLabel();
+		// show package-name in textbox - package_name_tb hardcoded in UI
+
+		package_name_tb.setValue(packname);
+		
+		// show the test-package items listbox - packageitems_div def in UI
+		populateTestPackageItems(packageitems_div, origid);
+		
+		// show package name in package_name_lbl - def in UI
+		package_name_lbl.setValue("Package name: " + packname);
+		
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeTestPackages_Listbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("testpackages_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testpackages_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    //newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new TestPackages_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Origid");
+    hd3.setSort("auto");
+	hd3.setVisible(false);
+    hd3.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Name");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("LastUpdate");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeTestPackages_Listbox()
+*/
+
+Object[] testpackages_lb_headers = {
+
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Name",true),
+	new listboxHeaderObj("LastUpdate",true)
+};
+
+void populateTestPackages(Div idiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select * from TestPackages where deleted=0";
+	tp_recs = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tp_recs != null)
+	{
+		// Listbox newlb = makeTestPackages_Listbox(idiv);
+		
+		Listbox newlb = makeVWListbox(idiv, testpackages_lb_headers, "testpackages_lb", 20);
+		newlb.addEventListener("onSelect", new TestPackages_Listener());
+		
+		String[] strarray = new String[3];
+
+		for(tpi : tp_recs)
+		{
+			strarray[0] = tpi.get("origid").toString();
+
+			pckname = tpi.get("package_name");
+			if(pckname.equals(""))
+				pckname = "-undefined-";
+
+			pckname = trimListitemLabel(pckname,30);
+			strarray[1] = pckname;
+
+			strarray[2] = tpi.get("lastupdate").toString().substring(0,10);
+
+			insertListItems(newlb,strarray,"false");
+		}
+
+	}
+}
+
+void createNewTestPackage()
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	// todaydate_str def top
+	
+	sqlstatem = "insert into TestPackages values ('','" + todaydate_str + "',0)";
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh the TestPackage listbox - packages_div def in UI
+	populateTestPackages(packages_div);
+
+}
+
+boolean isUniqTestPackageName(String ichk)
+{
+	retval = true;
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlst = "select package_name from TestPackages where package_name='" + ichk + "'";
+	therec = sql.firstRow(sqlst);
+	
+	if(therec != null) retval = false;
+	
+	sql.close();
+	
+	return retval;
+	
+}
+
+// get package name in textbox and update into database
+void updateTestPackageName()
+{
+	pckname = package_name_tb.getValue();
+	if(pckname.equals("")) return;
+	if(selected_package_id.equals("")) return;
+
+	pcknamewrite = replaceSingleQuotes(pckname);
+	
+	if(!isUniqTestPackageName(pcknamewrite))
+	{
+		showMessageBox("Test package name is not unique");
+		return;
+	}
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlst = "update TestPackages set package_name='" + pcknamewrite + "',  lastupdate='" + todaydate_str + "' where origid=" + selected_package_id;
+	sql.execute(sqlst);
+	sql.close();
+	
+	// show testpackage name in listbox item - global pckname_listcell is set in the testpackage listbox onselect event
+	pckname_listcell.setLabel(pcknamewrite);
+}
+
+void delTestPackage()
+{
+	if(selected_package_id.equals("")) return;
+	
+	packname = package_name_tb.getValue();
+	
+	if (Messagebox.show("Delete this test package : " + packname , "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlst = "update TestPackages set deleted=1 where origid=" + selected_package_id;
+	sql.execute(sqlst);
+	
+	sql.close();
+	
+	// clear and refresh listboxes
+	populateTestPackages(packages_div);
+	testpackage_items_lb.setParent(null);
+	package_name_lbl.setValue("Package name: ");
+	
+}
+
+void createNewTestPackageItem()
+{
+	// Make sure selected a package before adding, otherwise headless item.. muhahaha
+	if(selected_package_id.equals("")) return;
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	// todaydate_str def top
+	
+	sqlstatem = "insert into TestPackage_Items values (0," + selected_package_id + ",0)";
+	sql.execute(sqlstatem);
+
+	sql.close();
+	
+	// refresh the TestPackage Items listbox - packages_div def in UI
+	populateTestPackageItems(packageitems_div, selected_package_id);
+}
+
+void removeTestPackageItem()
+{
+	
+	if(selected_package_id.equals("") || pck_selected_item_children == null) return;
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	jorigid = pck_selected_item_children.get(0).getLabel();
+	
+	sqlstatem = "delete from TestPackage_Items where origid=" + jorigid;
+	sql.execute(sqlstatem);
+
+	sql.close();
+	
+	// refresh the TestPackage Items listbox - packages_div def in UI
+	populateTestPackageItems(packageitems_div, selected_package_id);
+
+}
+
+]]>
+</zscript>
+
+<div width="1020px">
+<panel id="testpackages_man_panel" title="Test Packages Setup" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+
+<div>
+<borderlayout height="600px">
+<north>
+	
+	<borderlayout height="350px">
+	<west title="Packages" size="40%" splittable="true" collapsible="true">
+	<div>
+		<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+		
+		<separator height="3px" />
+		
+		<div id="packages_div" />
+		<separator height="3px" />
+		
+		<hbox>
+			<separator width="3px" />
+			<label value="Package name" />
+			<textbox id="package_name_tb" width="250px"  />
+		</hbox>
+		
+		<separator height="3px" />
+		<hbox>
+			<button label="New package" onClick="createNewTestPackage()" />
+			<button label="Update package name" onClick="updateTestPackageName()" />
+			<button label="Remove package" onClick="delTestPackage()" />
+		</hbox>
+	</div>
+	</west>
+
+	<center title="Package items">
+		<div>
+			<separator height="3px" />
+			
+			<hbox>
+				<separator width="3px" />
+				<label id="package_name_lbl" value="Package name:" />
+			</hbox>
+				
+			<separator height="3px" />
+
+			<div id="packageitems_div" />
+			<separator height="3px" />
+			
+			<hbox>
+				<button label="New item" onClick="createNewTestPackageItem()" />
+				<button label="Remove item" onClick="removeTestPackageItem()" />
+			</hbox>
+
+		</div>
+
+	</center>
+	</borderlayout>
+
+</north>
+
+<center>
+	<borderlayout height="200px">
+		<center>
+			<!-- test parameters from mysoft -->
+			<borderlayout id="mysoft_testparams" height="200px">
+			
+				<west title="Division" size="150px" flex="true" splittable="true" collapsible="true">
+					<div id="division_column" />
+				</west>
+	
+				<center>
+					<borderlayout height="200px" width="100%">
+						<west title="Section" size="150px" flex="true" splittable="true" collapsible="true">
+							<div id="section_column" />
+						</west>
+	
+						<center>
+							<borderlayout height="200px" width="100%">
+								<west title="Test parameters" size="100%" flex="true" splittable="true" collapsible="true">
+									<div id="testparameters_column" />
+								</west>
+							</borderlayout>
+						</center>
+			
+					</borderlayout>
+				</center>
+			</borderlayout>
+			<!-- end of test parameters from mysoft -->
+		</center>
+	</borderlayout>
+</center>
+
+</borderlayout>
+</div>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+todaydate_str = getDateFromDatebox(hiddendatebox);
+
+if(can_access)
+{
+	populateTestPackages(packages_div);
+	populateDivisionColumn(division_column);
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+
+</zk>
+

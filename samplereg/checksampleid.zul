@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="checksampleid_box"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : barcode scanned sample-id, show folder with all details
+Written by : Victor
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+guihand = new GuiFuncs();
+sqlhand = new SqlFuncs();
+samphand = new SampleReg();
+lbhand = new ListboxHandler();
+
+void showFolderDrillerBox(String iwhich)
+{
+	if(iwhich.equals("")) return;
+	foldn = samphand.extractFolderString_FromSampleID(iwhich);
+	theparam = "folderno=" + foldn;
+	uniqwindowid = kiboo.makeRandomId("xpfoldpx");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void showFolderDrillerBox_NumOnly(String inum)
+{
+	if(inum.equals("")) return;
+
+	kkb = Integer.parseInt(inum);
+	samprec = samphand.getFolderSampleRec(kkb.toString());
+	if(samprec != null)
+	{
+		tempfoldn = samprec.get("sampleid_str");
+		foldn = samphand.extractFolderString_FromSampleID(tempfoldn);
+		theparam = "folderno=" + foldn;
+		uniqwindowid = kiboo.makeRandomId("xpfoldpxp");
+		guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+	}
+}
+
+void folderDriller()
+{
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	foldn = folderjobs_lb.getSelectedItem().getLabel();
+	theparam = "folderno=" + foldn;
+	uniqwindowid = kiboo.makeRandomId("xpfoldpxp");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("CustomerPO",true),
+	new listboxHeaderObj("CustomerCOC",true),
+	new listboxHeaderObj("Customer",true)
+};
+
+void showFolderDrillerBox_customerpo(String inum)
+{
+	if(inum.equals("")) return;
+	tofind = kiboo.replaceSingleQuotes(inum);
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstat = "select folderno_str,datecreated,customerpo,customercoc,ar_code from jobfolders where " +
+		"customerpo like '%" + tofind + "%' or customercoc like '%" + tofind + "%'";
+	foldrecs = sql.rows(sqlstat);
+	sql.close();
+	reccount = foldrecs.size();
+	if(reccount == 0) return;
+	Listbox newlb = lbhand.makeVWListboxWithFooter(posearch_div, folders_lb_headers, "folderjobs_lb", 20, reccount.toString() + " folders");
+	viewdet_butt.setVisible(true);
+
+	String[] strarray = new String[5];
+	
+	for(onerec : foldrecs)
+	{
+		strarray[0] = onerec.get("folderno_str");
+		strarray[1] = onerec.get("datecreated").toString().substring(0,10);
+		strarray[2] = onerec.get("customerpo");
+		strarray[3] = onerec.get("customercoc");
+
+		iar_code = onerec.get("ar_code");
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals("")) icompanyname = sqlhand.getCompanyName(iar_code);
+
+		strarray[4] = icompanyname;
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+]]>
+</zscript>
+
+<div width="800px">
+<panel id="checksampleid_panel" title="Quick check sample ID" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div style="padding:2px">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Full SampleID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="Check full sample id" style="font-size:9px" onClick="showFolderDrillerBox(sampleid_tb.getValue())" />
+			<label value="(eg. ALSM00001 or ALSM0000100106)" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="SampleID number" style="font-size:9px" />
+			<textbox id="sampleid_num_tb" style="font-size:9px" />
+			<button label="Check only sample number" style="font-size:9px" onClick="showFolderDrillerBox_NumOnly(sampleid_num_tb.getValue())" />
+			<label value="(eg. 106 or 00106)" style="font-size:9px" />		
+		</row>
+		<row>
+			<label value="Customer PO/COC" style="font-size:9px" />
+			<textbox id="customer_po_tb" style="font-size:9px" />
+			<button label="Check customer PO or COC field" style="font-size:9px" onClick="showFolderDrillerBox_customerpo(customer_po_tb.getValue())" />
+			<label value="(eg. PO1234)" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+</div>
+
+<div id="posearch_div" />
+<button id="viewdet_butt" label="View details" style="font-size:9px" onClick="folderDriller()" visible="false" />
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+// Klunky way to set "onOK/Enter key detection" listener .. but it'll be useful for other modules
+class sampleid_tb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		showFolderDrillerBox(sampleid_tb.getValue());
+	}
+}
+sampleid_tb.addEventListener("onOK",new sampleid_tb_Listener());
+
+class sampleid_num_tb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		showFolderDrillerBox_NumOnly(sampleid_num_tb.getValue());
+	}
+}
+sampleid_num_tb.addEventListener("onOK",new sampleid_num_tb_Listener());
+
+class customer_po_tb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		showFolderDrillerBox_customerpo(customer_po_tb.getValue());
+	}
+}
+customer_po_tb.addEventListener("onOK",new customer_po_tb_Listener());
+
+]]>
+</zscript>
+
+
+</zk>

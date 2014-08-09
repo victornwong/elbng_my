@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="folderdrill_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+
+<![CDATA[
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+
+Title		: folders driller - allow update of sample marking and folders metadata, even delete samples
+Version		: 2.0
+Written by	: Victor Wong
+
+**NOTES**
+
+30/09/2010: Add button to let user view attached-documents and do some cleanup
+15/03/2012: version 2, total recoding from folderjobs_driller.zul
+
+*/
+
+import org.victor.*;
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+lbhandler = new ListboxHandler();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_folderno = Executions.getCurrent().getParameter("folderno");
+folderno_str = "";
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+
+]]>
+</zscript>
+
+<window id="folderdrill_win" width="900px" height="560px" title="Folder/Job v2.0" position="center" mode="overlapped" border="normal" closable="true"
+    onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+
+<borderlayout height="490px">
+
+<west title="Folder information" size="52%" splittable="true" collapsible="true">
+<div>
+<!-- folder metadata -->
+	<div style="background:#AA9955;padding:3px">
+		<label id="customername" style="font-size:13px;font-weight:bold" />
+		<hbox>
+		<button id="showcashacct_btn" label="CashAcct Details" style="font-size:9px" onClick="showCashAccountDetails_clicker()" />
+		<button id="viewdoculinks_btn" label="COC/COA/Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+		</hbox>
+	</div>
+
+	<separator height="5px" />
+	
+	<grid>
+		<rows>
+			<row>
+				<label value="Folder.No" style="font-size:9px" />
+				<textbox id="folderno" disabled="true" />
+				<label value="CustCode" style="font-size:9px" />
+				<textbox id="ar_code" width="80px" disabled="true" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Contact person" style="font-size:9px" />
+				<textbox id="attention" width="200px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Cust.PO" style="font-size:9px" />
+				<textbox id="customer_po" style="font-size:9px" />
+				<label value="Cust.COC" style="font-size:9px" />
+				<textbox id="customer_coc" style="font-size:9px" />			
+			</row>
+		</rows>
+	</grid>
+
+	<groupbox>
+		<caption label="Dates" />
+			<grid>
+				<rows>
+					<row>
+						<label value="Date samples received" style="font-size:9px" />
+						<datebox id="date_created" format="yyyy-MM-dd" style="font-size:9px" />
+						<label value="Due date" style="font-size:9px" />
+						<datebox id="due_date" format="yyyy-MM-dd" disabled="true" style="font-size:9px" />
+					</row>
+					<row>
+						<label value="TAT" style="font-size:9px" />
+						<hbox>
+							<listbox id="tat_dd" mold="select" style="font-size:9px" />
+							<label value=" day(s)" style="font-size:9px" />
+						</hbox>
+					</row>
+					<row>
+						<label value="Customer requested due date" style="font-size:9px" />
+						<datebox id="clientreq_duedate" format="yyyy-MM-dd" style="font-size:9px" />
+						<label value="Priority" style="font-size:9px" />
+						<listbox id="priority_dd" mold="select" style="font-size:9px" />					
+					</row>
+				</rows>
+			</grid>
+			<zscript>
+				//lbhandler.populateDropdownListbox(tat_dd,desiredTAT);
+				//lbhandler.populateDropdownListbox(priority_dd,priorities);
+					// use this eventlistener to calc the TAT based on what's been selected
+					// tat_dd.addEventListener("onSelect", new TAT_DD_Listener());
+			</zscript>
+		</groupbox>
+			
+		<groupbox>
+			<caption label="Delivery Details"/>
+				<grid>
+					<rows>
+						<row>
+							<label value="Mode of delivery" style="font-size:9px" />
+							<listbox id="modeofdelivery" mold="select" style="font-size:9px" />
+							<label value="SecuritySeal" style="font-size:9px" />
+							<listbox id="securityseal" mold="select" style="font-size:9px" />
+						</row>
+						<row>
+							<label value="No. of Coolers/Boxes" style="font-size:9px" />
+							<textbox id="boxescount" width="50px" style="font-size:9px" />
+							<label value="Temperature" style="font-size:9px" />
+							<textbox id="box_temperature" width="50px" style="font-size:9px" />						
+						</row>
+					</rows>
+				</grid>
+				<zscript>
+					//lbhandler.populateDropdownListbox(modeofdelivery,modeDelivery);
+					//lbhandler.populateDropdownListbox(securityseal,securitySeals);
+				</zscript>
+
+			<vbox>
+				<checkbox id="allgoodorder" label="All samples and paperwork received in good order" style="font-size:9px" />
+				<checkbox id="paperworknot" label="No paperwork included. Get customer's requirement" style="font-size:9px" />
+				<checkbox id="paperworksamplesnot" label="Paperwork/Samples incomplete or ambigious. Please contact customer" style="font-size:9px" />
+				<checkbox id="samplesdamaged" label="Samples were damaged during transit. Please contact customer" style="font-size:9px" />
+			</vbox>
+			<separator height="5px" />
+			<hbox>
+				<label value="Comments" style="font-size:9px" />
+				<textbox id="extranotes" multiline="true" height="45px" width="350px" style="font-size:9px" />
+			</hbox>
+		</groupbox>
+</div>
+<!-- end of folder metadata -->
+</west>
+
+<center title="Samples">
+<div>
+	<separator height="2px" />
+	<button label="Print Labels" style="font-size:9px" onClick="printSampleLabels_Wrapper()" />
+	<button id="delsample_btn" label="Un/Delete" style="font-size:9px" visible="false" onClick="deleteSampleFake()" />
+	<separator height="2px" />
+	<tree id="sampletests_tree" zclass="z-dottree" rows="16" width="100%" > <!-- onSelect="sampleTreeOnSelect(sampletests_tree,sampmark_tb,sampnotes_tb)" > -->
+		<treecols>
+			<treecol label="SampleID/Sample Marking/Tests" />
+		</treecols>
+	</tree>
+	<separator height="3px" />
+	<grid>
+		<rows>
+			<row spans="3">
+				<label id="showsampleid_lbl" style="font-size:9px; background:#202020; color:#ffffff" />
+			</row>
+			<row>
+				<label value="Sample marking" style="font-size:9px" />
+				<textbox id="sampmark_tb" width="210px" disabled="true" style="font-size:9px" />
+				<button id="updatesamplemarking_btn" label="Update" onClick="updateSampleMarking(sampmark_tb,sampnotes_tb)" visible="false" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Sample description" style="font-size:9px" />
+				<textbox id="sampnotes_tb" multiline="true" height="40px" width="210px" disabled="true" style="font-size:9px" />			
+			</row>
+		</rows>
+	</grid>
+</div>
+</center>
+
+</borderlayout>
+
+<separator height="5px" />
+
+<!--
+<button id="updatefolder_btn" label="Update" visible="false" style="font-size:9px" onClick="whathuh.saveDetails()" />
+-->
+<button label="Print SRA" style="font-size:9px" onClick="printSRA_Wrapper()" />
+<button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+
+<zscript>
+
+</zscript>
+</div>
+</window>
+</zk>

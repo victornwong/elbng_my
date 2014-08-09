@@ -1,0 +1,947 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="runs_list_fun"?>
+<!--
+
+Version				: Allow lab users to create run-list
+Coding began date	:
+Developers			: Victor
+
+**NOTES**
+
+Design notes:
+
+1. List uniq test-parameters from JobTestParameters table and show in listbox
+2. show all samples-id which have the test-parameter selected from above listbox
+3. make sure these samples-id is not already in a run-list
+4. show a blank listbox which allow user to select the samples-id and drop into
+5. save the run-list as new
+6. allow user to print out the run-list, this run-list must contain sample-id and the test to perform
+7. this run-list will be used for result-entry module later
+8. at the end, release folders, will make use of results done in result-entry module
+
+31/3/2010:
+Make use of uploadToLIMS field as indicator for sample already def in a run-list
+
+-->
+
+<zk>
+
+<style>
+tr.myodd td.z-row-inner, tr.myodd {
+	background-color: #E4EBF8;
+}
+.myimg {
+	margin: 5px; border: 1px solid #B0C75E;
+}
+div.z-column-cnt {
+	text-align: center; font-weight: bold;
+}
+div.z-row-cnt span {
+	font-family: Tahoma,Arial,serif;
+	color: #0E3A99;
+}
+</style>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+glob_mysoftcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+void showmeparent(Component icompo)
+{
+	alert("parent=" + icompo.getParent().getId());
+}
+
+// this onSelect event listener belongs to makeGridDetails_Listbox
+// will get the sample-id and activate window to show test-parameters, results, runs and so on
+class sampleidlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbid = event.getReference();
+		isampid = lbid.getLabel();
+		
+		// alert(isampid);
+		
+/*		
+		theparam = "folderno=" + ifolderno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+		*/
+	}
+}
+
+Listbox makeGridDetails_Listbox(Detail mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	/*
+	Listbox oldlb = mDiv.getFellowIfAny("samples_lb");
+	if(oldlb != null) oldlb.setParent(null);
+	*/
+
+    Listbox newlb = new Listbox();
+    newlb.setVflex(true);
+	
+	// newlb.addEventListener("onSelect", new sampleidlb_Listener());
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Sample marking");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    Listheader hd5 = new Listheader();
+    hd5.setLabel("Notes");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+	/*
+	
+    Listheader hd6 = new Listheader();
+    hd6.setLabel("Result");
+    hd6.setSort("auto");
+    hd6.setParent(newhead);
+	*/
+
+    newlb.setRows(5);
+
+    return newlb;
+
+} // end of makeGridDetails_Listbox()
+
+Object[] griddetails_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Sample marking",true),
+	new listboxHeaderObj("Notes",true),
+};
+
+void updateGridRowDetails(Detail idetail, int ifolder_id)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	// get all sample-ids for the folder
+	
+	sqlstatem = "select sampleid_str,samplemarking,extranotes from JobSamples where jobfolders_id=" + ifolder_id + " and deleted=0 order by sampleid_str asc";
+	allsampleids = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(allsampleids != null)
+	{
+		det_lb = makeGridDetails_Listbox(idetail);
+		
+		String[] strarray = new String[3];
+		
+		for(isampid : allsampleids)
+		{
+			strarray[0] = isampid.get("sampleid_str");
+			strarray[1] = isampid.get("samplemarking");
+			strarray[2] = isampid.get("extranotes");
+		
+			insertListItems(det_lb,strarray,"false");
+		}
+	}
+
+}
+
+int updateGridRow(Rows iparentrow, String isearchdate)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	// find all folders based on isearchdate
+	sqlstatem = "select * from JobFolders where deleted=0 and folderstatus in ('" + FOLDERLOGGED +"','" + FOLDERCOMMITED + "') " +
+		isearchdate + " order by origid";
+
+	foldrecs = sql.rows(sqlstatem);
+	sql.close();
+	
+	retrec = 0;
+	
+	if(foldrecs != null)
+	{
+		retrec = foldrecs.size();
+		
+		for(ifoldrec : foldrecs)
+		{
+			ifoldstr = ifoldrec.get("folderno_str");
+			ifoldorigid = ifoldrec.get("origid");
+			ifoldar_code = ifoldrec.get("ar_code");
+
+			// create a new Row
+			Row newrow = new Row();
+
+			Detail thedetails = new Detail();
+			updateGridRowDetails(thedetails,ifoldorigid);
+			
+			thedetails.setParent(newrow);
+			
+			// show folder no.
+			Label lbl_foldno = new Label();
+			lbl_foldno.setValue(ifoldstr);
+			lbl_foldno.setParent(newrow);
+			
+			// show duedate
+			Label lbl_duedate = new Label();
+			dued_str = ifoldrec.get("duedate").toString().substring(0,10);
+			//dued_str = dued_str.substring(0,10);
+			lbl_duedate.setValue(dued_str);
+			lbl_duedate.setParent(newrow);
+			
+			// show number of samples
+			numsamps = getNumberOfSamples_InFolder(ifoldorigid);
+			Label lbl_numsamp = new Label();
+			
+			lbl_numsamp.setValue(numsamps.toString());
+			lbl_numsamp.setParent(newrow);
+			
+			// show customer name
+			Label lbl_custname = new Label();
+			custname = getCompanyName(ifoldar_code);
+			
+			lbl_custname.setValue(custname);
+			lbl_custname.setParent(newrow);
+			
+			newrow.setParent(iparentrow);
+		}
+	}
+	
+	return retrec;
+}
+
+String showDateInGroupLabel(String prestr, int numdays)
+{
+	datess = getDateString(todayDate,sdf,numdays);
+	return prestr + " : " + datess;
+}
+
+Listbox makeSampleIDs_Listbox(Detail mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	/*
+	Listbox oldlb = mDiv.getFellowIfAny("samples_lb");
+	if(oldlb != null) oldlb.setParent(null);
+	*/
+
+    Listbox newlb = new Listbox();
+    newlb.setVflex(true);
+	
+	// newlb.addEventListener("onSelect", new sampleidlb_Listener());
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+	/*
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Sample marking");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    Listheader hd5 = new Listheader();
+    hd5.setLabel("Notes");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+    Listheader hd6 = new Listheader();
+    hd6.setLabel("Result");
+    hd6.setSort("auto");
+    hd6.setParent(newhead);
+	*/
+
+    newlb.setRows(5);
+
+    return newlb;
+
+} // end of makeSampleIDs_Listbox()
+
+
+void showSampleIDs_TestParameter(Rows iparentrows, String imysoftcode)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	// now show all sample-ids which have this test-parameter and not already in a run-list
+			
+	sqlst2 = "select JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking from JobTestParameters " + 
+				"left join JobSamples on JobTestParameters.jobsamples_id = JobSamples.origid where " +
+				"JobTestParameters.mysoftcode=" + imysoftcode + " and JobTestParameters.mysoftcode != 0 " +
+				"group by JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking";
+					
+	samples_recs = sql.rows(sqlst2);
+	
+	sql.close();
+			
+	if(samples_recs != null)
+	{
+		Row newrow = new Row();
+		Detail thedetails = new Detail();
+			
+		newlb = makeSampleIDs_Listbox(thedetails);
+		
+		// now show all sample-ids which have this test parameter
+		for(ismp : samples_recs)
+		{
+			String[] strarray = new String[1];
+			isampidstr = ismp.get("sampleid_str");
+			
+			strarray[0] = isampidstr;
+
+			insertListItems(newlb,strarray,"true");
+		}
+		
+		klkl = samples_recs.size();
+		newrowscount = (klkl < 10) ? klkl : 10;
+		newlb.setRows(newrowscount);
+		
+		thedetails.setParent(newrow);					
+
+		Label lbl_justtext = new Label();
+		lbl_justtext.setValue("Click + to view all sample IDs and create run-list");
+		lbl_justtext.setParent(newrow);
+
+		newrow.setParent(iparentrows);
+
+	}
+
+}
+
+void updateTestParametersGridRow(Rows iparentrows)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlst1 = "select distinct mysoftcode from JobTestParameters where mysoftcode != 0";
+	testparams = sql.rows(sqlst1);
+	
+	if(testparams != null)
+	{
+		// show test parameters;
+		// 		<group id="od_grouplabel" label="Test parameters" />
+		
+		for(itestp : testparams)
+		{
+			mysoftc = itestp.get("mysoftcode");
+			mysoftc_str = mysoftc.toString();
+			mysoft_stockdet = getStockMasterDetails(mysoftc_str);
+			
+			if(mysoft_stockdet != null)
+			{
+				Group newgrplbl = new Group();
+				
+				testdesc = mysoft_stockdet.get("Description");
+				
+				newgrplbl.setLabel(testdesc);
+				newgrplbl.setParent(iparentrows);
+			}
+
+			showSampleIDs_TestParameter(iparentrows, mysoftc_str);
+
+		}
+	}
+	
+	sql.close();
+
+}
+
+/*
+Listbox makeSampleID_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("sampleid_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("sampleid_lb");
+    newlb.setVflex(true);
+	
+	// newlb.addEventListener("onSelect", new uniqtestParams_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd2 = new Listheader();
+    hd2.setLabel("origid");
+    hd2.setSort("auto");
+	hd2.setVisible(false);
+    hd2.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+	
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Due");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+
+    newlb.setRows(32);
+
+    return newlb;
+
+} // end of makeSampleID_Listbox()
+*/
+
+Object[] sampleid_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Due",true),
+};
+
+// populate listbox according to mysoftcode (test param) and sample-id
+void populateTestParam_SampleId(String imysoftc)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	// now show all sample-ids which have this test-parameter and not already in a run-list
+	
+	ibranch = useraccessobj.branch;
+	branch_str = "";
+
+	if(!ibranch.equals("ALL"))
+		branch_str = "and JobFolders.branch='" + ibranch + "' ";
+
+	sqlst2 = "select JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking, JobSamples.uploadToLIMS, " + 
+				"JobTestParameters.uploadToLIMS, jobsamples.deleted, jobsamples.jobfolders_id, jobfolders.origid as jf_origid, jobfolders.duedate, jobfolders.branch " +
+				"from JobTestParameters " + 
+				"left join JobSamples on JobTestParameters.jobsamples_id = JobSamples.origid " +
+				"left join JobFolders on  JobSamples.jobfolders_id = JobFolders.origid " +
+				"where JobTestParameters.mysoftcode=" + imysoftc + " and JobTestParameters.mysoftcode != 0 " +
+				"and JobTestParameters.uploadToLIMS = 0 and jobsamples.deleted = 0 " +
+				branch_str +
+				"group by JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking, JobSamples.uploadToLIMS, " +
+				"JobTestParameters.uploadToLIMS, jobsamples.deleted, jobsamples.jobfolders_id, jobfolders.origid, jobfolders.duedate, jobfolders.branch ";
+
+	samples_recs = sql.rows(sqlst2);
+	
+	sql.close();
+	
+	if(samples_recs == null) return;
+
+	//Listbox newlb = makeSampleID_Listbox(sampleid_div); // sampleid_div is def in UI
+	Listbox newlb = makeVWListbox(sampleid_div, sampleid_lb_headers, "sampleid_lb", 32);
+	String[] strarray = new String[3];
+
+	for(isamp : samples_recs)
+	{
+		strarray[0] = isamp.get("origid").toString();
+		strarray[1] = isamp.get("sampleid_str");
+		strarray[2] = isamp.get("duedate").toString().substring(0,10);
+		//insertListItems(newlb,strarray,"runsampleid");
+		insertListItems_DragDrop(newlb, strarray,"runsampleid", 2);
+	}
+
+}
+
+class uniqtestParams_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// Component lbox = event.getTarget();
+		// lbox.getSelectedItem().getLabel();
+		
+		itest_mysoftc = event.getReference().getLabel();
+		
+		populateTestParam_SampleId(itest_mysoftc);
+		
+		// fill up the runs listbox too
+		populateAllRunList(allrunlist_div, itest_mysoftc);
+		
+		glob_mysoftcode = itest_mysoftc; // keep a global
+
+	}
+}
+
+/*
+Listbox makeUniqTestParams_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("uniqtestparams_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("uniqtestparams_lb");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new uniqtestParams_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd2 = new Listheader();
+    hd2.setLabel("mysoftcode");
+    hd2.setSort("auto");
+	hd2.setVisible(false);
+    hd2.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Parameters");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    newlb.setRows(28);
+
+    return newlb;
+
+} // end of makeUniqTestParams_Listbox()
+*/
+
+Object[] uniqtestparams_lb_headers = {
+
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Parameters",true),
+};
+
+void populateUniqueTestParameters(Div idiv)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlst1 = "select distinct top 10 mysoftcode from JobTestParameters where mysoftcode != 0";
+	testparams = sql.rows(sqlst1);
+	
+	sql.close();
+	
+	if(testparams != null)
+	{
+		//Listbox newlb = makeUniqTestParams_Listbox(idiv);
+		Listbox newlb = makeVWListbox(idiv, uniqtestparams_lb_headers, "uniqtestparams_lb", 28);
+		newlb.addEventListener("onSelect", new uniqtestParams_Listener());
+		
+		String[] strarray = new String[2];
+
+		// show test parameters;
+		// 		<group id="od_grouplabel" label="Test parameters" />
+		
+		for(itestp : testparams)
+		{
+			mysoftc = itestp.get("mysoftcode");
+			mysoftc_str = mysoftc.toString();
+			mysoft_stockdet = getStockMasterDetails(mysoftc_str);
+			
+			if(mysoft_stockdet != null)
+			{
+				strarray[0] = mysoftc_str;
+				
+				testdesc = mysoft_stockdet.get("Description");
+				testmethod = mysoft_stockdet.get("Description2");
+
+				strarray[1] = testdesc + " (" + testmethod + ") " + mysoftc_str;
+
+				insertListItems(newlb,strarray,"false");
+			}
+		}
+	}
+}
+
+void playFolderDriller(String ifoldno)
+{
+		theparam = "folderno=" + ifoldno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void viewSampleDetails()
+{
+	if(sampleid_lb.getSelectedIndex() == -1) return;
+	
+	lbitm = sampleid_lb.getSelectedItem();
+	folderid = getListcellItemLabel(lbitm, 1);
+	
+	folderno = extractFolderString_FromSampleID(folderid);
+	playFolderDriller(folderno);
+}
+
+/*
+Listbox makeAllRunList_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("allrunlist_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("allrunlist_lb");
+    newlb.setVflex(true);
+	
+	// newlb.addEventListener("onSelect", new uniqtestParams_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd2 = new Listheader();
+    hd2.setLabel("Run#");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+	Listheader hd4 = new Listheader();
+    hd4.setLabel("Status");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+
+	Listheader hd1 = new Listheader();
+    hd1.setLabel("Created");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+	
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Done");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeAllRunList_Listbox()
+*/
+
+Object[] allrunlist_lb_headers = {
+
+	new listboxHeaderObj("Run#",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Created",true),
+	new listboxHeaderObj("Done",true),
+};
+
+void populateAllRunList(Div idiv, String imysoftcode)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	iusername = useraccessobj.username;
+	ibranch = useraccessobj.branch;
+	
+	masq_branch = branch_drd.getSelectedItem().getLabel();
+	
+	// admin login or someone with view-all branches access, use the masquerading branch from drop-down box.
+	if(ibranch.equals("ALL") || useraccessobj.accesslevel == 9) 
+		ibranch = masq_branch;
+	
+	sqlst = "select * from RunList where mysoftcode='" + imysoftcode + "' and branch='" + ibranch + "' and username='" + iusername + "' ";
+	
+	runs_recs = sql.rows(sqlst);
+	
+	sql.close();
+	
+	if(runs_recs == null) return;
+
+	//Listbox newlb = makeAllRunList_Listbox(idiv); // sampleid_div is def in UI
+	Listbox newlb = makeVWListbox(idiv, allrunlist_lb_headers, "allrunlist_lb", 20);
+	
+	String[] strarray = new String[4];
+
+	for(irun : runs_recs)
+	{
+		strarray[0] = irun.get("origid").toString();
+		strarray[1] = irun.get("runstatus");
+		strarray[2] = irun.get("datecreated").toString().substring(0,10);
+		
+		kkk = irun.get("datecompleted").toString().substring(0,10);
+		if(kkk.equals("1900-01-01"))
+			kkk = "";
+		
+		strarray[3] = kkk;
+		
+		insertListItems(newlb,strarray,"false");
+	}
+
+}
+
+void makeNewRun(Div idiv)
+{
+	// no test selected
+	if(uniqtestparams_lb.getSelectedIndex() == -1) return;
+	
+	imysoftcode = uniqtestparams_lb.getSelectedItem().getLabel();
+	iusername = useraccessobj.username;
+	ibranch = useraccessobj.branch;
+	
+	if(ibranch.equals("ALL")) // if admin trying to create a run, default branch to SA
+		ibranch = "SA";
+	
+	idatecreated = getDateFromDatebox(hiddendatebox);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlstat = "insert into RunList values ('','" + iusername + "','" + idatecreated + "','','','DRAFT','','','" + ibranch + "'," + imysoftcode + ",0)";
+	sql.execute(sqlstat);
+	
+	sql.close();
+	
+	populateAllRunList(idiv,imysoftcode);
+
+	// alert(sqlstat);
+
+}
+
+void playAssignSampleWindow(String irunorigid,String imysoftc, String irunstat)
+{
+		theparam = "runno=" + irunorigid + "&mysoftcode=" + imysoftc + "&runstat=" + irunstat;
+		uniqwindowid = makeRandomId("xrlasx");
+		globalActivateWindow("miscwindows","lab/runlistassign_samples.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void assignSampleToRunList()
+{
+	if(allrunlist_lb.getSelectedIndex() == -1 ) return;
+	
+	ilabel = allrunlist_lb.getSelectedItem();
+	
+	runlist_origid = ilabel.getLabel();
+	runstat = getListcellItemLabel(ilabel, 1);
+	
+	playAssignSampleWindow(runlist_origid,glob_mysoftcode, runstat);
+
+}
+
+// Commit the run, set flag
+void commitRun()
+{
+	if(allrunlist_lb.getSelectedIndex() == -1 ) return;
+
+	lbitm = allrunlist_lb.getSelectedItem();
+	runstatus = getListcellItemLabel(lbitm, 1);
+	runlist_origid = lbitm.getLabel();
+
+	runstat_str = RUNLIST_WIP;
+	
+	if(runstatus.equals(RUNLIST_WIP))
+		runstat_str = RUNLIST_DRAFT;
+		
+	if(runstatus.equals(RUNLIST_RELEASED))
+	{
+		showMessageBox("Run already released, cannot change anything");
+		return;
+	}
+		
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "update RunList set runstatus='" + runstat_str + "' where origid=" + runlist_origid;
+	sql.execute(sqlst);
+	
+	sql.close();
+	
+	// refresh run-list
+	populateAllRunList(allrunlist_div, glob_mysoftcode);
+
+}
+
+void uncommitRun()
+{
+	if(allrunlist_lb.getSelectedIndex() == -1 ) return;
+
+	runlist_origid = allrunlist_lb.getSelectedItem().getLabel();
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "update RunList set runstatus='" + RUNLIST_DRAFT + "' where origid=" + runlist_origid;
+	sql.execute(sqlst);
+	
+	sql.close();
+	
+	// refresh run-list
+	populateAllRunList(allrunlist_div, glob_mysoftcode);
+}
+
+]]>
+</zscript>
+
+<!-- RunList details popup -->
+<popup id="runlistDetailsPopup">
+
+<groupbox>
+<caption label="Run details" />
+	<div id="testpackages_div" width="250px" />
+
+	<button label="Get test package"  />
+
+</groupbox>
+
+</popup>
+<!-- end of RunList def samples popup -->
+
+<div width="1100px">
+<panel id="runs_list_panel" title="Runs List" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="600px">
+	<west title="Test" size="35%" splittable="true" collapsible="true">
+	<div>
+		<div id="testparam_div" />
+		
+		<div id="branch_div" visible="false" >
+			<label value="Branch" />
+			<listbox id="branch_drd" mold="select" />
+		</div>
+
+	</div>
+	</west>
+
+	<center>
+		<borderlayout height="600px">
+			<west title="Samples" size="35%" splittable="true" collapsible="true">
+			<div>
+				<div id="sampleid_div" />
+				<button id="viewfolder_butt" label="View details" onClick="viewSampleDetails()" />
+			</div>
+			</west>
+
+			<center title="Runs">
+				<div>
+
+					<vbox>
+					<div id="allrunlist_div" />
+
+					<hbox>
+						<button label="New run" onClick="makeNewRun(allrunlist_div)" />
+						<button label="Un/Commit run" onClick="commitRun()" />
+						<button label="Print run list" />
+						<button label="Remove run" />
+					</hbox>
+					
+					<hbox>
+						<button label="Assign samples" onClick="assignSampleToRunList()" />
+					</hbox>
+
+					</vbox>
+
+					<div id="runlist_div" />
+
+				</div>
+			</center>
+
+		</borderlayout>
+	</center>
+
+</borderlayout>
+
+<!-- starts of folders schedule -->
+<!--
+<grid fixedLayout="true" width="980px" oddRowSclass="myodd">
+	<columns>
+		<column width="30px" />
+		<column label="Test Parameters"/>
+	</columns>
+
+	<rows id="maingridrows">
+
+		<zscript>
+			// updateTestParametersGridRow(maingridrows);
+		</zscript>
+	
+	</rows>
+</grid>
+-->
+<!-- end of folders schedule -->
+
+</div>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+
+// admin login, show branch dropdrown
+if(useraccessobj.accesslevel == 9)
+{
+	populateDropdownListbox(branch_drd, dd_branches);
+	branch_div.setVisible(true);
+}
+
+setTodayDatebox(hiddendatebox);
+
+populateUniqueTestParameters(testparam_div);
+
+makeVWListbox(sampleid_div, sampleid_lb_headers, "sampleid_lb", 32);
+//makeSampleID_Listbox(sampleid_div);
+
+makeVWListbox(allrunlist_div, allrunlist_lb_headers, "allrunlist_lb", 20);
+//makeAllRunList_Listbox(allrunlist_div);
+// makeRunList_Listbox(runlist_div);
+
+</zscript>
+
+</zk>
+

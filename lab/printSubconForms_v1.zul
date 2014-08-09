@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="prnsubconforms_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : Print subcon forms by BIRT
+Written by: Victor Wong
+
+**NOTES**
+Knock-off from the main module - just change the rpt filename and some stuff
+
+*/
+import org.victor.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_subconnum = Executions.getCurrent().getParameter("scn");
+param_itype = Executions.getCurrent().getParameter("ity");
+
+guihand = new GuiFuncs();
+
+BIRT_SUBCONFORM = "alsReports/sampleSubconForm_v2.rptdesign";
+BIRT_COMMERCIALINV = "alsReports/commercialInvoiceForm_v1.rptdesign";
+BIRT_LETTEROFINTENT = "alsReports/letterOfIntent_v1.rptdesign";
+BIRT_SUBCONCHKLIST = "alsReports/subconChecklist_v1.rptdesign";
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+
+	templatefn = BIRT_SUBCONFORM;
+	if(param_itype.equals("2")) templatefn = BIRT_COMMERCIALINV;
+	if(param_itype.equals("3")) templatefn = BIRT_LETTEROFINTENT;
+	if(param_itype.equals("4")) templatefn = BIRT_SUBCONCHKLIST;
+
+	thesrc = BIRT_WEBVIEWER + templatefn + "&subconnum=" + param_subconnum;
+
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_potsing_box" width="900px" height="700px" title="Subcon Papers" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true">
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<button label="X Close" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

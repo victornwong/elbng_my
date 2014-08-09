@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="resultentry_gcms_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/testpackage_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Core				: Upload and parse excel-worksheet exported from GC-MS chemstation
+Coding began date	: 7/9/2010
+Developers			: Victor
+
+**NOTES**
+
+<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+
+*/
+
+import java.io.*; 
+import java.util.Date;
+import java.text.*;
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ss.util.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.hssf.usermodel.*;
+
+//import org.apache.poi.ss.usermodel.*;
+// import jxl.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+global_selected_folderno = "";
+global_selected_sampleid = "";
+global_selected_testpackage = "";
+
+// Simple func to allow user upload something to server
+// need to add some pass-back of uploaded file format/contenttype/filename thing or just extend this bugga
+Object getUploadFileData()
+{
+	retval = null;
+
+	uploaded_file = Fileupload.get(true);
+
+	if(uploaded_file == null) return null;
+
+	formatstr = uploaded_file.getFormat();
+	contenttype = uploaded_file.getContentType();
+	ufilename = uploaded_file.getName();
+
+	Object uploaded_data;
+	int fileLength = 0;
+
+	f_inmemory = uploaded_file.inMemory();
+	f_isbinary = uploaded_file.isBinary();
+
+	if(f_inmemory && f_isbinary)
+	{
+	//ByteArrayInputStream upfluf = new ByteArrayInputStream(uploaded_fluff);
+		uploaded_data = new ByteArrayInputStream(uploaded_file.getByteData());
+	}
+	else
+	{
+		uploaded_data = uploaded_file.getStreamData();
+		fileLength = uploaded_data.available(); 
+	}
+
+	//alert("formatstr: " + formatstr + " | contenttype: " + contenttype + " | filename: " + ufilename);
+	// need to check content type - xls or whatever
+
+	return uploaded_data;
+}
+
+String POI_GetCellContentString(HSSFCell icell)
+{
+	retval = "---";
+	
+	switch(icell.getCellType())
+	{
+		case HSSFCell.CELL_TYPE_STRING:
+			retval = icell.getRichStringCellValue().getString();
+			break;
+						
+		case HSSFCell.CELL_TYPE_NUMERIC:
+			if(DateUtil.isCellDateFormatted(icell))
+			{
+				retval = icell.getDateCellValue().toString();
+				//retval = icell.getRichStringCellValue().getString();
+			}
+			else
+			{
+				retval = icell.getNumericCellValue().toString();
+			}
+			break;
+	}
+	
+	return retval;
+}
+
+void localPlayDriller()
+{
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	
+	ifoldno = folderjobs_lb.getSelectedItem().getLabel();
+	theparam = "folderno=" + ifoldno;
+	uniqwindowid = makeRandomId("xxfoldxx");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void doViewDoculinkPopup()
+{
+	// make sure we've some sampleid selected before showing the worksheet list
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+
+	foldern = folderjobs_lb.getSelectedItem().getLabel();
+
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+Object[] foundsm_lb_headers = {
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Sample.Marking",true),
+};
+
+Object[] regsamps_lb_headers = {
+	new listboxHeaderObj("Samp.ID",true),
+	new listboxHeaderObj("Sample.Marking",true),
+};
+
+Object[] foundtests_lb_headers = {
+	new listboxHeaderObj("Test parameter",true),
+};
+
+class jobsamples_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		global_selected_sampleid = samples_lb.getSelectedItem().getLabel(); // first col is the origid for jobsamples
+	}
+}
+
+void showSamples_MiniMe(String ifolderno)
+{
+	thefolderno = convertFolderNoToInteger(ifolderno);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select top 200 origid,samplemarking from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0 order by origid";
+
+	regsamps = sql.rows(sqlstatem);
+	sql.close();
+
+	Listbox smp_newlb = makeVWListbox(regsamples_div, regsamps_lb_headers, "samples_lb", 15);
+	smp_newlb.addEventListener("onSelect", new jobsamples_lb_Listener());
+
+	if(regsamps.size() > 0)
+	{
+		for(regsm : regsamps)
+		{
+			ArrayList kabom = new ArrayList();
+			
+			kabom.add(regsm.get("origid").toString());
+			
+			smm = regsm.get("samplemarking");
+			if(smm.equals("")) smm = "----------";
+			
+			kabom.add(smm);
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(smp_newlb,strarray,"false");
+		}
+	}
+}
+
+// File func: write ByteArrayInputStream to a file
+void writeToFile(Object thedata, String ifilename)
+{
+	File newFile = new File(session.getWebApp().getRealPath(ifilename));
+	FileOutputStream fos = new FileOutputStream(newFile);
+	int data; 
+	while((data=thedata.read())!=-1)
+	{ 
+		char ch = (char)data;
+		fos.write(ch);
+	}
+	fos.flush();
+	fos.close();
+}
+
+Object[] gcmsstuff_lb_headers = {
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Compound.Name",true),
+	new listboxHeaderObj("Expected.RT",true),
+	new listboxHeaderObj("Actual.RT",true),
+	new listboxHeaderObj("Target.Resp",true),
+	new listboxHeaderObj("Amount",true),
+	new listboxHeaderObj("Units",true),
+	new listboxHeaderObj("Q-Value",true),
+};
+
+// 7/9/2010: version 1 of GC-MS Excel worksheet-export -> import
+void spliceWorksheet_clicker()
+{
+	uploaded_fluff = getUploadFileData();
+	if(uploaded_fluff == null) return;
+
+	writeToFile(uploaded_fluff, "/tmp/test_pah.xls");
+
+	dickpath = "\"" + session.getWebApp().getRealPath("/tmp/test_pah.xls") + "\"" ;
+	kkbpath = "\"" + session.getWebApp().getRealPath("/tmp/test_pah_converted.xls") + "\"" ;
+	dickpath = dickpath.replace('\\', '/');
+	kkbpath = kkbpath.replace('\\', '/');
+
+	Process p = Runtime.getRuntime().exec("c:\\ssconv.bat " + dickpath + " " + kkbpath);
+	
+	/*
+	BufferedReader stdError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+	eeestr = "";
+	while ((s = stdError.readLine()) != null) {
+		eeestr += s;
+	}
+	alert(eeestr);
+	*/
+	
+	InputStream inp = new FileInputStream(session.getWebApp().getRealPath("/tmp/test_pah.xls"));
+
+	HSSFWorkbook excelWB = new HSSFWorkbook(inp);
+	FormulaEvaluator evaluator = excelWB.getCreationHelper().createFormulaEvaluator();
+	numsheets = excelWB.getNumberOfSheets();
+
+	Sheet sheet = excelWB.getSheetAt(0);
+	rows = sheet.getPhysicalNumberOfRows();
+
+	if(rows < 1)
+	{
+		showMessageBox("Nothing to splice huh..");
+		return;
+	}
+
+	//foundsampmarking_div regsamples_div
+
+	Listbox newlb = makeVWListbox(spliced_holder, gcmsstuff_lb_headers, "gcmsimport_lb", 20);
+	smcount = 1;
+	
+	// Suck
+	/*
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		rows = sheet.getPhysicalNumberOfRows();
+
+		// HARDCODED: start scanning from row 17 onwards
+		for(myr=16; myr < rows; myr++)
+		{
+			Row row = sheet.getRow(myr);
+
+			if(row != null)
+			{
+				ArrayList kabom = new ArrayList();
+
+				for(rc=0; rc<8; rc++)
+				{
+					HSSFCell cell = row.getCell(rc);
+
+					if(cell != null)
+					{
+						whatval = POI_GetCellContentString(cell);
+						kabom.add(whatval);
+					}
+				}
+
+				strarray = convertArrayListToStringArray(kabom);
+				insertListItems(newlb,strarray,"false");
+			}
+		}
+	}
+	*/
+	
+	/*
+	// Suck test parameters from COC - foundtests_div foundtests_lb_headers
+	Listbox newlb3 = makeVWListbox(foundtests_div, foundtests_lb_headers, "foundtests_lb", 15);
+
+	for(i=0; i<numsheets; i++)
+	{
+		sheet = excelWB.getSheetAt(i);
+		Row row = sheet.getRow(8); // hardcoded, J9 -> U9
+		
+		if(row != null)
+		{
+			for(j=9; j<20; j++)
+			{
+				Cell cell = row.getCell(j);
+
+				if(cell != null)
+				{
+					meme = POI_GetCellContentString(cell);
+
+					if(!meme.equals("---"))
+					{
+						// make sure only uniq test in listbox
+						if(!ExistInListbox(foundtests_lb,meme,0))
+						{
+							ArrayList kabom = new ArrayList();
+							kabom.add(meme);
+							strarray = convertArrayListToStringArray(kabom);
+							insertListItems(newlb3,strarray,"false");
+						}
+					}
+				}
+			}
+		}
+	}
+	*/
+	
+	// show our registered samples - foldern
+	//showSamples_MiniMe(global_selected_folderno);
+	// show tests from test.package assigned to client - testpackages_div
+	//showTestPackage_ByClient(THIS_MODULE_ARCODE);
+
+	ws_splicer_gb.setVisible(true);
+}
+
+]]>
+</zscript>
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<div width="1200px">
+<panel id="resultentry_gcms_panel" title="Result Entry - GC-MS" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<button label="Hisap GC-MS Excel export" style="font-size:9px" onClick="spliceWorksheet_clicker()" />
+
+<groupbox id="ws_splicer_gb" mold="3d" width="100%" style="padding:3px" visible="false">
+	<caption id="wssplicer_caption" label="Worksheet splicer" />
+	<div id="spliced_holder" />
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

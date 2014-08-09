@@ -1,0 +1,737 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="checklist_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Check List";
+MYVERSION = "v1.0";
+MYPANEL = "checklist_panel";
+/*
+Title		: Test checklist - show folders instead of tests as grouping
+Written by	: Victor Wong
+
+Revisions:
+
+09/04/2012: optimized and port byte-compl
+14/10/2011: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+
+public class jtpObject
+{
+	public String jsorigid;
+	public String jtporigid;
+	public String mysoftcode;
+	public String testname;
+	public String method_name;
+	public String casnumber;
+	public String groupcode;
+	public Object gridrow_ref;
+}
+
+public class folderListObject
+{
+	public String origid;
+	public String folderno_str;
+	public String ar_code;
+}
+
+HILITE_BACKGROUND = "background:#A1F76F";
+
+last_load_type = 0;
+
+selected_folderid = "";
+selected_folderno = "";
+global_selected_arcode = "";
+documentholder_toggle = false;
+
+ArrayList mainEntryList;
+ArrayList mainFolderList;
+
+Object prevSelectedFolder = null;
+
+void showFolderMetadata(String ifolderno)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select jf.datecreated,jf.duedate,jf.folderno_str,jf.ar_code,jf.folderstatus,jf.labfolderstatus," +
+	"customer.customer_name,cashsales_customerinfo.customer_name as cs_customer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo on cashsales_customerinfo.folderno_str = jf.folderno_str " +
+	"where jf.folderno_str='" + ifolderno + "'";
+	jrc = sql.firstRow(sqlstm);
+	sql.close();
+
+	if(jrc != null)
+	{
+		folderno_lbl.setValue(jrc.get("folderno_str"));
+
+		if(jrc.get("ar_code").equals("CASH"))
+			customername_lbl.setValue("CshAcct: " + jrc.get("cs_customer"));
+		else
+			customername_lbl.setValue(jrc.get("customer_name"));
+
+		datecreated_lbl.setValue(jrc.get("datecreated").toString().substring(0,10));
+		duedate_lbl.setValue(jrc.get("duedate").toString().substring(0,10));
+
+		folderstatus_lbl.setValue(jrc.get("folderstatus"));
+		labfolderstatus_lbl.setValue(jrc.get("labfolderstatus"));
+
+		global_labfolderstatus = jrc.get("labfolderstatus");
+		
+		if(global_labfolderstatus.equals("RELEASED"))
+		{
+			labfolderstatus_div.setStyle("padding:2px;background:#11ff00");
+
+			// *NOTES* if folder is released - have to disable some stuff
+			pickuphilite_btn.setDisabled(true);
+		}
+		else
+			labfolderstatus_div.setStyle("padding:2px;background:#ff1100");
+
+		global_selected_arcode = jrc.get("ar_code");
+		foldermetadata_gb.setVisible(true);
+	}
+}
+
+class testRowOnClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+		laststyle = selrow.getStyle();
+		if(laststyle == null) selrow.setStyle(HILITE_BACKGROUND);
+		else
+			if(laststyle.equals(HILITE_BACKGROUND)) selrow.setStyle(null);
+	}
+}
+
+void showTestAssigned(String iorigid)
+{
+	// remove previous grid
+	if(foldertests_holder.getFellowIfAny("samplesgrid") != null) samplesgrid.setParent(null);
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, js.asma_id, js.asma_station, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.origid=" + iorigid + " and jf.deleted = 0 and js.deleted = 0";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// grab samples + marking
+	therows = sql.rows(sqlstm);
+
+	if(therows.size() == 0) {sql.close(); return;}
+
+	thegrid = new Grid();
+	thegrid.setId("samplesgrid");
+
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+	testgrid_count = 1;
+
+	mainEntryList = new ArrayList();
+
+	for(dpi : therows)
+	{
+		//sampleid_row = gridhand.gridMakeRow("","background-color:#333333","",gridrows);
+		sampleid_row = gridhand.gridMakeRow("","background-color:#333333","",gridrows);
+
+		//gridhand.makeLabelToParent(testgrid_count.toString() + ".","color:#ffffff",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("js_origid").toString(),"color:#ffffff;font-weight:bold",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("sampleid_str"),"color:#ffffff;font-weight:bold",sampleid_row);
+
+		samplemarking_row = gridhand.gridMakeRow("","","",gridrows);
+
+		gridhand.makeLabelToParent("Sample marking","",samplemarking_row);
+
+		// 13/10/2011: if ASMA samples, show sample-id and station
+		asmaextrainfo = "";
+		if(global_selected_arcode.equals("300A/008"))
+			asmaextrainfo = " [ ASMA-ID: " + kiboo.checkNullString(dpi.get("asma_id")) + " Station: " + kiboo.checkNullString(dpi.get("asma_station")) + " ]";
+
+		gridhand.makeLabelToParent(dpi.get("samplemarking") + asmaextrainfo,"",samplemarking_row);
+		//samplemarkcell.setId("SMLBL" + dpi.get("js_origid").toString());
+
+		// show tests for sample-id
+		testsrow = gridhand.gridMakeRow("","","3",gridrows);
+
+		//testsrow = new Detail();
+		//testsrow.setOpen(false);
+		//testsrow.setParent(detail_testsrow);
+
+		testsgrid = new Grid();
+		testsgrid.setId("testgrid" + testgrid_count.toString()); // set ID for later usage
+		testsgrid.setParent(testsrow);
+
+		sqlstm2 = "select jtp.origid as jtp_origid, jtp.mysoftcode, jtp.assignedto, jtp.assigndate," + 
+			"smd.description, smd.groupcode " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where js.origid=" + dpi.get("js_origid").toString();
+
+		testrecs = sql.rows(sqlstm2);
+		if(testrecs.size() != 0)
+		{
+			testgridrows = gridhand.gridMakeRows("","",testsgrid);
+			headrow = gridhand.gridMakeRow("","background:#FAD541","",testgridrows);
+
+			gridhand.makeLabelToParent("Test","",headrow);
+			gridhand.makeLabelToParent("Sect.","",headrow);
+			gridhand.makeLabelToParent("Asgn.To","",headrow);
+			gridhand.makeLabelToParent("Asgn.Date","",headrow);
+			gridhand.makeLabelToParent("Res","",headrow);
+			gridhand.makeLabelToParent("Units","",headrow);
+			gridhand.makeLabelToParent("Keyin","",headrow);
+			gridhand.makeLabelToParent("K.Date","",headrow);
+
+			for(kpi : testrecs)
+			{
+				// save for later usage
+				indj_jtp = new jtpObject();
+				indj_jtp.jsorigid = dpi.get("js_origid").toString();
+				indj_jtp.jtporigid = kpi.get("jtp_origid").toString();
+				indj_jtp.mysoftcode = kpi.get("mysoftcode").toString();
+				indj_jtp.groupcode = kpi.get("groupcode");
+
+				tprow = gridhand.gridMakeRow("","","",testgridrows);
+				tprow.addEventListener("onClick", new testRowOnClick());
+
+				indj_jtp.gridrow_ref = tprow;
+				mainEntryList.add(indj_jtp); // save into global-var for later use
+
+				gridhand.makeLabelToParent(kpi.get("description"),"",tprow);
+				gridhand.makeLabelToParent(kpi.get("groupcode"),"",tprow);
+				gridhand.makeLabelToParent(kiboo.checkNullString(kpi.get("assignedto")),"",tprow);
+
+				asdatestr = "";
+				asdate = kpi.get("assigndate");
+				if(asdate != null) asdatestr = asdate.toString().substring(0,10);
+				gridhand.makeLabelToParent(asdatestr,"",tprow);
+
+				// get last result-entered/units if any
+				sqlstm3 = "select top 1 result_unit,final,username,analysed_date from elb_chemistry_results " +
+				"where jobtestparameter_id=" + kpi.get("jtp_origid").toString() + " and mysoftcode=" + kpi.get("mysoftcode").toString() + 
+				"order by origid desc";
+
+				prevrec = sql.firstRow(sqlstm3);
+
+				if(prevrec != null)
+				{
+					oldres = (prevrec.get("final") == null) ? "" : prevrec.get("final");
+					oldunit = (prevrec.get("result_unit") == null) ? "" : prevrec.get("result_unit");
+
+					gridhand.makeLabelToParent(oldres,"",tprow);
+					gridhand.makeLabelToParent(oldunit,"",tprow);
+					gridhand.makeLabelToParent(prevrec.get("username"),"",tprow);
+					gridhand.makeLabelToParent(prevrec.get("analysed_date").toString().substring(0,10),"",tprow);
+				}
+				else // blank previous results labels
+					gridhand.grid_makeBlankColumn(tprow,4);
+
+			}
+		}
+
+		testgrid_count++;
+		selected_folderno = dpi.get("folderno_str");
+	}
+
+	sql.close();
+	thegrid.setParent(foldertests_holder);
+	foldertests_holder.setVisible(true);
+}
+
+class foldersOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//selitem = event.getReference();
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow) prevSelectedFolder.setStyle(null);
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder = selrow;
+		selrow.setStyle("background:#9FF5A5");
+
+		selid = selrow.getId();
+		selid = selid.substring(2,selid.length());
+		
+		for(dpi : mainFolderList)
+		{
+			if(dpi.origid.equals(selid))
+			{
+				selected_folderid = dpi.origid;
+				global_selected_arcode = dpi.ar_code;
+				selected_folderno = dpi.folderno_str;
+
+				pickuphilite_btn.setDisabled(false); // always start with button enable
+
+				showDocumentsList(selected_folderno);
+				showFolderMetadata(selected_folderno); // here will disable button if folder is release
+				showTestAssigned(selected_folderid);
+				showJobNotes(selected_folderid);
+
+				dataarea.setVisible(true);
+
+				break;
+			}
+		}
+	}
+}
+
+// itype: 1=by date and customer search text, 2=by test-name and date, 3=by shared-samples, 4=by PKD, 5=by section/groupcode
+void loadFolders(int itype)
+{
+	last_load_type = itype;
+
+	// remove previous grid
+	if(folders_holder.getFellowIfAny("folders_lb") != null) folders_lb.setParent(null);
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	cnm = kiboo.replaceSingleQuotes(customer_tb.getValue());
+	ctestp = kiboo.replaceSingleQuotes(testparameter_tb.getValue());
+	shareds = share_sample.getSelectedItem().getLabel();
+	groupc = groupcode_lb.getSelectedItem().getLabel();
+
+	ibranch = useraccessobj.branch;
+	branch_str = "";
+
+	if(!ibranch.equals("ALL")) branch_str = "and branch='" + ibranch + "'";
+	
+	sqlhead = "select top 200 jf.origid, jf.branch, jf.datecreated, jf.duedate, jf.folderno_str, jf.ar_code, " + 
+	"jf.priority, jf.folderstatus,jf.pkd_samples, jf.share_sample, customer.customer_name, csci.customer_name as cashcustomer from jobfolders jf " +
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"left join jobtestparameters jtp on jtp.jobsamples_id = js.origid " +
+	"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+	"where jf.datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	// default 1 = by customer-name
+	sqlwhere = "and (csci.customer_name like '%" + cnm + "%' or customer.customer_name like '%" + cnm + "%') ";
+
+	switch(itype)
+	{
+		case 2:
+			sqlwhere = "and smd.description like '%" + ctestp + "%' ";
+			break;
+
+		case 3:
+			sqlwhere = "and jf.share_sample='" + shareds + "' ";
+			break;
+
+		case 4:
+			sqlwhere = "and jf.pkd_samples=1 ";
+			break;
+
+		case 5:
+			sqlwhere = "and smd.groupcode = '" + groupc + "' ";
+			break;
+	}
+
+	sqlfoot = "and jf.deleted=0 and jf.folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + 
+	"group by jf.origid, jf.branch, jf.datecreated, jf.duedate, jf.folderno_str, jf.ar_code, " +
+	"jf.priority, jf.folderstatus,jf.pkd_samples, jf.share_sample, customer.customer_name, csci.customer_name " +
+	"order by jf.datecreated desc";
+
+	sqlstm = sqlhead + sqlwhere + branch_str + sqlfoot;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	therecs = sql.rows(sqlstm);
+	sql.close();
+	if(therecs.size() == 0) return;
+
+	mainFolderList = new ArrayList();
+
+	thegrid = new Grid();
+	thegrid.setId("folders_lb");
+
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	headrow = gridhand.gridMakeRow("","background:#FA9D64","",gridrows);
+
+	String[] headersp = { "Folder","R.Date","D.Date","Customer","Brh","PKD","Share","Stat" };
+	for(i=0;i<headersp.length;i++)
+		gridhand.makeLabelToParent(headersp[i],"",headrow);
+
+	for(dpi : therecs)
+	{
+		// Store folder metadata
+		ifolder = new folderListObject();
+		ifolder.origid = dpi.get("origid").toString();
+		ifolder.folderno_str = dpi.get("folderno_str");
+		ifolder.ar_code = dpi.get("ar_code");
+		mainFolderList.add(ifolder);
+
+		theid = "FR" + ifolder.origid;
+		folder_row = gridhand.gridMakeRow(theid,"","",gridrows);
+		folder_row.addEventListener("onClick", new foldersOnSelect());
+
+		gridhand.makeLabelToParent(dpi.get("folderno_str"),"",folder_row);
+		gridhand.makeLabelToParent(dpi.get("datecreated").toString().substring(0,10),"",folder_row);
+		gridhand.makeLabelToParent(dpi.get("duedate").toString().substring(0,10),"",folder_row);
+
+		icompanyname = "Undefined";
+		iar_code = dpi.get("ar_code");
+
+		if(iar_code != null)
+		{
+			iar_code = iar_code.toUpperCase().trim();
+
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550"))
+			{
+				icompanyname = (iar_code.equals("300S-550")) ? "Syabas: " : "CshAcct: ";
+
+				if(dpi.get("cashcustomer") != null)
+					icompanyname += dpi.get("cashcustomer");
+				else
+					icompanyname += "UNKNOWN";
+			}
+			else
+				icompanyname = kiboo.checkNullString_RetWat(dpi.get("customer_name"),"Undefined");
+		}
+		
+		gridhand.makeLabelToParent(icompanyname,"",folder_row);
+		gridhand.makeLabelToParent(dpi.get("branch"),"",folder_row);
+		
+		pkdwop = "---";
+		if(dpi.get("pkd_samples") != null) pkdwop = (dpi.get("pkd_samples") == 0) ? "---" : "-Y-";
+		gridhand.makeLabelToParent(pkdwop,"",folder_row);
+		gridhand.makeLabelToParent(kiboo.checkNullString_RetWat(dpi.get("share_sample"),"---"),"",folder_row);
+		gridhand.makeLabelToParent(dpi.get("folderstatus"),"",folder_row);
+	}
+
+	thegrid.setParent(folders_holder);
+	workarea.setVisible(true);
+}
+
+void highliteByGroupcode()
+{
+	if(selected_folderid.equals("")) return;
+	selgrp = groupcode_lb.getSelectedItem().getLabel(); // groupcode_lb def in repeatstuff.zs
+
+	for(dpi : mainEntryList)
+	{
+		cgrp = dpi.groupcode;
+		crowrefstyle = (dpi.gridrow_ref.getStyle() == null) ? "" : dpi.gridrow_ref.getStyle();
+
+		if(cgrp.equals(selgrp))
+		{
+			if(crowrefstyle.equals(""))
+				dpi.gridrow_ref.setStyle(HILITE_BACKGROUND);
+			else
+			if(crowrefstyle.equals(HILITE_BACKGROUND))
+				dpi.gridrow_ref.setStyle(null);
+		}
+	}
+}
+
+void unselectAll()
+{
+	if(selected_folderid.equals("")) return;
+	for(dpi : mainEntryList)
+	{
+		dpi.gridrow_ref.setStyle(null);	
+	}
+}
+
+void pickupHighlited()
+{
+	if(selected_folderid.equals("")) return;
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	oids = "(";
+	pickupcount = 0;
+
+	for(dpi : mainEntryList)
+	{
+		crowrefstyle = (dpi.gridrow_ref.getStyle() == null) ? "" : dpi.gridrow_ref.getStyle();
+		if(crowrefstyle.equals(HILITE_BACKGROUND))
+		{
+			oids += dpi.jtporigid + ",";
+			pickupcount++;
+		}
+	}
+
+	oids = oids.substring(0,oids.length()-1) + ")";
+
+	if(pickupcount > 0)
+	{
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+		sqlstm = "update jobtestparameters set assignedto='" + useraccessobj.username + "', assigndate='" + todate + "' where origid in " + oids;
+		sql.execute(sqlstm);
+		sql.close();
+		showTestAssigned(selected_folderid); // refresh
+	}
+}
+
+void adminRemoveAllAssigned()
+{
+	if(selected_folderid.equals("")) return;
+
+	if (Messagebox.show("Remove all tests-assignee from this folder..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	oids = "(";
+
+	for(dpi : mainEntryList)
+	{
+		oids += dpi.jtporigid + ",";
+	}
+
+	oids = oids.substring(0,oids.length()-1) + ")";
+
+    sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+    sqlstm = "update jobtestparameters set assignedto=null, assigndate=null where origid in " + oids;
+	sql.execute(sqlstm);
+	sql.close();
+	showTestAssigned(selected_folderid); // refresh
+}
+
+// show/hide document/job-notes holder
+void toggleDocumentHolder()
+{
+	documentholder_toggle = (documentholder_toggle) ? false : true;
+	documentjobnotes_holder.setVisible(documentholder_toggle);
+}
+
+]]>
+</zscript>
+
+<!-- Linking documents popup -->
+<popup id="doculink_popup">
+<div width="400px">
+
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- ENDOF Linking documents popup -->
+
+<!-- Job notes related popup -->
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" style="font-size:9px" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+<!-- end of Job notes related popup -->
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+<div width="610px">
+<hbox>
+	<grid width="350px" >
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			</row>
+			<row spans=",2,">
+				<label value="Customer" style="font-size:9px" />
+				<textbox id="customer_tb" width="180px" style="font-size:9px" />
+				<button label="Load" style="font-size:9px" onClick="loadFolders(1)" />
+			</row>
+			<row spans=",2,">
+				<label value="Test parameter" style="font-size:9px" />
+				<textbox id="testparameter_tb" width="180px" style="font-size:9px" />
+				<button label="Filter-by" style="font-size:9px" onClick="loadFolders(2)" />
+			</row>
+			<row spans="4">
+				<label style="font-size:8px">
+	(Max. 200 folders per load - only committed(with tests assigned) folders)
+				</label>
+			</row>
+		</rows>
+	</grid>
+
+	<grid>
+	<rows>
+		<row>
+			<listbox id="share_sample" mold="select" style="font-size:9px" />
+			<button label="Load by shared-samples" style="font-size:9px" onClick="loadFolders(3)" />
+		</row>
+		<row>
+			<div id="loadby_groupcodeholder" />
+			<button label="By section" style="font-size:9px" onClick="loadFolders(5)" />
+		</row>
+		<row spans="2">
+			<button label="Find all PKD samples" style="font-size:9px" onClick="loadFolders(4)" />
+		</row>
+	</rows>
+	</grid>
+</hbox>
+
+<separator height="3px" />
+<div id="folders_holder" width="600px" height="500px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+
+</div>
+
+<div id="foldermetadata_gb" visible="false">
+
+<grid width="500px">
+	<rows>
+		<row spans=",3">
+			<label value="Folder" style="font-size:9px" />
+			<div style="background:#333333;padding:2px">
+			<label id="folderno_lbl" style="color:#ffffff" />
+			</div>
+		</row>
+		<row spans=",3">
+			<label value="Customer" style="font-size:9px" />
+			<div style="background:#333333;padding:2px">
+			<label id="customername_lbl" style="color:#ffffff" />
+			</div>
+		</row>
+		<row>
+			<label value="Dated" style="font-size:9px" />
+			<label id="datecreated_lbl" style="font-size:9px" />
+			<label value="Due date" style="font-size:9px" />
+			<label id="duedate_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Status" style="font-size:9px" />
+			<label id="folderstatus_lbl" style="font-size:9px" />
+			<label value="Lab status" style="font-size:9px" />
+			<div id="labfolderstatus_div">
+				<label id="labfolderstatus_lbl" style="font-weight:bold" />
+			</div>
+		</row>
+	</rows>
+</grid>
+
+	<div id="workarea" visible="false">
+		<vbox id="dataarea" visible="false" >
+			<hbox style="background:#559911;padding:2px">
+				<button id="pickuphilite_btn" label="Pickup high-lighted" style="font-size:9px" onClick="pickupHighlited()" />
+				<button label="Unselect all" style="font-size:9px" onClick="unselectAll()" />
+				<separator width="3px" />
+				<button label="Un/High-light" style="font-size:9px" onClick="highliteByGroupcode()" />
+				<div id="groupcode_holder" />
+				<separator width="5px" />
+				<button label="Folder COC/COA/Documents" style="font-size:9px" onClick="toggleDocumentHolder()" />
+
+				<div id="adminstuff" style="background:#ff0000;padding:2px" visible="false">
+					<button label="RemAllAsses" style="font-size:9px" onClick="adminRemoveAllAssigned()" />
+				</div>
+			</hbox>
+		</vbox>
+	</div>
+
+	<separator height="2px" />
+	<div id="documentjobnotes_holder" visible="false">
+
+		<!-- documents box -->
+		<hbox>
+			<div id="doculist_holder" width="400px" />
+			<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+		</hbox>
+
+		<!-- job notes box -->
+		<div id="jobnotes_found_div" />
+		<separator height="3px" />
+		<grid>
+			<columns>
+				<column label="" width="100px" />
+				<column label="" />
+			</columns>
+			<rows>
+				<row>
+				<label value="Job notes" style="font-size:9px" />
+				<textbox id="jobnotes_tb" style="font-size:9px" multiline="true" width="99%" height="100px" />
+				</row>
+			</rows>
+		</grid>
+		<hbox>
+			<button label="Save notes" style="font-size:9px" onClick="saveUpdateJobNotes()" />
+			<button id="noteshistory_btn" label="Notes history" style="font-size:9px" onClick="jobNotesHistory_clicker()" />
+		</hbox>
+	</div>
+
+<separator height="3px" />
+<div id="foldertests_holder" width="580px" height="550px" style="border:0px;overflow:auto;padding:2px;" visible="false" />
+
+</div>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+//populateGroupCode_dropdown(groupcode_holder); // repeatstuff.zs
+//lbhand.populateDropdownListbox(share_sample,sharesamplechop);
+luhand.populateListbox_ByLookup(share_sample,"SHARESAMPLE_DEFS",2);
+
+populateGroupCode_dropdown(loadby_groupcodeholder);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

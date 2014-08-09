@@ -1,0 +1,1933 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="assigntests_panel4"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/testpackage_popup.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="./assignTests_funcs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Assign Test Parameters";
+MYVERSION = "v5.0";
+MYPANEL = "assigntest_panel";
+/*
+Title		: Assign test parameters to LOGGED folders
+Written by	: Victor Wong
+
+Revisions:
+25/03/2010: added box to allow search on company - instead of just start-date and end-date
+25/03/2010: updated to main file
+30/03/2010: added branch field search
+12/06/2010: recode some of the section - optimize too
+20/09/2010: recoded the test-package selector, allow double-click to select package - show clients and test-parameters too
+25/10/2010: added extra button to set folder's PKD (pejabat kesihatan daerah) samples
+25/01/2011: abit of cleanup and optimization
+03/08/2011: insert unitprice from testpackage_items
+11/10/2011: add ASMA ID/stations fields at sample-marking box - only for ASMA ar_code
+27/03/2012: ported tests-panel selector to byte-codes
+11/09/2012: if customer-category = ENV, popup the same ASMA station textboxes but rename as project-ID , allow user
+	to enter project-id for ENV customers / some optimization
+
+15/10/2012: add jobsamples.wcpp textbox to be entered if sample is a wearcheck-prepaid
+07/03/2013: line# in sample-list
+07/03/2013: notify HOD when tests are subconed - uses new stockmasterdetails.newfield4 (set by user)
+
+Ima idea - assigned-tests convert back to test-package
+fields:
+units = stockrec.get("newfield10")
+billme = stockrec.get("newfield9")
+lor = stockrec.get("newfield8")
+selling_price = stockrec.get("selling_price")
+
+02/06/2014: optimize
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+testphand = new TestPackageFuncs();
+
+TestsPanel testspanel;
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+Object whathuh;
+Object whathuh_samples;
+
+last_foldersearch_type = 0;
+
+global_selected_sampleid = global_selected_foldernum = global_selected_arcode = global_customer_category = "";
+global_selected_sharesamp = global_selected_company = glob_hold_status = "";
+
+// const for max chars in listbox item
+SAMPLEID_SAMPLEMARKING_LEN = 35;
+
+ALS_stock_cat = "";
+
+// TODO: have to remove the hard-coded SAMPREG_USERGROUP thing
+// 26/3/2010: to enable or disable certain buttons / input depend on user security level/group
+void activateSecurity()
+{
+	// disable commit button , need level 3 to be able to commit folder
+	dis_cmt = sechand.check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL + 1);
+	if(!dis_cmt) commit_butt.setDisabled(true);
+}
+
+void storeTestParameter(String iwhich)
+{
+	testjobid = testparamid.getValue();
+	if(testjobid.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstk = "select newfield10,newfield9,newfield8,selling_price from stockmasterdetails where id=" + iwhich;
+	stockrec = sql.firstRow(sqlstk);
+
+	if(stockrec != null)
+	{
+		units = kiboo.checkNullString(stockrec.get("newfield10"));
+		billme = kiboo.checkNullString(stockrec.get("newfield9"));
+		lor = kiboo.checkNullString(stockrec.get("newfield8"));
+		selling_price = (stockrec.get("selling_price") == null) ? 0.0 : stockrec.get("selling_price");
+
+		sqlstatem = "update JobTestParameters set mysoftcode=" + iwhich + ", lor='" + lor + 
+		"', bill='" + billme + "',price=" + selling_price.toString() + " where origid=" + testjobid;
+		sql.execute(sqlstatem);
+	}
+
+	sql.close();
+}
+
+// onSelect event to be used in TestsPanel.populateTestParametersColumn()
+// can customize this one for other modules
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = tests_description_lb.getSelectedItem().getLabel();
+
+		if(testparameters_div.getFellowIfAny("testparameters_lb") != null)
+		{
+			idex = testparameters_lb.getSelectedIndex();
+			testparameters_lb.setSelectedIndex(idex);
+		}
+
+		// test selected if this event got activated.. just need to store the test id which is hidden in the listbox, column 1
+		// 3/2/2010: tied in with JobTestParameters table
+		storeTestParameter(iwhat);
+		// refresh folder->samples->tests listbox and select what's been previously selected
+		startTestParametersSearch(sampleid);
+	}
+}
+
+// Show the sample marking and notes from database
+void showSampleMarking_Notes(String isampid)
+{
+	sampno = Integer.parseInt(samphand.extractSampleNo(isampid));
+	samprec = samphand.getFolderSampleRec(sampno.toString());
+
+	samp_matrix_tb.setValue("");
+
+	if(samprec != null)
+	{
+		// this 2 textbox s are hardcoded and def in UI section
+		sampmark_tb.setValue(samprec.get("samplemarking"));
+		sampnotes_tb.setValue(samprec.get("extranotes"));
+
+		// 25/1/2011: show the sample-matrix
+		// samp_matrix_tb def in UI
+		matrix = samprec.get("matrix");
+		if(!matrix.equals(""))
+		{
+			matrixrec = luhand.getLookupRec_ByID(matrix);
+			if(matrixrec != null)
+			{
+				disptext = kiboo.checkNullString(matrixrec.get("disptext"));
+				samp_matrix_tb.setValue(disptext);
+			}
+		}
+		// 11/10/2011: ASMA only stuff
+		asmastuff.setVisible(false);
+		asma_id.setValue("");
+		asma_station.setValue("");
+
+		if(global_selected_arcode.equals("300A/008"))
+		{
+			asmid = kiboo.checkNullString(samprec.get("asma_id"));
+			asmstat = kiboo.checkNullString(samprec.get("asma_station"));
+			asma_id.setValue(asmid);
+			asma_station.setValue(asmstat);
+			asmastuff.setVisible(true);
+		}
+
+		// 11/09/2012: ENV customer project-id field
+		envcustomer_stuff.setVisible(false);
+		if(global_customer_category.equals("ENV") || global_customer_category.equals("CONSULTANT"))
+			if(!global_selected_arcode.equals("300A/008"))
+			{
+				// uses asma_id to store project-id
+				projectid = kiboo.checkNullString(samprec.get("asma_id"));
+				env_projectid.setValue(projectid);
+				envcustomer_stuff.setVisible(true);
+			}
+			
+		// 15/10/2012: wc prepaid thing - jobsamples.wcpp
+		wcpp.setValue(kiboo.checkNullString(samprec.get("wcpp")));
+	}
+}
+
+class SamplesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 07/03/2013: mod to sel the sampleid-column
+		isel = samples_lb.getSelectedItem();
+		//irecno = samples_lb.getSelectedItem().getLabel();
+		irecno = lbhand.getListcellItemLabel(isel,1);
+		sampleid.setValue(irecno);
+
+		// 25/1/2011: save global sample-id - use later in other funcs
+		global_selected_sampleid = samphand.extractSampleNo(irecno);
+
+		startTestParametersSearch(sampleid);
+		hideTestParametersBox();
+		// 5/3/2010: show sample marking and notes for editing if any
+		showSampleMarking_Notes(irecno);
+	}
+}
+smplbcliker = new SamplesLB_Listener();
+
+Object[] samples_lb_headers = {
+	new listboxHeaderWidthObj("No.",true,"30px"),
+	new listboxHeaderWidthObj("SampleID",true,"100px"),
+	new listboxHeaderWidthObj("Sample Marking",true,""),
+};
+
+Object[] asmasamples_lb_headers = {
+	new listboxHeaderWidthObj("No.",true,"30px"),
+	new listboxHeaderWidthObj("SampleID",true,"100px"),
+	new listboxHeaderWidthObj("Sample Marking",true,""),
+	new listboxHeaderWidthObj("ASMA-ID",true,"60px"),
+	new listboxHeaderWidthObj("STATION",true,"60px"),
+};
+
+// 11/09/2012: ENV/CONSULTANT samples - with project-id
+Object[] envsamples_lb_headers = {
+	new listboxHeaderWidthObj("No.",true,"30px"),
+	new listboxHeaderWidthObj("SampleID",true,"100px"),
+	new listboxHeaderWidthObj("Sample Marking",true,""),
+	new listboxHeaderWidthObj("ProjectID",true,"80px"),
+};
+
+// Search and populate samples in folders listbox
+// 25/1/2011: limit searches to max 150 samples
+void startFolderSamplesSearch(Textbox ifolderno)
+{
+	global_selected_sampleid = ""; // reset each time - always current when user click
+
+	foldns = ifolderno.getValue();
+	thefolderno = samphand.convertFolderNoToInteger(foldns);
+	if(thefolderno == 0) return;
+
+	sqlstatem = "select top 200 origid,samplemarking,asma_station,asma_id,wcpp " + 
+	"from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0 order by origid";
+
+	whathead = samples_lb_headers;
+	whattype = 1;
+
+	if(global_selected_arcode.equals("300A/008"))
+	{
+		whathead = asmasamples_lb_headers;
+		whattype = 2;
+	}
+	else
+	if(global_customer_category.equals("ENV") || global_customer_category.equals("CONSULTANT"))
+	{
+		whathead = envsamples_lb_headers;
+		whattype = 3;
+	}
+
+	Listbox newlb = lbhand.makeVWListbox_Width(samples_div,whathead,"samples_lb", 5);
+	tlist = sqlhand.gpSqlGetRows(sqlstatem);
+	if(tlist.size() == 0) return;
+	newlb.setRows(22);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", smplbcliker );
+	lncnt = 1;
+	ArrayList kabom = new ArrayList();
+	//String[] strarray = new String[2];
+	for(ilist : tlist)
+	{
+		kabom.add(lncnt.toString() + "."); // 07/03/2013: line num#
+
+		ifno = ilist.get("origid");
+		//strarray[0] = foldns + kiboo.padZeros5(ifno);
+		kabom.add(foldns + kiboo.padZeros5(ifno));
+
+		// 12/3/2010: chomp sample marking so it won't clutter the listbox			
+		//ismtemp = lbhand.trimListitemLabel(ilist.get("samplemarking"), SAMPLEID_SAMPLEMARKING_LEN);
+		// 16/10/2012: put also WC prepaid no. if available
+		
+		wcpstr = (ilist.get("wcpp") != null) ? ilist.get("wcpp") : "";
+		if(!wcpstr.equals("")) wcpstr = " [WC: " + wcpstr + "]";
+
+		smst = ilist.get("samplemarking") + wcpstr;
+		kabom.add(smst);
+
+		switch(whattype)
+		{
+			case 2:
+			case 3:
+				kabom.add(kiboo.checkNullString(ilist.get("asma_id")));
+				if(whattype == 2)
+					kabom.add(kiboo.checkNullString(ilist.get("asma_station")));
+				break;
+		}
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),SAMPLES_PREFIX,"");
+		kabom.clear();
+		lncnt++;
+	}
+
+} // end of startFolderSamplesSearch()
+
+class FolderLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = folderjobs_lb.getSelectedItem();
+		global_selected_foldernum = folderjobs_lb.getSelectedItem().getLabel();
+		global_selected_arcode = lbhand.getListcellItemLabel(selitem,9);
+		global_selected_sharesamp = lbhand.getListcellItemLabel(selitem,6);
+		global_selected_company = lbhand.getListcellItemLabel(selitem,2);
+		glob_hold_status = lbhand.getListcellItemLabel(selitem,3);
+
+		// folderno is hidden Textbox defined in the UI section
+		folderno.setValue(global_selected_foldernum);
+
+		/*
+		ifoldn = samphand.convertFolderNoToInteger(irecno);
+		therec = getFolderJobRec(ifoldn.toString());
+		ifoldstat = therec.get("folderstatus");
+		*/
+		
+		// 11/09/2012: save customer-category to be used by other funcs
+		cmpr = sqlhand.getCompanyRecord(global_selected_arcode);
+		if(cmpr != null)
+			global_customer_category = kiboo.checkNullString(cmpr.get("Category"));
+		else
+			global_customer_category = "";
+
+		startFolderSamplesSearch(folderno);
+
+		if(testparameters_div.getFellowIfAny("testparameters_lb") != null) testparameters_lb.setParent(null);
+		hideTestParametersBox();
+
+		// 5/3/2010: clear the sample marking and notes textbox. uses hardcode textboxes in UI section
+		sampmark_tb.setValue("");
+		sampnotes_tb.setValue("");
+
+		global_selected_sampleid = ""; // 13/01/2013: reset to avoid importing tests to wrong sample
+
+		showHideBoxes(true);
+		
+		// 14/05/2013: if hold-status not PROCEED or BLANK(temporary, later all must have status), disable commit butt
+		commit_butt.setDisabled(true);
+		if(glob_hold_status.equals("PROCEED") || glob_hold_status.equals("")) commit_butt.setDisabled(false);
+	}
+}
+folderlbclicker = new FolderLB_Listener();
+
+Object[] jobfolders_lb_headers = {
+	new listboxHeaderWidthObj("FolderNo",true,"60px"),
+	new listboxHeaderWidthObj("RecvDate",true,"60px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("HOLD",true,"25px"),
+	new listboxHeaderWidthObj("Brh",true,"30px"),
+	new listboxHeaderWidthObj("PKD",true,"30px"),
+	new listboxHeaderWidthObj("Share",true,"60px"),
+	new listboxHeaderWidthObj("PP",true,"20px"),
+	new listboxHeaderWidthObj("LC",true,"20px"),
+	new listboxHeaderWidthObj("arcode",false,""),
+};
+
+/* 
+30/3/2010: added in branch search
+30/9/2010: added search by folder - itype 1=normal 2=byfolder
+25/1/2011: show jobfolders.share_sample
+17/3/2011: remove "folderstatus" col from the listbox
+*/
+void startFolderJobsSearch(int itype)
+{
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	cnm =  kiboo.replaceSingleQuotes(customer_tb.getValue());
+	flst = kiboo.replaceSingleQuotes(byfolder_tb.getValue());
+
+	last_foldersearch_type = itype;
+	
+	if(sdate == null || edate == null)
+    {
+        guihand.showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    // reset global vars
+    global_selected_foldernum = global_selected_sampleid = global_selected_arcode = "";
+    
+   	// 29/3/2010: check branch
+	branch_str = (useraccessobj.branch.equals("ALL")) ? "" : " and branch='" + useraccessobj.branch + "' ";
+	searchcust = (cnm.equals("")) ? "" : " and cust.customer_name like '%" + cnm + "%' ";
+	bydate_sql = "jf.datecreated between '" + sdate + "' and '" + edate + "' and ";
+
+	// 30/9/2010: search by folder number
+	byfolderstr = "";
+	if(itype == 2 && !flst.equals(""))
+	{
+		byfolderstr = " and jf.folderno_str like '%" + flst + "%' ";
+		bydate_sql = "";	
+	}
+
+    sqlstm = "select top 200 jf.origid, jf.branch, jf.datecreated, jf.ar_code, jf.prepaid, " + 
+    "jf.pkd_samples, jf.share_sample, jf.jobhold_status, cust.customer_name, csci.customer_name as cashcustomer, " + 
+    "(select count(origid) from elb_labcomments where folderno_str=jf.folderno_str) as lccount " +
+    "from jobfolders jf " +
+    "left join customer cust on cust.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str where " +
+	bydate_sql +
+	"jf.deleted=0 and jf.folderstatus='LOGGED' " + branch_str + searchcust + byfolderstr + 
+	"order by jf.origid ";
+
+	tlist = sqlhand.gpSqlGetRows(sqlstm);
+	//folder_buttons_div.setVisible(true);
+
+	showHideBoxes(false);
+	Listbox newlb = lbhand.makeVWListbox_Width(folderjobs_div, jobfolders_lb_headers, "folderjobs_lb", 10);
+	if(tlist.size() == 0) return;
+
+	newlb.setRows(22);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", folderlbclicker);
+	ArrayList kabom = new ArrayList();
+	for(dpi : tlist)
+	{
+		ifolderno = dpi.get("origid");
+
+		folderbranch = dpi.get("branch");
+		folderprefix = kiboo.folderPrefixByBranch(folderbranch);
+		folderstr = folderprefix + kiboo.padZeros5(ifolderno);
+
+		kabom.add(folderstr);
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		custname = (dpi.get("customer_name") == null) ? "CshAct: " + kiboo.checkNullString(dpi.get("cashcustomer")) : dpi.get("customer_name");
+		kabom.add(custname);
+
+		kabom.add(kiboo.checkNullString_RetWat(dpi.get("jobhold_status"),""));
+
+		kabom.add(dpi.get("branch"));
+		pkdwop = (dpi.get("pkd_samples") != null) ? "---" : ((dpi.get("pkd_samples") == 0) ? "---" : "-Y-");
+		kabom.add(pkdwop);
+		kabom.add(dpi.get("share_sample"));
+
+		ppstr = (dpi.get("prepaid") == 0) ? "" : "-Y-";
+		kabom.add(ppstr);
+
+		kabom.add(dpi.get("lccount").toString()); // 13/01/2013: show LC count
+
+		kabom.add(dpi.get("ar_code"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,folderprefix,"");
+		kabom.clear();
+	}
+
+} // end of startFolderJobsSearch()
+
+// Auto select those test-parameters boxes
+void autoAssignTestParametersBox(String iwhich)
+{
+	therec = getJobTestParametersRec(iwhich);
+	if(therec == null) return;
+
+	imysoftcode = therec.get("mysoftcode");
+	if(imysoftcode == 0) return;
+
+	istockrec = samphand.getStockMasterDetails(imysoftcode.toString());
+	if(istockrec == null) return;
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	//populateSectionColumn(section_column,istockcat);
+	//populateTestParametersColumn(testparameters_column,istockcat,igroupcode);
+
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+
+	lbhand.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhand.matchListboxItems(section_groupcode_lb, igroupcode);
+
+	tscode = istockrec.get("ID").toString();
+	lbhand.matchListboxItems(tests_description_lb,tscode);
+}
+
+class TestParams_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = testparameters_lb.getSelectedItem().getLabel();
+		testparamid.setValue(irecno); // save the rec no in the hidden textbox
+		// update test-parameters selection-box with whatever test being assigned
+		autoAssignTestParametersBox(irecno);
+		// show the test-parameters selection box
+		showTestParametersBox();
+	}
+}
+testparmcliker = new TestParams_Listener();
+
+Object[] testparameterssearch_lb_headers = {
+	new listboxHeaderWidthObj("TestNo",false,""),
+	new listboxHeaderWidthObj("S#",true,"30px"),
+	new listboxHeaderWidthObj("Description",true,""),
+	new listboxHeaderWidthObj("mysoftcode",false,""),
+};
+	
+// Do the search and populate listbox
+void startTestParametersSearch(Textbox isampleid)
+{
+	tsi = isampleid.getValue();
+	if(tsi.equals("")) return;
+
+	tsampid = samphand.extractSampleNo(tsi); //samphand.extractSampleNo(tsi);
+
+	Listbox newlb = lbhand.makeVWListbox_Width(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb", 5);
+
+	// 2/2/2010: find those folders that're LOGGED
+	//sqlstatem = "select * from JobTestParameters where jobsamples_id=" + tsampid + " order by origid";
+
+	sqlstatem = "select jobtestparameters.origid, jobtestparameters.mysoftcode, " +
+	"jobtestparameters.sorter, jobtestparameters.lor, jobtestparameters.bill, stockmasterdetails.description, stockmasterdetails.description2 " +
+	"from jobtestparameters " +
+	"left join stockmasterdetails on jobtestparameters.mysoftcode=stockmasterdetails.id " +
+	"where jobtestparameters.jobsamples_id=" + tsampid +
+	"order by jobtestparameters.sorter";
+
+	tlist = sqlhand.gpSqlGetRows(sqlstatem);
+
+	if(tlist.size() == 0) return;
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", testparmcliker);
+	newlb.setMultiple(true);
+	sort_count = 1;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	ArrayList kabom = new ArrayList();
+	for(dpi : tlist)
+	{
+		testorigid = dpi.get("origid").toString();
+		kabom.add(testorigid);
+		
+		// 13/9/2010: put in sorter col, check against sorter in table, if = 1, update local sorter number into table
+		tblsorter = dpi.get("sorter");
+		
+		if(sort_count != tblsorter)
+		{
+			tblsorter = sort_count;
+			sqlstm = "update jobtestparameters set sorter=" + tblsorter.toString() + " where origid=" + testorigid;
+			sql.execute(sqlstm);
+		}
+
+		kabom.add(tblsorter.toString());
+
+		desc1 = kiboo.checkNullString_RetWat(dpi.get("description"),"---");
+		desc2 = kiboo.checkNullString_RetWat(dpi.get("description2"),"---");
+
+		myscode = dpi.get("mysoftcode");
+		yystr = (myscode.equals("0")) ? "-NO TEST SELECTED-" : desc1 + " (" + desc2 + ")";
+		yystr = lbhand.trimListitemLabel(yystr,60);
+
+		kabom.add(yystr);
+		kabom.add(myscode.toString());
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		sort_count++;
+		kabom.clear();
+	}
+
+	sql.close();
+
+} // end of startTestParametersSearch()
+
+// create a new empty test-parameter linking to the sample-id
+// refer to table JobTestParameters
+// 15/9/2010: added additional fields
+void createNewTestParameter()
+{
+	// make sure something selected
+	ifoldno = folderno.getValue();
+	isampid = sampleid.getValue();
+	if(ifoldno.equals("") || isampid.equals("")) return;
+
+	tsampid = samphand.extractSampleNo(isampid);
+
+	nextsorter = testparameters_lb.getItemCount() + 1;
+	nextsorter = nextsorter.toString();
+
+	sqlstatem = "insert into JobTestParameters (jobsamples_id,mysoftcode,starlimscode,status,uploadtomysoft," + 
+	"uploadtolims,sorter,lor,bill,price,units) values " + 
+	"(" + tsampid + ",0,0,'DRAFT',0,0," + nextsorter + ",'','YES',0.0,'')";
+
+	sqlhand.gpSqlExecuter(sqlstatem);
+
+	startTestParametersSearch(sampleid);
+	// 18/03/2011: audit trail
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlhand.addAuditTrail(global_selected_foldernum,"Add test parameter", useraccessobj.username, todaydate);
+}
+
+// 15/08/2011: finally add the multi-selection
+void deleteTestParameter()
+{
+	if(testparameters_lb.getSelectedCount() == 0) return;
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	allitems = testparameters_lb.getSelectedItems().toArray();
+	sqlstm = "";
+
+	for(i=0; i<testparameters_lb.getSelectedItems().size(); i++)
+	{
+		selitem = allitems[i];
+		torigid = lbhand.getListcellItemLabel(selitem,0);
+		testdesc = lbhand.getListcellItemLabel(selitem,2);
+		sqlstm += "delete from JobTestParameters where origid=" + torigid + ";";
+		// 18/03/2011: audit trail
+		sqlhand.addAuditTrail(global_selected_foldernum,"Delete test : " + testdesc, useraccessobj.username, todaydate);
+	}
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	startTestParametersSearch(sampleid); // refresh
+}
+
+// Copy tests assigned to selected sample to the next sample. Will allow user to work faster, instead of selecting tests for each samples which might have the same tests.
+void copyTestsToNext()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+
+	lb_itemcount = samples_lb.getItemCount();
+	if(lb_itemcount == 0) return;
+
+	thisitem = samples_lb.getSelectedIndex();
+	lb_nextitem = thisitem + 1;
+
+	// no more next item, return
+	if(lb_nextitem > lb_itemcount-1) return;
+
+	isel = samples_lb.getItemAtIndex(lb_nextitem);
+	nextsampid = lbhand.getListcellItemLabel(isel,1); //samples_lb.getItemAtIndex(lb_nextitem).getLabel();
+
+	// alert("sampleid : " + isampid + " lb_itemcount: " + lb_itemcount.toString() + " thisitem: " + thisitem.toString() + " lb_nextitem: " + lb_nextitem.toString());
+	// samples_lb.setSelectedIndex(lb_nextitem);
+	// now copy what're the tests for the selected sample to the next sample
+	// need not check for dups. if user copy twice, the tests will appear 2 times for that sample
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	this_sampidint = samphand.convertSampleNoToInteger(isampid);
+	next_sampidint = samphand.convertSampleNoToInteger(nextsampid);
+
+	// get all tests assigned for selected sample
+	sqlstatem = "select * from JobTestParameters where jobsamples_id=" + this_sampidint.toString();
+	tlist = sql.rows(sqlstatem);
+
+	if(tlist != null)
+	{
+		for(ilist:tlist)
+		{
+			tpid = (ilist.get("testpackageid") == null) ? "0" : ilist.get("testpackageid").toString();
+			tpprice = (ilist.get("packageprice") == null) ? "0.0" : ilist.get("packageprice").toString();
+
+			sqlstatem2 = "insert into JobTestParameters (jobsamples_id,mysoftcode,starlimscode,status," + 
+			"uploadtomysoft,uploadtolims,sorter,lor,bill,price,units,testpackageid,packageprice) values (" + 
+			next_sampidint.toString() + ", " + ilist.get("mysoftcode") + ", 0, 'DRAFT', 0, 0, " + 
+			ilist.get("sorter") + ",'" + ilist.get("lor") + "','" + ilist.get("bill") + "'," + 
+			ilist.get("price").toString() + ", '" + ilist.get("units") + "'," + tpid + "," + tpprice + ")";
+			sql.execute(sqlstatem2);
+		}
+	}
+	
+	sql.close();
+}
+
+// Dup all tests assigned to selected sample to all below it
+void dupAllTests()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+
+	if (Messagebox.show("Duplicate selected sample's tests to other samples", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+
+	this_sampidint = samphand.convertSampleNoToInteger(isampid).toString();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// get all the tests for selected sample id, save into an array
+	sqlstatem = "select mysoftcode,sorter,lor,bill,price,units,testpackageid,packageprice from JobTestParameters where jobsamples_id=" + this_sampidint;
+	tcodes = sql.rows(sqlstatem);
+
+	reccount = tcodes.size();
+
+	if(tcodes != null && reccount > 0)
+	{
+		// get selected sample 's jobfolders_id , main link for other samples
+		samprec = samphand.getFolderSampleRec(this_sampidint);
+		jobfolderid = samprec.get("jobfolders_id");
+		
+		Integer[] samptestcodes = new Integer[reccount];
+		Integer[] sorters = new Integer[reccount];
+		String[] lors = new String[reccount];
+		String[] bills = new String[reccount];
+		Float[] prices = new Float[reccount];
+		String[] units = new String[reccount];
+		// 11/08/2011: testpackage-id and packageprice
+		String[] testpid = new String[reccount];
+		String[] testpprice = new String[reccount];
+
+		// store the mysoftcode and stuff into array
+		i = 0;
+		for(kki : tcodes)
+		{
+			samptestcodes[i] = kki.get("mysoftcode");
+			sorters[i] = kki.get("sorter");
+			lors[i] = kki.get("lor");
+			bills[i] = kki.get("bill");
+			prices[i] = kki.get("price").floatValue();
+			units[i] = kki.get("units");
+
+			testpid[i] = (kki.get("testpackageid") == null) ? "0" : kki.get("testpackageid").toString();
+			testpprice[i] = (kki.get("packageprice") == null) ? "0.0" : kki.get("packageprice").toString();
+
+			i++;
+		}
+
+		// now find all other samples
+		sqlstatem2 = "select origid from JobSamples where origid<>" + this_sampidint + " and jobfolders_id=" + jobfolderid;
+		othersamprecs = sql.rows(sqlstatem2);
+
+		for(iik : othersamprecs)
+		{
+			kiko = iik.get("origid").toString();
+
+			// 14/9/2010: add couple of new fields, sorters/lors/bills/prices
+			// loop through all the tests stored in samptestcodes
+			for(i=0; i<samptestcodes.length; i++)
+			{
+				kitest = samptestcodes[i].toString();
+				theprice = prices[i].toString();
+				sqlstatem3 = "insert into JobTestParameters (jobsamples_id,mysoftcode,starlimscode,status," +
+				"uploadtomysoft,uploadtolims,sorter,lor,bill,price,units,testpackageid,packageprice) values (" +
+				kiko + ", " + kitest + ", 0, 'DRAFT', 0, 0," + 
+				sorters[i].toString() + ",'" + lors[i] + "','" + bills[i] + "'," + 
+				theprice + ",'" + units[i] + "'," + testpid[i] + "," + testpprice[i] + ")";
+
+				sql.execute(sqlstatem3);
+			}
+		}
+	}
+	sql.close();
+	guihand.showMessageBox("Selected sample's tests have been duplicated to other samples");
+}
+
+// 07/03/2013: check if sub-con tests assigned to samples
+// TODO: auto insert subcon tracker tables
+void checkSubconTests(String ifoldno)
+{
+	if(ifoldno.equals(""))
+	{
+		tmpf = folderjobs_lb.getSelectedItem().getLabel();
+		ifoldno = Integer.parseInt(samphand.extractFolderNo(tmpf)).toString();
+	}
+
+	sqlstm = "select js.origid as sampleid,smd.description,smd.newfield4 as subcon " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"left join jobtestparameters jtp on jtp.jobsamples_id = js.origid " +
+	"left join stockmasterdetails smd on jtp.mysoftcode = smd.id " +
+	"where jf.origid=" + ifoldno + " and smd.newfield4 is not null and smd.newfield4<>'' ";
+
+	gotsubs = sqlhand.gpSqlGetRows(sqlstm);
+	if(gotsubs.size() == 0) return; // no subcons, balik le
+
+	subjstr = "SUBCON Detected: " + global_selected_foldernum;
+	topeople = luhand.getLookups_ConvertToStr("SUBCON_INTERNAL_NOTI",2,",");
+
+	msgtext =  "Customer      : " + global_selected_company;
+	msgtext += "\nDivision share: " + global_selected_sharesamp;
+	msgtext += "\nFolder        : " + global_selected_foldernum;
+	msgtext += "\nThese samples are being subcon-out.\n";
+
+	for(dk : gotsubs)
+	{
+		msgtext += "\n" + dk.get("sampleid").toString() + " :: " + dk.get("description") + " :: " + dk.get("subcon");
+	}
+
+	msgtext += "\n\nPLEASE TAKE WHATEVER ACTION ASAP";
+	msgtext += "\n\n------\nDO NOT print this notification - save some trees";
+
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+}
+
+// 07/03/2013: req Foong, send notification on share_sample=BS
+void sendNotiByShareSample(String iwhat, String topeople)
+{
+	if(!global_selected_sharesamp.contains(iwhat)) return;
+
+	subjstr = "SHARE-SAMPLE NOTIFICATION: " + global_selected_sharesamp;
+	//topeople = luhand.getLookups_ConvertToStr("BLACKLISTED_NOTI",2,",");
+	msgtext =  "Customer      : " + global_selected_company;
+	msgtext += "\nDivision share: " + global_selected_sharesamp;
+	msgtext += "\nFolder        : " + global_selected_foldernum;
+	msgtext += "\n\nPLEASE TAKE WHATEVER ACTION ASAP";
+	msgtext += "\n\n------\nDO NOT print this notification - save some trees";
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+}
+
+// Will commit the folder/job - folderstatus will change to FOLDERCOMMITED (def in alsglobaldefs.zs).
+// This section is where the upload to MySoft and STARLIMS will happen
+// uses folderjobs_lb.
+void commitFolder()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folderjobs_div,"folderjobs_lb")) return;
+	ifoldn = folderjobs_lb.getSelectedItem().getLabel();
+
+	//guihand.showMessageBox("Point of no return, once this folder/job is commited, you cannot change anything no more..");
+
+	if(!gotTestAssigned(ifoldn))
+	{
+		guihand.showMessageBox("Please assign some tests before you commit this folder");
+		return;
+	}
+
+	if (Messagebox.show("Commit folder/job: " + ifoldn, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		todaydate = kiboo.todayISODateTimeString();
+		// 07/10/2011: save commit date to jobfolders.comitdate
+		iorig = Integer.parseInt(samphand.extractFolderNo(ifoldn)).toString();
+		sqlstatem = "update jobfolders set folderstatus='" + FOLDERCOMMITED + "', comitdate='" + todaydate + "' where origid=" + iorig;
+		sqlhand.gpSqlExecuter(sqlstatem);
+
+		guihand.showMessageBox("Commited : " + ifoldn);
+		startFolderJobsSearch(last_foldersearch_type); // refresh
+
+		// clear samples listbox - already commited, should be cleared to avoid confusion
+		if(samples_div.getFellowIfAny("samples_lb") != null) samples_lb.setParent(null);
+		if(testparameters_div.getFellowIfAny("testparameters_lb") != null) testparameters_lb.setParent(null);
+
+		// 17/9/2010: audit-trail thing..
+		sqlhand.addAuditTrail(ifoldn,"TestAssign: Commit folder", useraccessobj.username, todaydate);
+
+		// 07/03/2013: determine if tests are sub-con, yes, notify HOD or watever
+		checkSubconTests(iorig);
+		sendNotiByShareSample("BS","metals@alsglobal.com.my,it@alsglobal.com.my"); // req by foong - notification on BS samples committal
+	}
+}
+
+// Update sample marking and extra notes
+// samples_div, samples_lb_headers, "samples_lb"
+// 11/10/2011: update also asma_id and asma_station if ar_code = 300A/008
+void updateSampleMarking(Textbox isampmark, Textbox isampnotes)
+{
+	if(!lbhand.check_ListboxExist_SelectItem(samples_div,"samples_lb")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	isel = samples_lb.getSelectedItem();
+	irecno = lbhand.getListcellItemLabel(isel,1);
+	sampleid_fromtree = irecno; //samples_lb.getSelectedItem().getLabel();
+	sampleid_lb_item = samples_lb.getSelectedItem();
+
+	sampno = Integer.parseInt(samphand.extractSampleNo(sampleid_fromtree)).toString();
+
+	isampm = kiboo.replaceSingleQuotes(isampmark.getValue().trim());
+	isampn = kiboo.replaceSingleQuotes(isampnotes.getValue().trim());
+	
+	// 11/10/2011: for asma station
+	asmid = kiboo.replaceSingleQuotes(asma_id.getValue());
+	asmstat = kiboo.replaceSingleQuotes(asma_station.getValue());
+
+	// 11/09/2012: replace asma-id with project-id for ENV/CONSULTANT customers	
+	if(global_customer_category.equals("ENV") || global_customer_category.equals("CONSULTANT"))
+		if(!global_selected_arcode.equals("300A/008"))
+			asmid = kiboo.replaceSingleQuotes(env_projectid.getValue());
+
+	// 18/03/2011: audit trail
+	sqlstm = "select samplemarking,extranotes from jobsamples where origid=" + sampno;
+	osmprec = sql.firstRow(sqlstm);
+	if(osmprec != null)
+	{
+		osm = osmprec.get("samplemarking");
+		// insert audit-trail if prev sample-marking exist
+		if(!osm.equals(""))
+		{
+			oen = osmprec.get("extranotes");
+
+			todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+			auditstr = "Change " + sampleid_fromtree + " sample-marking orig: " + osm;
+			sqlhand.addAuditTrail(global_selected_foldernum, auditstr, useraccessobj.username, todaydate);
+		}
+	}
+
+	// 15/10/2012: WC prepaid codes -- jobsamples.wcpp
+	wcppin = kiboo.replaceSingleQuotes(wcpp.getValue());
+
+	sqlstatem = "update JobSamples set samplemarking='" + isampm + "'," + 
+	"extranotes='" + isampn + "', asma_id='" + asmid + "',asma_station='" + asmstat + 
+	"', wcpp='" + wcppin + "' where origid=" + sampno;
+	sql.execute(sqlstatem);
+	sql.close();
+
+	// 26/4/2010: need to redraw better..
+	startFolderSamplesSearch(folderno);
+}
+
+// 18/03/2011: copy selected sample-marking to next
+void copySampleMarkingToNext()
+{
+	if(global_selected_sampleid.equals("")) return;
+
+	lbitemcount = samples_lb.getItemCount();
+	//if(lbitemcount < 2) { guihand.showMessageBox("Nothing to copy to.."); return; }
+	selindex = samples_lb.getSelectedIndex();
+	nextindex = selindex + 1;
+	if(nextindex >= lbitemcount) { return; }
+
+	nextitem = samples_lb.getItemAtIndex(selindex+1);
+	next_sampleid = samphand.extractSampleNo(lbhand.getListcellItemLabel(nextitem,1));
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select samplemarking,jobfolders_id from JobSamples where origid=" + global_selected_sampleid;
+	fsamprec = sql.firstRow(sqlstatem);
+
+	if(fsamprec != null)
+	{
+		smpmark = fsamprec.get("samplemarking");
+		if(smpmark == null) smpmark = "";
+		sqlstm = "update jobsamples set samplemarking='" + smpmark + "' where origid=" + next_sampleid;
+		sql.execute(sqlstm);
+	}
+	sql.close();
+	startFolderSamplesSearch(folderno); // refresh (folderno = hidden textbox - archane method 18/03/2011)
+}
+
+// 12/3/2010: to dup all sample-marking to sampleid
+void dupSampleMarking()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+	this_sampidint = samphand.convertSampleNoToInteger(isampid).toString();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	// get all the tests for selected sample id, save into an array
+	sqlstatem = "select samplemarking,jobfolders_id from JobSamples where origid=" + this_sampidint;
+	fsamprec = sql.firstRow(sqlstatem);
+
+	if(fsamprec != null)
+	{
+		firstsampm_str = fsamprec.get("samplemarking");
+		jobfolderid = fsamprec.get("jobfolders_id");
+
+		// make sure it ain't blank, otherwise it'll overwrite other sample-marking keyed
+		if(!firstsampm_str.equals(""))
+		{
+			if (Messagebox.show("Duplicate selected sample marking to other samples", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+					break;
+
+			// set other sampleid in this folder to the sample-marking
+			sqlstatem2 = "select origid,sampleid_str from JobSamples where origid<>" + this_sampidint + " and jobfolders_id=" + jobfolderid;
+			othersamprecs = sql.rows(sqlstatem2);
+
+			// other sample-id, lets dup 'em marking
+			if(othersamprecs != null)
+			{
+				for(otrec : othersamprecs)
+				{
+					ooid = otrec.get("origid");
+					sampid_str = otrec.get("sampleid_str");
+					sqls3 = "update JobSamples set samplemarking='" + firstsampm_str + "' where origid=" + ooid.toString();
+					sql.execute(sqls3);
+					lbhand.matchItemUpdateLabel(samples_lb, sampid_str, 1, firstsampm_str);
+				}
+			}
+		}
+	}
+
+	sql.close();	
+	startFolderSamplesSearch(folderno);
+}
+
+// chopped from testpackages_man.zul
+// 13/9/2010: move test-item up=1 or down=2 .. report-template sorter field
+void moveTestItem_clicker(int idirection)
+{
+//testparameters_div, testparameterssearch_lb_headers, "testparameters_lb"
+	if(!lbhand.check_ListboxExist_SelectItem(testparameters_div,"testparameters_lb")) return;
+
+	selindex = testparameters_lb.getSelectedIndex();
+	selitem = testparameters_lb.getSelectedItem();
+	nextindex = selindex;
+	nextitem = selitem;
+	doit = false;
+
+	switch(idirection)
+	{
+		case 1:	// move up
+			nextindex--;
+			if(nextindex != -1) doit = true;
+			break;
+
+		case 2: // move down
+			nextindex++;
+			if(nextindex <= testparameters_lb.getItemCount()-1) doit = true;
+			break;
+	}
+
+	if(doit)
+	{
+		nextitem = testparameters_lb.getItemAtIndex(nextindex);
+
+		// get sorter numbers and swap
+		oldsorter = lbhand.getListcellItemLabel(selitem,1);
+		oldid = lbhand.getListcellItemLabel(selitem,0);
+
+		newsorter = lbhand.getListcellItemLabel(nextitem,1);
+		newid = lbhand.getListcellItemLabel(nextitem,0);
+
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+
+		// update old
+		sqlstm1 = "update jobtestparameters set sorter=" + newsorter + " where origid=" + oldid;
+		sql.execute(sqlstm1);
+		// update new
+		sqlstm2 = "update jobtestparameters set sorter=" + oldsorter + " where origid=" + newid;
+		sql.execute(sqlstm2);
+		sql.close();
+		
+		startTestParametersSearch(sampleid); // refresh
+	}
+}
+
+void refreshSampleMarkingBox()
+{
+	startFolderSamplesSearch(folderno);
+}
+
+// -------- search stock items, ALS version .. can be used in other mods -- remember the popup too
+// knockoff from assign_tests_v2.zul
+void autoAssignTestParametersBox(String imysoftcode)
+{
+	istockrec = samphand.getStockMasterDetails(imysoftcode);
+	if(istockrec == null) return;
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	//populateSectionColumn(section_column,istockcat);
+	//populateTestParametersColumn(testparameters_column,istockcat,igroupcode);
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+	lbhand.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhand.matchListboxItems(section_groupcode_lb, igroupcode);
+	tscode = istockrec.get("ID").toString();
+	lbhand.matchListboxItems(tests_description_lb,tscode);
+
+	//mysoft_testparams.setVisible(true); // 25/1/2011: just show the boxes
+}
+
+class itemsearchDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = founditems_lb.getSelectedItem();
+		selected_test = lbhand.getListcellItemLabel(selitem,0);
+		autoAssignTestParametersBox(selected_test);
+		//showStockItem_Metadata(selected_test);
+		//newstockitem_btn.setLabel("Update test/sale item"); // change button label if item selected
+		searchitem_popup.close();
+	}
+}
+
+void searchStockItem_clicker()
+{
+Object[] finditems_lb_headers = {
+	new dblb_HeaderObj("mysoftcode",false,"id",2),
+	new dblb_HeaderObj("Stock.Code",true,"stock_code",1),
+	new dblb_HeaderObj("Test",true,"description",1),
+	new dblb_HeaderObj("Method",true,"description2",1),
+	new dblb_HeaderObj("Division",true,"stock_cat",1),
+	new dblb_HeaderObj("Section",true,"groupcode",1),
+	};
+
+	srchstr = kiboo.replaceSingleQuotes(itemsearch_text.getValue());
+	if(srchstr.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	sqlstatem = "select id,stock_code,description,description2,stock_cat,groupcode from stockmasterdetails " + 
+		"where item_type='Service Item' and nominal_code like '5%' " +
+		"and (stock_code like '%" + srchstr + "%' or description like '%" + srchstr + "%' or description2 like '%" + srchstr + "%') " +
+		"order by description" ;
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(founditems_holder,finditems_lb_headers,"founditems_lb",5,sql,sqlstatem);
+	sql.close();
+
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+	if(newlb.getItemCount() > 0)
+	{
+		dc_obj = new itemsearchDoubleClick_Listener();
+		lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+	}
+}
+// -------- ENDOF search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+// 25/1/2011: Sample matrix related - uses matrix_manager.zul to setup the matrix-subs
+
+// Hardcoded for ALS .. change accordingly for other system
+MATRIX_LOOKUP_ID = "41";
+
+global_selected_matrixclass = "";
+global_matrixclass_disptext = "";
+global_selected_submatrix = "";
+
+class submatrix_DC implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// check if sample selected
+		if(global_selected_sampleid.equals("")) return;
+
+		selitem = submatrix_lb.getSelectedItem();
+		idlookups = lbhand.getListcellItemLabel(selitem,0);
+		disptext = lbhand.getListcellItemLabel(selitem,2);
+
+		// store sample-matrix Lookup->idlookups
+	    sqlstm = "update jobsamples set matrix=" + idlookups + " where origid=" + global_selected_sampleid;
+	    sqlhand.gpSqlExecuter(sqlstm);
+
+	    samp_matrix_tb.setValue(disptext);
+	    matrix_popup.close();
+	}
+}
+submatdoucliker  = new submatrix_DC();
+
+void showSubMatrix(String theparent, String parentdisptext)
+{
+	Object[] submatrixclass_lb_headers =
+	{
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("Ref.Code",true),
+	new listboxHeaderObj("Sub.Matrix",true),
+	};
+
+	submatrix_caption.setLabel(parentdisptext);
+	Listbox newlb = lbhand.makeVWListbox(sub_matrix_div, submatrixclass_lb_headers, "submatrix_lb", 5);
+
+	expstring = " and expired=0";
+	// Admin can see deleted/expired item
+	if(useraccessobj.accesslevel == 9) expstring = "";
+
+	sqlstm = "select idlookups,name,disptext,expired from Lookups where myparent='" + theparent + "'" + expstring;
+	mcrecs = sqlhand.gpSqlGetRows(sqlstm);
+
+	if(mcrecs.size() == 0) return;
+	newlb.setRows(15);
+	ArrayList kaboom = new ArrayList();
+	for(dpi : mcrecs)
+	{
+		kaboom.add(dpi.get("idlookups").toString());
+		kaboom.add(dpi.get("name"));
+		expkk = (dpi.get("expired") == 0) ? "" : "[DEL] ";
+		kaboom.add(expkk + dpi.get("disptext"));
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kaboom),"false","");
+		kaboom.clear();
+	}
+	
+	lbhand.setDoubleClick_ListItems(newlb, submatdoucliker);
+}
+
+class matrixclasslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_matrixclass = lbhand.getListcellItemLabel(selitem,0);
+		global_matrixclass_disptext = lbhand.getListcellItemLabel(selitem,2);
+		showSubMatrix(global_selected_matrixclass,global_matrixclass_disptext);
+	}
+}
+matclascliker = new matrixclasslb_Listener();
+
+void showMatrixClass()
+{
+	Object[] matrixclass_lb_headers = {
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("name",false),
+	new listboxHeaderObj("M.Group",true),
+	};
+
+	// if there's a submatrix listbox shown earlier, remove it and reset other vars
+	if(sub_matrix_div.getFellowIfAny("submatrix_lb") != null)
+	{
+		kabing = sub_matrix_div.getFellow("submatrix_lb");
+		kabing.setParent(null);
+		submatrix_caption.setLabel("Sub-Matrix");
+		global_selected_matrixclass = "";
+		global_matrixclass_disptext = "";
+	}
+
+	Listbox newlb = lbhand.makeVWListbox(matrixclass_div, matrixclass_lb_headers, "matrixclass_lb", 15);
+
+	expstring = " and expired=0";
+	// Admin can see deleted/expired item
+	if(useraccessobj.accesslevel == 9) expstring = "";
+
+	sqlstm = "select idlookups,name,disptext,expired from Lookups where myparent='" + MATRIX_LOOKUP_ID + "'" + expstring;
+	mcrecs = sqlhand.gpSqlGetRows(sqlstm);
+
+	if(mcrecs.size() == 0) return;
+	newlb.addEventListener("onSelect", matclascliker);
+	ArrayList kaboom = new ArrayList();
+	for(dpi : mcrecs)
+	{
+		kaboom.add(dpi.get("idlookups").toString());
+		kaboom.add(dpi.get("name"));
+		expkk = (dpi.get("expired") == 0) ? "" : "[DEL] ";
+		kaboom.add(expkk + dpi.get("disptext"));
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kaboom),"false","");
+		kaboom.clear();
+	}
+}
+
+void assignMatrix()
+{
+	if(global_selected_sampleid.equals("")) return;
+	showMatrixClass();
+	matrix_popup.open(samp_matrix_tb);
+}
+
+// END OF - Sample matrix related - uses matrix_manager.zul to setup the matrix-subs
+
+void runSampleMatrixConfig()
+{
+	wnid = kiboo.makeRandomId("kaboom");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","qc/matrix_manager.zul",wnid,"",useraccessobj);	
+}
+
+// 18/03/2011 : memorize assigned tests as test-package - Ima's idea
+void memorizeTestPackage()
+{
+	if(global_selected_foldernum.equals("")) return;
+
+	compname = sqlhand.getCompanyName(global_selected_arcode);
+	mt_companyname.setValue(compname);
+
+	memorizeTests_popup.open(memorizetests_btn);
+}
+
+void realMemorizeTestPackage()
+{
+	memorizeTests_popup.close();
+	if(testparameters_div.getFellowIfAny("testparameters_lb") == null) return;
+
+	packagename = kiboo.replaceSingleQuotes(mt_package_name.getValue()).trim();
+	if(packagename.equals("")) return;
+	if(!testphand.isUniqTestPackageName(packagename)) { guihand.showMessageBox("Test package name already exist"); return; }
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	testphand.createNewTestPackage_packname(todaydate, global_selected_arcode, useraccessobj.username, packagename);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select origid from testpackages where package_name='" + packagename + "' and ar_code='" + global_selected_arcode + "'";
+	tprec = sql.firstRow(sqlstm);
+
+	if(tprec != null)
+	{
+		tporigid = tprec.get("origid").toString();
+		allitems = testparameters_lb.getItems();
+		for(dpi : allitems)
+		{
+			themysoftc = lbhand.getListcellItemLabel(dpi,3);
+			if(!themysoftc.equals("0"))
+			{
+				thesorter = lbhand.getListcellItemLabel(dpi,1);
+				sqlstatem = "insert into TestPackage_Items (mysoftcode,testpackage_id,deleted,sorter,lor,bill,units) values " + 
+					"(" + themysoftc + "," + tporigid + ",0," + thesorter + ",'','YES','')";
+				sql.execute(sqlstatem);
+			}
+		}
+	}
+
+	sql.close();
+}
+
+// Show folders audit-trail in popup
+// Can be used in other modules - remember the pop-up
+void showFolderAuditTrail()
+{
+	Object[] audtrails_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Date",true,"datecreated",3),
+	new dblb_HeaderObj("Username",true,"username",1),
+	new dblb_HeaderObj("Actions",true,"audit_notes",1),
+	};
+
+	if(global_selected_foldernum.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+	sqlstm = "select origid,username,audit_notes,datecreated from elb_systemaudit where linking_code='" + global_selected_foldernum + "' order by datecreated";
+	Listbox newlb = lbhand.makeVWListbox_onDB(audittrails_holder,audtrails_lb_headers,"auditrails_lb",10,sql,sqlstm);
+	sql.close();
+	audittrail_caption.setValue("Audit trails: " + global_selected_foldernum);
+	audittrail_popup.open(audittrail_btn);
+}
+
+// 11/09/2012: consolidate all general funcs
+// itype: 1=print sra, 2=print labels, 3=show attached docs, 4=change share-sample
+// 5=set pkd flag
+void generalFuncs(int itype)
+{
+	refreshfolderbox = false;
+	sqlstm = "";
+
+	extfold = samphand.extractFolderNo(global_selected_foldernum);
+	extfold = Integer.parseInt(extfold).toString();
+
+	switch(itype)
+	{
+		case 1: // print sra
+		if(global_selected_foldernum.equals("")) return;
+		printSRA(global_selected_foldernum); // samplereg_funcs.zs
+		break;
+		
+		case 2: // print labels
+		if(samples_div.getFellowIfAny("samples_lb") == null) return;
+		if(samples_lb.getItemCount() < 1) return;
+		// 24/2/2010: save samples id full string eg. ALSM000010001 before printing.
+		//saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+		printSampleLabels(global_selected_foldernum); // samplereg_funcs.zs
+		break;
+		
+		case 3: // show attached docs
+		if(global_selected_foldernum.equals("")) return;
+		documentLinkProp.global_eq_origid = global_selected_foldernum;
+		documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+		// show CRUD buttons for admin
+		if(useraccessobj.accesslevel == 9)
+		{
+			documentLinkProp.refreshListbox.showCrudButtons();
+			documentLinkProp.refreshListbox.showAdminButtons();
+		}
+		doculink_popup.open(viewdoculinks_btn);
+		break;
+
+		case 4: // change share-sample
+		if(global_selected_foldernum.equals("")) return;
+		newss = share_sample2.getSelectedItem().getLabel();
+		sqlstm = "update JobFolders set share_sample='" + newss + "' where origid=" + extfold;
+		refreshfolderbox = true;
+		break;
+
+		case 5: // set PKD flag
+		if(global_selected_foldernum.equals("")) return;
+		sqlstm = "update jobfolders set pkd_samples=1-pkd_samples where folderno_str='" + global_selected_foldernum + "'";
+		refreshfolderbox = true;
+		break;
+
+		case 10: // toggle pre-paid
+		sqlstm = "update jobfolders set prepaid=1-prepaid where origid=" + extfold;
+		refreshfolderbox = true;
+		break;
+	}
+	
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refreshfolderbox) startFolderJobsSearch(last_foldersearch_type);
+}
+
+//--- 13/01/2013: dig/show quotation, don't show prices -- only items
+// quote-items listing contain mysoftcode which can be imported during test-assignment
+void digShowQuotation()
+{
+Object[] qt_headers =
+{
+	new listboxHeaderWidthObj("mysc",false,""),
+	new listboxHeaderWidthObj("No.",true,"20px"),
+	new listboxHeaderWidthObj("TI",true,"20px"),
+	new listboxHeaderWidthObj("Test",true,"200px"),
+	new listboxHeaderWidthObj("Method",true,"200px"),
+};
+	qtnm = kiboo.replaceSingleQuotes(digquote_tb.getValue()).trim();
+	if(qtnm.equals("")) return;
+
+	// fill the quote metadata
+	sqlstm = "select datecreated,username,salesperson,customer_name from elb_quotations where origid=" + qtnm + " and qstatus<>'NEW'";
+	qrec = sqlhand.gpSqlFirstRow(sqlstm);
+	if(qrec == null) return;
+	qt_origid.setValue("QT" + qtnm);
+	qt_username.setValue(qrec.get("username"));
+	qt_salesperson.setValue(qrec.get("salesperson"));
+	qt_customer_name.setValue(qrec.get("customer_name"));
+	qt_datecreated.setValue(qrec.get("datecreated").toString().substring(0,10));
+
+	Listbox newlb = lbhand.makeVWListbox_Width(quoteitems_holder, qt_headers, "quoteitems_lb", 5);
+
+	sqlstm = "select mysoftcode,description,description2 from elb_quotation_items where quote_parent=" + qtnm + " order by origid";
+	qtrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(qtrecs.size() == 0) return;
+	newlb.setRows(10);
+	newlb.setMultiple(true);
+	lncn = 1;
+	ArrayList kabom = new ArrayList();
+	for(dpi : qtrecs)
+	{
+		kabom.add(dpi.get("mysoftcode").toString());
+		kabom.add(lncn.toString() + ".");
+
+		mysc = dpi.get("mysoftcode");
+		mysc = (mysc == 0) ? "N" : "Y";
+		kabom.add(mysc);
+
+		kabom.add(dpi.get("description"));
+		kabom.add(dpi.get("description2"));
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		lncn++;
+		kabom.clear();
+	}
+
+	quotation_workarea.setVisible(true);
+}
+
+// 13/01/2013: import quote-items which have mysoftcode into sample-id
+void importQuotedTests()
+{
+	if(global_selected_sampleid.equals(""))
+	{
+		guihand.showMessageBox("Please select a sample before importing 'em tests..");
+		return;
+	}
+
+	if(quoteitems_lb.getSelectedCount() == 0) return;
+	sqlstm = "";
+	tp_sorter = 1;
+	for(dpi : quoteitems_lb.getSelectedItems())
+	{
+		mysc = lbhand.getListcellItemLabel(dpi,0);
+		if(!mysc.equals("0"))
+		{
+		sqlstm += "insert into JobTestParameters (jobsamples_id,mysoftcode,starlimscode,status," + 
+			"uploadtomysoft,uploadtolims,sorter,lor,bill,price,units,testpackageid,packageprice) values " + 
+			"(" + global_selected_sampleid + "," + mysc + ",0,'DRAFT',0,0," + tp_sorter.toString() + "," + 
+			"'','Y', 0.0, '', 0, 0.0);";
+
+		tp_sorter++;
+		}
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	startTestParametersSearch(sampleid); // refresh
+}
+
+//----- internal lab-comments funcs, to replace the klunky job-notes
+
+void showLabComments(String ifolder)
+{
+Object[] lc_headers =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("User",true,"70px"),
+	new listboxHeaderWidthObj("Comments",true,""),
+};
+	Listbox newlb = lbhand.makeVWListbox_Width(lc_holder, lc_headers, "labcomments_lb", 5);
+
+	sqlstm = "select origid,datecreated,username,thecomment from elb_labcomments where folderno_str='" + ifolder + "' order by origid";
+	lcrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(lcrecs.size() == 0) return;
+	newlb.setRows(10);
+	ArrayList kabom = new ArrayList();
+	for(dpi : lcrecs)
+	{
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("thecomment"));
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+void labcommentFunc(Component iwhat)
+{
+	if(global_selected_foldernum.equals("")) return;
+	itype = iwhat.getId();
+	todate = kiboo.todayISODateString();
+	refresh = false;
+	sqlstm = "";
+
+	if(itype.equals("savelc_btn"))
+	{
+		tcomm = kiboo.replaceSingleQuotes(lc_entry.getValue());
+		if(tcomm.equals("")) return;
+
+		sqlstm = "insert into elb_labcomments (folderno_str,username,datecreated,thecomment) values " +
+		"('" + global_selected_foldernum + "','" + useraccessobj.username + "','" + todate + "','" + tcomm + "')";
+
+		refresh = true;
+	}
+
+	if(itype.equals("clearlc_btn")) lc_entry.setValue("");
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) showLabComments(global_selected_foldernum);
+}
+
+void popLabComments(Component iwhat)
+{
+	showLabComments(global_selected_foldernum);
+	labcomment_popup.open(iwhat);
+}
+
+]]>
+</zscript>
+
+<popup id="labcomment_popup">
+<div sclass="shadowbox" style="background:#d28c0c;"  width="580px">
+		<div style="background:#a52a2a;padding:2px">
+		<label value="Internal Lab Comments (LC)" style="color:#eeeeee" />
+		</div>
+		<separator height="3px" />
+		<div id="lc_holder" />
+		<separator height="3px" />
+		<grid>
+			<rows>
+				<row>
+					<label value="Lab comment" sclass="k9" />
+					<textbox id="lc_entry" sclass="k9" multiline="true" width="99%" height="60px" />
+				</row>
+				<row spans="2">
+					<hbox>
+						<button id="savelc_btn" label="Save comment" sclass="k9" onClick="labcommentFunc(self)" />
+						<button id="clearlc_btn" label="Clear text" sclass="k9" onClick="labcommentFunc(self)" />
+						<button label="X Close" sclass="k9" onClick="labcomment_popup.close()" />
+					</hbox>
+				</row>
+			</rows>
+		</grid>
+</div>
+</popup> <!-- ENDOF labcomment_popup -->
+
+<popup id="digquotation_popup">
+<div  sclass="shadowbox" style="background:#d28c0c;" width="500px">
+	<hbox>
+		<label value="QT" sclass="k9" />
+		<textbox id="digquote_tb" sclass="k9" />
+		<button label="Dig" sclass="k9" onClick="digShowQuotation()" />
+		<button label="X Close" sclass="k9" onClick="digquotation_popup.close()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="quotation_workarea" visible="false">
+		<grid>
+			<rows>
+				<row>
+					<label value="Quote Ref#" sclass="k9" />
+					<label id="qt_origid" sclass="k9" />
+					<label value="Dated" sclass="k9" />
+					<label id="qt_datecreated" sclass="k9" />
+				</row>
+				<row spans="1,3">
+					<label value="Customer" sclass="k9" />
+					<label id="qt_customer_name" sclass="k9" />
+				</row>
+				<row>
+					<label value="Quoter" sclass="k9" />
+					<label id="qt_username" sclass="k9" />
+					<label value="Salesperson" sclass="k9" />
+					<label id="qt_salesperson" sclass="k9" />
+				</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<div id="quoteitems_holder" />
+		<separator height="3px" />
+		<hbox>
+			<button label="Import tests.." sclass="k9" onClick="importQuotedTests()" />
+			<label style="font-size:9px">
+			(Only items with TI=Y can be imported)
+			</label>
+		</hbox>
+	</div>
+</div>
+</popup> <!-- ENDOF digquotation_popup -->
+
+<!-- Memorize assigned tests as test-package -->
+<popup id="memorizeTests_popup">
+<groupbox mold="3d" width="400px">
+<caption label="Memorize tests-assigned as test-package" />
+<grid>
+	<rows>
+	<row>
+		<label value="Company" sclass="k9" />
+		<label id="mt_companyname" sclass="k9" />
+	</row>
+	<row>
+		<label value="Package name" sclass="k9" />
+		<textbox id="mt_package_name" sclass="k9" width="180px" />
+	</row>
+	</rows>
+</grid>
+</groupbox>
+<hbox>
+<button label="Memorize" sclass="k9" onClick="realMemorizeTestPackage()" />
+<button label="Close" sclass="k9" onClick="memorizeTests_popup.close()" />
+</hbox>
+</popup>
+<!-- end of Memorize assigned tests as test-package -->
+
+<!-- Folders audit-trail popup -->
+<popup id="audittrail_popup">
+<div sclass="shadowbox" style="background:#A60B03" width="550px">
+	<label id="audittrail_caption" sclass="subhead1" />
+	<separator height="2px" />
+	<div id="audittrails_holder" />
+	<button label="Close" sclass="k9" onClick="audittrail_popup.close()" />
+</div>
+</popup>
+<!-- end of Folders audit-trail popup -->
+
+<!-- sample matrix popup -->
+<popup id="matrix_popup">
+	<groupbox mold="3d">
+		<caption label="Sample matrix selector" />
+		<hbox>
+		<groupbox width="100px">
+			<caption label="Matrix group"/>
+			<div id="matrixclass_div" />
+		</groupbox>
+
+		<groupbox width="300px">
+			<caption id="submatrix_caption" label="Sub-Matrix"/>
+			<div id="sub_matrix_div" />
+		</groupbox>
+		</hbox>
+	</groupbox>
+	<separator height="3px" />
+	<button label="Close" sclass="k9" onClick="matrix_popup.close()" />
+</popup>
+<!-- end of sample matrix popup -->
+
+<!-- stock items search popup -->
+<popup id="searchitem_popup">
+<groupbox mold="3d" width="600px" style="padding:3px">
+	<caption label="Search Items.." />
+	<hbox>
+		<label value="Search item" sclass="k9" />
+		<textbox id="itemsearch_text" sclass="k9" width="200px" />
+		<button label="Find" sclass="k9" onClick="searchStockItem_clicker()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="founditems_holder" />
+</groupbox>
+</popup>
+<!-- end of stock items search popup -->
+
+<!-- Test Package selection popup -->
+<popup id="testPackagePopup">
+<groupbox width="600px" >
+<caption label="Test Packages" />
+	<hbox>
+		<groupbox mold="3d" width="310px" >
+			<caption label="Client" />
+			<div id="tp2client_holder" />
+		</groupbox>
+		<vbox>
+			<groupbox mold="3d">
+				<caption label="Packages" />
+				<div id="testpackages_div" />
+			</groupbox>
+			<groupbox>
+				<caption label="Tests" />
+				<div id="tp_tests_holder" />
+			</groupbox>
+		</vbox>
+	</hbox>
+</groupbox>
+<separator height="3px" />
+<hbox>
+<!--	<button label="Get test package" onClick="crampTestPackage()" sclass="k9" /> -->
+<!--	<button label="Refresh" onClick="populateTestPackages(testpackages_div)" sclass="k9" /> -->
+	<button label="Close" onClick="testPackagePopup.close()" sclass="k9" />
+</hbox>
+</popup>
+<!-- end of Test package selection popup -->
+
+<popup id="doculink_popup">
+<groupbox mold="3d" width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" sclass="k9" />
+	</hbox>
+</groupbox>
+</popup>
+
+<popup id="showTestAssignmentMPF_pop">
+<div  sclass="shadowbox" style="background:#404142;" >
+<vbox>
+	<button label="Copy Tests to Next" onClick="copyTestsToNext()" sclass="k9" width="150px" />
+	<button label="Copy sampmarking to next" onClick="copySampleMarkingToNext()" sclass="k9" width="150px" />
+	<button label="Dup Tests All" onClick="dupAllTests()" sclass="k9" width="150px" />
+	<button label="Dup SampMarking" onClick="dupSampleMarking()" sclass="k9" width="150px" />
+	<button label="Print labels" onClick="generalFuncs(2)" sclass="k9" width="150px" />
+	<button label="Refresh samples" onClick="refreshSampleMarkingBox()" sclass="k9" width="150px" />
+</vbox>
+</div>
+</popup>
+
+<popup id="utilFuncs_pop">
+	<div sclass="shadowbox" style="background:#404142;" >
+		<div id="folder_buttons_div" visible="false">
+			<vbox>
+				<hbox>
+					<listbox id="share_sample2" mold="select" sclass="k9" />
+					<zscript>
+						lbhand.populateDropdownListbox(share_sample2,sharesamplechop);
+					</zscript>
+					<button id="resetsharesample_butt" disabled="true" label="Change share-sample" sclass="k9" onClick="generalFuncs(4)" />
+				</hbox>
+				<button label="Set PKD Samples" sclass="k9"  width="150px" onClick="generalFuncs(5)" />
+				<button label="WC Prepaid" sclass="k9" width="150px" onClick="generalFuncs(10)" />
+				<separator height="3px" />
+				<button id="lc_butt" label="Lab comments" sclass="k9" width="150px" onClick="popLabComments(self)"  />
+				<button id="digquote_btn" label="Dig quotation" sclass="k9" width="150px" onClick="digquotation_popup.open(self)" />
+				<button id="viewdoculinks_btn" label="View COC/PO/Documents" sclass="k9" width="150px" onClick="generalFuncs(3)" />
+				<button label="Print SRA"  width="150px" sclass="k9" onClick="generalFuncs(1)" />
+				<button id="audittrail_btn" label="Audit trail" sclass="k9" width="150px" onClick="showFolderAuditTrail()" />
+			</vbox>
+		</div>
+		</div>
+</popup>
+
+<style src="/real-world.css" />
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true" >
+<panelchildren style="background:#C7724E">
+<!-- <button label="X Close panel" sclass="k9" onClick="assign_tests_panel.setParent(null)" /> -->
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<div sclass="shadowbox" style="background:#404142;">
+<hbox>
+	<label value="Start date" sclass="k9b" />
+	<datebox id="startdate" format="yyyy-MM-dd" sclass="k9" onCreate="kiboo.setTodayDatebox(self);" />
+	<label value="End date" sclass="k9b" />
+	<datebox id="enddate" format="yyyy-MM-dd" sclass="k9" onCreate="kiboo.setTodayDatebox(self);" />
+	<separator width="5px" />
+	<textbox id="customer_tb" width="200px" sclass="k9" />
+	<button label="Search/Load" onClick="startFolderJobsSearch(1)" sclass="k9" />
+	<separator width="5px" />
+	<textbox id="byfolder_tb" sclass="k9" width="80px" />
+	<button label="Dig folder" onClick="startFolderJobsSearch(2)" sclass="k9" />
+	<separator width="30px" />
+	<div id="adminstuff" visible="false">
+		<button label="adm:test commit" sclass="k9" onClick='checkSubconTests("")' />
+	</div>
+
+</hbox>
+</div>
+
+<hbox>
+<div width="630px">
+
+	<div id="folder_buttons_div2" visible="false" sclass="shadowbox" style="background:#404142;" >
+			<button label="Utility functions"  onClick="utilFuncs_pop.open(self)" />
+			<button id="commit_butt" label="Commit job-folder" onClick="commitFolder()" style="font-size:12px;font-weight:bold;color:#F71307" />
+	</div>
+
+	<div id="folderjobs_div" sclass="shadowbox" style="background:#404142;">
+		<label sclass="k9b">
+		(Brh=Branch, PP=PrePaid, LC=LabComments)
+		</label>
+	</div>
+	<separator height="3px" />
+
+	<!-- to keep track of things -->
+	<textbox id="folderno" visible="false" />
+	<textbox id="sampleid" visible="false" />
+	<textbox id="testparamid" visible="false" />
+</div>
+
+<div id="foldersamples_holder" visible="false" sclass="shadowbox" style="background:#404142;">
+	<button label="MPF" onClick="showTestAssignmentMPF_pop.open(self)" />
+	<separator height="3px" />
+	<div id="samples_div"  />
+	<grid>
+		<rows>
+		<row>
+			<label value="Sample marking" sclass="k9" />
+			<textbox id="sampmark_tb" multiline="true" height="30px" width="99%" sclass="k9" />
+			<button label="Update" onClick="updateSampleMarking(sampmark_tb,sampnotes_tb)" sclass="k9" />
+		</row>
+		<row spans=",2">
+			<label value="WC prepaid" sclass="k9" />
+			<textbox id="wcpp" sclass="k9" width="50%" />
+		</row>
+		<row spans=",2" id="asmastuff" visible="false">
+			<label value="ASMA-ID" sclass="k9" />
+			<hbox>
+				<textbox id="asma_id" width="50px" sclass="k9" />
+				<label value="Station" sclass="k9" />
+				<textbox id="asma_station" width="50px" sclass="k9" />
+			</hbox>
+		</row>
+		<row spans="3">
+			<div id="envcustomer_stuff" visible="false">
+				<hbox>
+					<label value="Project ID" sclass="k9" />
+					<textbox id="env_projectid" sclass="k9" width="200px" />
+				</hbox>
+			</div>
+		</row>
+		<row>
+			<label value="Sample description" sclass="k9" />
+			<textbox id="sampnotes_tb" multiline="true" height="30px" width="99%" sclass="k9" />
+			<button label="Matrix config" sclass="k9" onClick="runSampleMatrixConfig()" />
+		</row>
+		<row>
+			<label value="Sample matrix" sclass="k9" />
+			<textbox id="samp_matrix_tb" width="250px" sclass="k9" />
+			<button id="assignmatrix_btn" label="Assign matrix" sclass="k9" onClick="assignMatrix()" />
+		</row>
+		</rows>
+	</grid>
+</div> <!-- ENDOF foldersamples_holder -->
+
+</hbox>
+
+<hbox>
+<div id="testthings_holder" sclass="shadowbox" style="background:#737851" width="450px" visible="false">
+	<div style="background:#555753;padding:2px">
+		<label value="Folders::Samples::Tests" style="font-size:9px;color:#ffffff" />
+	</div>
+	<separator height="2px" />
+	<hbox>
+		<button label="Add test" onClick="createNewTestParameter()" sclass="k9" />
+		<button label="Remove test" onClick="deleteTestParameter()" sclass="k9" />
+		<button id="testpackage_btn" label="Test package" sclass="k9" onClick="showTestPackages_clicker()" />
+		<button id="memorizetests_btn" label="Memorize tests" sclass="k9" onClick="memorizeTestPackage()" />
+		<button id="searchitem_btn" label="Search test" sclass="k9" onClick="searchitem_popup.open(searchitem_btn)" />
+	</hbox>
+	<separator height="3px" />
+
+	<div id="testparameters_div" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Move up" sclass="k9" onClick="moveTestItem_clicker(1)" />
+		<button label="Move down" sclass="k9" onClick="moveTestItem_clicker(2)" />
+	</hbox>
+</div>
+
+<div id="testspanel_holder" sclass="shadowbox" style="background:#737851" visible="false">
+	<hbox>
+		<div>
+			<div style="background:#555753;padding:2px">
+			<label value="Division" sclass="k9b" />
+			</div>
+			<div id="division_column" />
+		</div>
+
+		<div>
+			<div style="background:#555753;padding:2px">
+			<label value="Section" sclass="k9b" />
+			</div>
+			<div id="section_column" />
+		</div>
+
+		<div>
+			<!-- <label value="Test parameters" sclass="k9" /> -->
+			<div id="testparameters_column" />
+		</div>
+	</hbox>
+</div>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+// Setup TestsPanel() - showType=1 (default no pricings)
+testspanel = new TestsPanel(division_column,"",section_column,"",testparameters_column,"");
+testspanel.populateDivisionColumn();
+testspanel.testOnClicker = new ALSTestParametersLB_Listener();
+
+Listbox newlb = lbhand.makeVWListbox(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb",5);
+newlb.addEventListener("onSelect", new TestParams_Listener());
+
+activateSecurity();
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+// 31/05/2013: who can change share-sample flag
+if(sechand.allowedUser(useraccessobj.username,"RESET_SHARESAMPLE_USERS")) resetsharesample_butt.setDisabled(false);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

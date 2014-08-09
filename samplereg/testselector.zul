@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="test_selector_panel"?>
+<!--
+
+Version				: To filter and select tests from mysoft.stockmasterdetails
+Coding began date	:
+Developers			: Victor
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// to count open invoice-details window
+windcounter = 1;
+
+ALS_stock_cat = "";
+
+public class codeToLongNameObj
+{
+	String thecode;
+	String thelongname;
+	
+	public codeToLongNameObj(String ithecode, String ithe_longname)
+	{
+		thecode = ithecode;
+		thelongname = ithe_longname;
+	}
+}
+
+Object[] als_divisions = {
+	new codeToLongNameObj("0","Unsorted"),
+	new codeToLongNameObj("EV","Environmental (EV)"),
+	new codeToLongNameObj("BS","Banned Substances (BS)"),
+	new codeToLongNameObj("IH","Industrial Hygiene (IH)"),
+	new codeToLongNameObj("WC","Wearcheck (WC)"),
+	new codeToLongNameObj("ASMA","ASMA"),
+	new codeToLongNameObj("OF","Oil and Food (OF)"),
+	new codeToLongNameObj("MD","Medical Devices (MD)")
+};
+
+// Convert codes to its long name - uses codeToLongNameObj
+String convertCodeToLongName(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thecode.equals(iwhich))
+		{
+			retval = iobjs[i].thelongname;
+			break;
+		}
+	}
+	return retval;
+}
+
+// Same as convertCodeToLongName() but the reversal
+String convertLongNameToCode(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thelongname.equals(iwhich))
+		{
+			retval = iobjs[i].thecode;
+			break;
+		}
+	}
+	return retval;
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = tests_description_lb.getSelectedItem().getLabel();
+		// alert(iwhat);
+		
+		// test selected if this event got activated.. just need to store the test id which is hidden in the listbox, column 1
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSTestParametersListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("tests_description_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("extraAddressContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+	hd1.setVisible(false);
+    hd1.setParent(newhead);
+	
+    Listheader hd2 = new Listheader();
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSTestParametersListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select id,description,description2 from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' " +
+		"and groupcode='" + igroupcode + "' " +
+		"order by description" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = iwhichdiv.getFellowIfAny("tests_description_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSTestParametersListbox(iwhichdiv);
+	
+	String[] strarray = new String[2];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		
+		strarray[0] = ilist.get("id").toString();
+		
+		strarray[1] = ilist.get("description") + "(" + ilist.get("description2") + ")" ;
+		
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = section_groupcode_lb.getSelectedItem().getLabel();
+		
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+
+		populateTestParametersColumn(testparameters_column,ALS_stock_cat,iwhat);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSSectionListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("section_groupcode_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("extraAddressContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSSectionListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+		
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	ALS_stock_cat = istock_cat;
+	
+	if(tlist == null) return;
+
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = iwhichdiv.getFellowIfAny("section_groupcode_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSSectionListbox(iwhichdiv);
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		strarray[0] = ilist.get("groupcode");
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+		
+		// populate section column
+		
+		iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+				
+		// alert("selected: " +  iwhat + " and code: " + iwhatcode);
+		
+		populateSectionColumn(section_column,iwhatcode);
+		
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		Listbox oldlb = testparameters_column.getFellowIfAny("tests_description_lb");
+		if(oldlb != null) oldlb.setParent(null);
+
+		// create a new listbox and attach to div
+		Listbox newlb = makeALSTestParametersListbox(testparameters_column);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeALSDivisionListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("division_stockcat_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("extraAddressContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSDivisionListbox()
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = iwhichdiv.getFellowIfAny("division_stockcat_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+	// create a new listbox and attach to div
+	Listbox newlb = makeALSDivisionListbox(iwhichdiv);
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateDivisionColumn()
+
+]]>
+</zscript>
+
+<div width="990px">
+<panel id="testselectorbox" title="Test parameters" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+
+<div>
+
+<borderlayout height="200px">
+	<west title="Division" size="200px" flex="true" splittable="true" collapsible="true">
+	<div id="division_column" />
+	</west>
+	
+	<center>
+		<borderlayout height="300px" width="100%">
+			<west title="Section" size="250px" flex="true" splittable="true" collapsible="true">
+			<div id="section_column" />
+			</west>
+	
+			<center>
+				<borderlayout height="300px" width="100%">
+					<west title="Test parameters" size="100%" flex="true" splittable="true" collapsible="true">
+					<div id="testparameters_column" />
+					</west>
+				</borderlayout>
+			</center>
+			
+		</borderlayout>
+	</center>
+	
+</borderlayout>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+populateDivisionColumn(division_column);
+
+/*
+startdd = patientRecsDateStart();
+Calendar myend = Calendar.getInstance();
+myend.setTime(startdd);
+myend.add(myend.DAY_OF_MONTH,6);
+startgraphdate.setValue(startdd);
+endgraphdate.setValue(myend.getTime());
+*/
+
+// Set search startdate and enddate to today's date
+/*
+Calendar kkk = Calendar.getInstance();
+startdate.setValue(kkk.getTime());
+enddate.setValue(kkk.getTime());
+*/
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+
+</zk>
+

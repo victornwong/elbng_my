@@ -1,0 +1,568 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="testtree_man_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/testTreeHandler_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Test-parameters Tree Manager";
+MYVERSION = "v0.1";
+/*
+Title		: Test parameters tree manager
+Dated		: 20/09/2012
+Written by	: Victor Wong
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+samphand = new SampleReg();
+
+glob_selected_trunk = "";
+glob_trunk_details = "";
+glob_selected_trunklistitem = null;
+
+glob_selected_mysoft = "";
+
+// def in testTreeHandler_v1.zs
+//glob_selected_subid = "";
+//glob_selected_subdetails = "";
+
+TestsPanel testspanel;
+
+// check if sub-division/test exist under iparentd
+boolean existTestBranch(String iparentd)
+{
+	retval = false;
+	sqlstm = "select top 1 origid from elb_testtree where parentid=" + iparentd;
+	crec = sqlhand.gpSqlFirstRow(sqlstm);
+	if(crec != null) retval = true;
+	return retval;
+}
+
+// use-by trunk-tree clicker listener
+void saveSelectedTrunkStuff(Object iwhat)
+{
+	glob_selected_trunklistitem = iwhat;
+	glob_selected_trunk = lbhand.getListcellItemLabel(glob_selected_trunklistitem,0);
+	glob_trunk_details = lbhand.getListcellItemLabel(glob_selected_trunklistitem,1);
+	trunkdet_tb.setValue(glob_trunk_details);
+	division_title.setValue(glob_trunk_details);
+}
+
+void clearSubDiv_Stuff()
+{
+	division_title.setValue("");
+	// TODO: clear tree-branches too
+}
+
+class trunksDC_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		saveSelectedTrunkStuff(event.getTarget());
+		trunkdet_popup.open(glob_selected_trunklistitem);
+	}
+}
+
+class trunklb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		saveSelectedTrunkStuff(event.getReference());
+		showTestSubDiv_tree(glob_selected_trunk, tests_tree);
+	}
+}
+
+Object[] ttrunklb_headers = 
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Division Trunk",true,""),
+	new listboxHeaderWidthObj("LastUpd",true,"60px"),
+	new listboxHeaderWidthObj("LastUser",true,"80px"),
+};
+// show tree trunks : parentid=0
+void showTrunks()
+{
+	Listbox newlb = lbhand.makeVWListbox_Width(trunks_holder, ttrunklb_headers, "trunk_lb", 5);
+	sqlstm = "select origid,branchtitle,lastupdate,lastuser from elb_testtree where parentid=0 order by origid";
+	trnks = sqlhand.gpSqlGetRows(sqlstm);
+	if(trnks == null) return;
+	newlb.setRows(33);
+	newlb.addEventListener("onSelect", new trunklb_Listener());
+	for(dpi : trnks)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("branchtitle")));
+		kabom.add(dpi.get("lastupdate").toString().substring(0,10));
+		kabom.add(kiboo.checkNullString(dpi.get("lastuser")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	dc_obj = new trunksDC_Listener();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// Trunks general funcs
+// itype: uses button or whatever component-id
+void trunkFunc(Object icomponent)
+{
+	refresh = false;
+	todate = kiboo.todayISODateString();
+	itype = icomponent.getId();
+
+	if(glob_selected_trunk.equals("") && !itype.equals("newtrunk_btn")) return;
+
+	if(itype.equals("newtrunk_btn"))
+	{
+		sqlstm = "insert into elb_testtree (mysoftcode,parentid,lastupdate,lastuser,branchtitle) values " + 
+		"(0,0,'" + todate + "','" + useraccessobj.username + "','NEW')";
+		sqlhand.gpSqlExecuter(sqlstm);
+		//guihand.showMessageBox("New division-trunk inserted");
+		refresh = true;
+	}
+
+	if(itype.equals("trunkdet_btn"))
+	{
+		trunkdet_tb.setValue(lbhand.getListcellItemLabel(glob_selected_trunklistitem,1));
+		trunkdet_popup.open(glob_selected_trunklistitem);
+	}
+
+	if(itype.equals("updtrunkdet_btn"))
+	{
+		trdet = kiboo.replaceSingleQuotes(trunkdet_tb.getValue());
+		if(trdet.equals("")) return;
+		sqlstm = "update elb_testtree set branchtitle='" + trdet + "' where origid=" + glob_selected_trunk;
+		sqlhand.gpSqlExecuter(sqlstm);
+		trunkdet_popup.close();
+		refresh = true;
+	}
+
+	if(itype.equals("deltrunk_btn"))
+	{
+		if (Messagebox.show("Totally delete this division-trunk", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+		// check if any branch exist for trunk before deleting
+		if(existTestBranch(glob_selected_trunk))
+		{
+			guihand.showMessageBox("Please empty out sub-division or tests before deleting division-trunk..");
+			return;
+		}
+
+		sqlstm = "delete from elb_testtree where origid=" + glob_selected_trunk;
+		sqlhand.gpSqlExecuter(sqlstm);
+		refresh = true;
+
+		glob_selected_trunk = ""; // reset after delete
+		clearSubDiv_Stuff();
+	}
+
+	if(refresh) showTrunks();
+}
+
+void branchFunc(Object icomponent)
+{
+	if(glob_selected_trunk.equals("")) return;
+	todate = kiboo.todayISODateString();
+	refresh = false;
+
+	itype = icomponent.getId();
+
+	if(itype.equals("newsubdiv_btn"))
+	{
+		//parid = (!glob_selected_subid.equals("")) ? glob_selected_subid : glob_selected_trunk;
+		subdiv_add_popup.open(icomponent);
+	}
+
+	if(itype.equals("modsubdiv_btn"))
+	{
+		branchdet_tb.setValue(glob_selected_subdetails);
+		branchdet_popup.open(icomponent);
+	}
+
+	if(itype.equals("delsubdiv_btn"))
+	{
+		treesels = tests_tree.getSelectedItems();
+		if(treesels == null) return;
+
+		idstr = "";
+		for(tsel : treesels)
+		{
+			subid = guihand.getTreecellItemLabel(tsel,TT_ORIGID);
+			if(existTestBranch(subid))
+			{
+				guihand.showMessageBox("Please remove branches first..");
+				return;
+			}
+
+			idstr += subid + ",";
+		}
+
+		if(!idstr.equals(""))
+		{
+			idstr = idstr.substring(0,idstr.length()-1);
+			sqlstm = "delete from elb_testtree where origid in (" + idstr + ")";
+			sqlhand.gpSqlExecuter(sqlstm);
+			refresh = true;
+		}
+	}
+
+	// really update branch-details - remove mysoft-code and method as this is now a user-def branch-thing
+	if(itype.equals("updbranchdet_btn"))
+	{
+		trdet = kiboo.replaceSingleQuotes(branchdet_tb.getValue());
+		if(trdet.equals("")) return;
+		sqlstm = "update elb_testtree set branchtitle='" + trdet + "', mysoftcode=0 where origid=" + glob_selected_subid;
+		sqlhand.gpSqlExecuter(sqlstm);
+		branchdet_popup.close();
+		refresh = true;
+	}
+	
+	if(itype.equals("tests_btn"))
+	{
+		woli = tests_tree.getSelectedItems();
+		alert(woli);
+	}
+
+	if(refresh) showTestSubDiv_tree(glob_selected_trunk, tests_tree);
+}
+
+// howmanytoadd listbox onSelect - to add how many branches
+class addsubdiv_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		todm = Integer.parseInt(lbhand.getListcellItemLabel(selitem,0));
+		if(todm == 0) return;
+
+		parid = (!glob_selected_subid.equals("")) ? glob_selected_subid : glob_selected_trunk;
+		sqlstm = "";
+		todate = kiboo.todayISODateString();
+
+		for(i=0;i<todm;i++)
+		{
+			sqlstm += "insert into elb_testtree (mysoftcode,parentid,lastupdate,lastuser,branchtitle) values " + 
+			"(0," + parid + ",'" + todate + "','" + useraccessobj.username + "','NEW SUB');";
+		}
+		sqlhand.gpSqlExecuter(sqlstm);
+		subdiv_add_popup.close();
+		showTestSubDiv_tree(glob_selected_trunk, tests_tree); // refresh
+	}
+}
+
+// -------- search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+// knockoff from assign_tests_v2.zul
+void autoAssignTestParametersBox(String imysoftcode)
+{
+	istockrec = samphand.getStockMasterDetails(imysoftcode);
+	if(istockrec == null) return;
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+	lbhand.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhand.matchListboxItems(section_groupcode_lb, igroupcode);
+	tscode = istockrec.get("ID").toString();
+	lbhand.matchListboxItems(tests_description_lb,tscode);
+}
+
+class itemsearchDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = founditems_lb.getSelectedItem();
+		selected_test = lbhand.getListcellItemLabel(selitem,0);
+		autoAssignTestParametersBox(selected_test);
+		//showStockItem_Metadata(selected_test);
+		//newstockitem_btn.setLabel("Update test/sale item"); // change button label if item selected
+		searchitem_popup.close();
+	}
+}
+
+void searchStockItem_clicker()
+{
+Object[] finditems_lb_headers = {
+	new dblb_HeaderObj("mysoftcode",false,"id",2),
+	new dblb_HeaderObj("Stock.Code",true,"stock_code",1),
+	new dblb_HeaderObj("Test",true,"description",1),
+	new dblb_HeaderObj("Method",true,"description2",1),
+	new dblb_HeaderObj("Division",true,"stock_cat",1),
+	new dblb_HeaderObj("Section",true,"groupcode",1),
+	};
+
+	srchstr = kiboo.replaceSingleQuotes(itemsearch_text.getValue());
+	if(srchstr.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select id,stock_code,description,description2,stock_cat,groupcode from stockmasterdetails " + 
+		"where item_type='Service Item' and nominal_code like '5%' " +
+		"and (stock_code like '%" + srchstr + "%' or description like '%" + srchstr + "%' or description2 like '%" + srchstr + "%') " +
+		"order by description" ;
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(founditems_holder,finditems_lb_headers,"founditems_lb",5,sql,sqlstatem);
+	sql.close();
+
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+	if(newlb.getItemCount() > 0)
+	{
+		dc_obj = new itemsearchDoubleClick_Listener();
+		lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+	}
+}
+// -------- ENDOF search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+// called by testTreeHandler_v1.testP_Listener()
+void showTestMetadata()
+{
+	smrec = samphand.getStockMasterDetails(glob_selected_mysoft);
+	if(smrec == null) return;
+	sdescription.setValue(kiboo.checkNullString(smrec.get("Description")));
+	sdescription2.setValue(kiboo.checkNullString(smrec.get("Description2")));
+	sunit_newfield10.setValue(kiboo.checkNullString(smrec.get("NewField10")));
+	slor_newfield8.setValue(kiboo.checkNullString(smrec.get("NewField8")));
+
+	updatetest_box.setVisible(true);
+}
+
+// 05/12/2012: update test/methods/units/lor ONLY
+// stockmasterdetails.description, description2, newfield10, newfield8
+void updateTestMetadata()
+{
+	desc1 = kiboo.replaceSingleQuotes(sdescription.getValue()).trim();
+	desc2 = kiboo.replaceSingleQuotes(sdescription2.getValue()).trim();
+	sunit = kiboo.replaceSingleQuotes(sunit_newfield10.getValue()).trim();
+	slor = kiboo.replaceSingleQuotes(slor_newfield8.getValue()).trim();
+
+	if(desc1.equals("") || desc2.equals(""))
+	{
+		guihand.showMessageBox("ERROR!! Cannot have empty test-name or method");
+		return;
+	}
+
+	sqlstm = "update stockmasterdetails set description='" + desc1 + "',description2='" + desc2 + "'," +
+	"newfield10='" + sunit + "',newfield8='" + slor + "' where id=" + glob_selected_mysoft;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	
+	testspanel.populateTestParametersColumn(testspanel.selected_category,testspanel.selected_groupcode); // refresh
+
+}
+
+
+]]>
+</zscript>
+
+<!-- stock items search popup -->
+<popup id="searchitem_popup">
+<groupbox mold="3d" width="600px" style="padding:3px">
+	<caption label="Search Items.." />
+	<hbox>
+		<label value="Search item" style="font-size:9px" />
+		<textbox id="itemsearch_text" style="font-size:9px" width="200px" />
+		<button label="Find" style="font-size:9px" onClick="searchStockItem_clicker()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="founditems_holder" />
+</groupbox>
+</popup>
+<!-- end of stock items search popup -->
+
+<popup id="subdiv_add_popup">
+<groupbox mold="3d">
+<label value="How many to add" style="font-size:9px" />
+<listbox id="howmanytoadd" mold="select" style="font-size:9px" />
+<zscript>
+<![CDATA[
+	for(i=0;i<=10;i++)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(i.toString());
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(howmanytoadd,strarray,"false","");
+	}
+	howmanytoadd.setSelectedIndex(0);
+	howmanytoadd.addEventListener("onSelect", new addsubdiv_Listener());
+]]>
+</zscript>	
+</groupbox>
+</popup>
+
+<popup id="branchdet_popup">
+<groupbox mold="3d" width="350px">
+	<label style="font-size:9px">
+	(If you modify the test here, linking to MySoft will be voided)
+	</label>
+	<separator height="3px" />
+	<label value="Branch title" style="font-size:9px" />
+	<textbox id="branchdet_tb" style="font-size:9px" width="99%" />
+	<separator height="3px" />
+	<hbox>
+		<button id="updbranchdet_btn" label="Update" style="font-size:9px" onClick="branchFunc(self)" />
+		<button label="Close" style="font-size:9px" onClick="branchdet_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+
+<popup id="trunkdet_popup">
+<groupbox mold="3d" width="350px">
+	<label value="Trunk details" style="font-size:9px" />
+	<textbox id="trunkdet_tb" style="font-size:9px" width="99%" />
+	<separator height="3px" />
+	<hbox>
+		<button id="updtrunkdet_btn" label="Update" style="font-size:9px" onClick="trunkFunc(self)" />
+		<button label="Close" style="font-size:9px" onClick="trunkdet_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+
+<popup id="testselection_popup">
+</popup>
+
+<div width="1200px">
+<panel id="testtree_man_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren  style="padding:5px">
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+
+<groupbox mold="3d" width="300px">
+	<hbox>
+		<button id="newtrunk_btn" label="New trunk" style="font-size:9px" onClick="trunkFunc(self)" />
+		<button id="trunkdet_btn" label="Trunk details" style="font-size:9px" onClick="trunkFunc(self)" />
+		<button id="deltrunk_btn" label="Delete" style="font-size:9px" onClick="trunkFunc(self)" />
+	</hbox>
+</groupbox>
+
+<groupbox mold="3d" width="750px">
+	<hbox>
+		<div style="background:#3465a4;padding:2px">
+		<label id="division_title" style="color:#ffffff;font-weight:bold" />
+		</div>
+
+		<button label="Clear selection" style="font-size:9px" onClick="tests_tree.clearSelection()" />
+		<button id="newsubdiv_btn" label="New sub-division/test" style="font-size:9px" onClick="subdiv_add_popup.open(self)" />
+		<button id="modsubdiv_btn" label="Change branch-title" style="font-size:9px" onClick="branchFunc(self)" />
+		<button id="delsubdiv_btn" label="Delete" style="font-size:9px" onClick="branchFunc(self)" />
+
+		<!-- <button id="tests_btn" label="test multi" onClick="branchFunc(self)" /> -->
+	</hbox>
+</groupbox>
+
+</hbox>
+
+<hbox>
+
+<vbox>
+	<div id="trunks_holder" width="300px" />
+</vbox>
+
+<!-- refer to testTreeHandler_v1.zs on funcs -->
+<tree id="tests_tree" zclass="z-dottree" rows="5" width="750px" multiple="true" onSelect="testTreeOnselect(self)" >
+<treecols sizable="true" >
+	<treecol label="Test" width="330px" />
+	<treecol label="Method" width="300px" />
+	<treecol label="StkCode"  />
+	<treecol label="StkCat" />
+	<treecol label="Group"  />
+</treecols>
+</tree>
+
+</hbox>
+
+<div id="testspanel_holder">
+<button id="searchitem_btn" label="Search test" style="font-size:9px" onClick="searchitem_popup.open(searchitem_btn)" />
+	<hbox>
+		<groupbox mold="3d">
+			<div style="background:#73d216;padding:2px">
+				<label value="Division" style="font-size:9px;color:#222222" />
+			</div>
+			<div id="division_column" />
+		</groupbox>
+		<groupbox mold="3d">
+			<div style="background:#73d216;padding:2px">
+				<label value="Section" style="font-size:9px;color:#222222" />
+			</div>
+			<div id="section_column" />
+		</groupbox>
+		<groupbox mold="3d" width="500px">
+			<div id="testparameters_column" />
+		</groupbox>
+		
+		<grid width="400px" id="updatetest_box" visible="false">
+			<rows>
+				<row spans="4" style="background:#f57900" >
+					<label style="font-size:9px;">
+					(Please update correctly -- check with someone if you're not sure)
+					</label>
+				</row>
+				<row spans="1,3">
+					<label style="font-size:9px" value="Item.Name" />
+					<textbox id="sdescription" style="font-size:9px" width="99%" />
+				</row>
+				<row spans="1,3">
+					<label value="Method" style="font-size:9px" />
+					<textbox id="sdescription2" style="font-size:9px" multiline="true" width="99%" height="40px" />
+				</row>
+				<row>
+					<label value="Units" style="font-size:9px" />
+					<textbox id="sunit_newfield10" style="font-size:9px" />
+					<label value="LOR/MDL" style="font-size:9px" />
+					<textbox id="slor_newfield8" style="font-size:9px" />
+				</row>
+				<row spans="4">
+					<button label="Update test details" style="font-size:9px" onClick="updateTestMetadata()" />
+				</row>
+			</rows>
+		</grid>
+	</hbox>
+</div>
+
+<zscript>
+<![CDATA[
+
+showTrunks();
+
+// Setup TestsPanel() . showType=2 (have pricings)
+testspanel = new TestsPanel(division_column,"",section_column,"",testparameters_column,"");
+testspanel.populateDivisionColumn();
+testspanel.showType = 3;
+testspanel.testOnClicker = new testP_Listener();
+testspanel.testOnDoubleClicker = new testPDC_Listener();
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

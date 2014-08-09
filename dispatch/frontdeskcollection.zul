@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="frontdeskcollection_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Frontdesk CASH/CHEQUE/BANK-IN Collection";
+MYVERSION = "v1.1";
+/*
+Title: Front desk cash/cheque collection recorder
+Written by: Victor Wong
+
+**NOTES**
+03/10/2011: start development
+02/04/2012: ported to byte-compl
+31/07/2012: bug fixed on IFrame refreshing each time load collections - auto download XLS
+
+*/
+
+/*
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+*/
+import java.math.BigDecimal;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+String[] collectionType = { "CASH","CHEQUE","BANK-IN" };
+
+DecimalFormat nf = new DecimalFormat("##.00");
+
+selected_collection = "";
+selected_arcode = "";
+global_todaydate = "";
+
+Object[] collection_lb_headers = {
+	new listboxHeaderObj("origid",false),	
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("ARCode",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Type",true),
+	new listboxHeaderObj("Amount",true),
+	new listboxHeaderObj("ReceiptNo",true),
+	new listboxHeaderObj("Username",true),
+	new listboxHeaderObj("Brh",true),
+	new listboxHeaderObj("Notes",true),
+};
+
+class collectionOnClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = collections_lb.getSelectedItem();
+		selected_collection = lbhand.getListcellItemLabel(selitem,0);
+	}
+}
+
+void listTodayCollections()
+{
+	// reset vars
+	selected_collection = "";
+	selected_arcode = "";
+
+	// 31/07/2012: remove old IFrame from page - reported by Nazirah, kept on downloading excel each time
+	if(kasiexport_holder.getChildren().size() != 0)
+	{
+		oldframe = kasiexport_holder.getChildren().get(0);
+		if(oldframe != null) oldframe.setParent(null);
+	}
+
+	frontdeskcollection_panel.setTitle(MYTITLE + " " + MYVERSION + " :: " + global_todaydate);
+
+	Listbox newlb = lbhand.makeVWListbox(collections_holder, collection_lb_headers, "collections_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from frontdeskcollection where datecreated='" + global_todaydate + "' order by origid";
+	therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(20);
+
+	newlb.addEventListener("onSelect", new collectionOnClick_Listener());
+
+	rowcount = 1;
+	sumup = 0.0;
+	sa_sumup = 0.0;
+	jb_sumup = 0.0;
+	kk_sumup = 0.0;
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(rowcount.toString());
+		kabom.add(dpi.get("ar_code"));
+
+		kabom.add(dpi.get("customer_name"));
+		kabom.add(dpi.get("collect_type"));
+		kabom.add(nf.format(dpi.get("amount")));
+
+		sumup += dpi.get("amount");
+
+		kabom.add(dpi.get("receipt_no"));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("branch"));
+		//kabom.add(trimListitemLabel(dpi.get("notes"),30));
+		kabom.add(dpi.get("notes"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+
+		rowcount++;
+
+		if(dpi.get("branch").equals("SA")) sa_sumup += dpi.get("amount");
+		if(dpi.get("branch").equals("JB")) jb_sumup += dpi.get("amount");
+		if(dpi.get("branch").equals("KK")) kk_sumup += dpi.get("amount");
+
+	}
+
+	total_lbl.setValue(nf.format(sumup));
+	sa_total_lbl.setValue(nf.format(sa_sumup));
+	jb_total_lbl.setValue(nf.format(jb_sumup));
+	kk_total_lbl.setValue(nf.format(kk_sumup));
+}
+
+void clearCollectionFields()
+{
+	customer_name_tb.setValue("");
+	receipt_no_tb.setValue("");
+	amount_tb.setValue("");
+	notes_tb.setValue("");
+}
+
+void storeCollection()
+{
+	icustname = kiboo.replaceSingleQuotes(customer_name_tb.getValue());
+	irepnum = kiboo.replaceSingleQuotes(receipt_no_tb.getValue());
+	iamount = kiboo.replaceSingleQuotes(amount_tb.getValue());
+	inotes = kiboo.replaceSingleQuotes(notes_tb.getValue());
+
+	icoltype = collect_type.getSelectedItem().getLabel();
+	tdate = kiboo.getDateFromDatebox(hiddendatebox);
+	
+	// customer name, amount and receipt-num must be entered to insert into table
+	if(icustname.equals("") || irepnum.equals("") || iamount.equals(""))
+	{
+		showMessageBox("Customer name, amount and receipt number needed! Collection no saved");
+		return;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "insert into frontdeskcollection (datecreated,customer_name,collect_type,notes,receipt_no,amount,username,branch,ar_code) values " +
+	"('" + tdate + "','" + icustname + "','" + icoltype + "','" + inotes + "','" + irepnum + "'," + iamount + ",'" + 
+	useraccessobj.username + "','" + useraccessobj.branch + "','" + selected_arcode + "')";
+	sql.execute(sqlstm);
+	sql.close();
+
+	listTodayCollections(); // refresh
+	clearCollectionFields();
+	selected_arcode = ""; // reset
+}
+
+void exportCollectionList()
+{
+	exportListboxExcel(collections_holder,"collections_lb","dailycollections.xls",collection_lb_headers,"collection",kasiexport_holder,65);
+}
+
+// admin func: delete collection record
+void deleteRec()
+{
+	if(selected_collection.equals("")) return;
+
+	if (Messagebox.show("Admin hard-delete record..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "delete from frontdeskcollection where origid=" + selected_collection;
+	sql.execute(sqlstm);
+	sql.close();
+	listTodayCollections(); // refresh
+}
+
+// admin func: set today's date, so can see other day's collections if needed
+void adminSetListDate()
+{
+	global_todaydate = kiboo.getDateFromDatebox(admintodaydate);
+	listTodayCollections(); // refresh
+}
+
+// ---- Customer search popup stuff ---- can be used in other modules
+
+void showCustomerInfo(String iarcode)
+{
+	comprec = sqlhand.getCompanyRecord(iarcode);
+	if(comprec == null) return;
+
+	cfind_company_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("customer_name"),"---UNDEFINED---"));
+	cfind_address1_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("address1"),"------"));
+	cfind_address2_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("address2"),"------"));
+	cfind_address3_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("address3"),"------"));
+	//cfind_address4_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("Address4"),"------"));
+	cfind_tel_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("telephone_no"),"-----"));
+	cfind_fax_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("fax_no"),"-----"));
+	cfind_contact_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("contact_person1"),"-----"));
+	cfind_email_lbl.setValue(kiboo.checkNullString_RetWat(comprec.get("E_mail"),"-----"));
+
+	// if(iarcode.equals("BLACKLIST")) custinfo_gb.setStyle("background:#FF3333");
+}
+
+class searchcustomersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		tarcode = lbhand.getListcellItemLabel(selitem,0);
+		showCustomerInfo(tarcode);
+	}
+}
+
+// onDoubleClick listener for searchCustomers()
+class searchcustLBDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = customers_lb.getSelectedItem();
+		sarcode = lbhand.getListcellItemLabel(selitem,0);
+		if(sarcode.equals("BLACKLIST")) return;
+
+		comprec = sqlhand.getCompanyRecord(sarcode);
+		if(comprec != null)
+		{
+			// customize this part if need to use in other module - where to show the selected client info
+			selected_arcode = sarcode;
+			customer_name_tb.setValue(comprec.get("customer_name"));
+		}
+		selectcustomer_popup.close();
+	}
+}
+
+void searchCustomers()
+{
+Object[] clients_lb_headers = {
+	new listboxHeaderObj("AR_CODE",true),
+	new listboxHeaderObj("Company",true),
+	};
+
+	schtext = kiboo.replaceSingleQuotes(cust_search_tb.getValue());
+	if(schtext.equals("")) return;
+
+	Listbox newlb = lbhand.makeVWListbox(foundcustomer_holder, clients_lb_headers, "customers_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select top 50 ar_code,customer_name,credit_period from customer where " +
+	"ar_code like '%" + schtext + "%' or " +
+	"customer_name like '%" + schtext + "%' or " +
+	"address1 like '%" + schtext + "%' or " +
+	"address2 like '%" + schtext + "%' or " +
+	"address3 like '%" + schtext + "%' or " +
+	"address4 like '%" + schtext + "%' or " +
+	"contact_person1 like '%" + schtext + "%' " +
+	"order by customer_name";
+
+	custrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(custrecs.size() == 0) return;
+	newlb.setRows(10);
+	newlb.addEventListener("onSelect", new searchcustomersLB_Listener());
+
+	for(dpi : custrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		credp = dpi.get("credit_period");
+		arcode = dpi.get("ar_code");
+		if(credp.equals("BLACKLIST")) arcode = "BLACKLIST";
+		kabom.add(arcode);
+		kabom.add(dpi.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	dc_obj = new searchcustLBDoubleClick_Listener();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+// ---- ENDOF Customer search popup stuff ----
+
+]]>
+</zscript>
+
+<!-- select customer popup -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<div width="1200px">
+<panel id="frontdeskcollection_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<!--
+<groupbox mold="3d" width="400px">
+<grid>
+	<rows>
+		<row>
+			<label value="Start" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load requests" style="font-size:9px" />
+		</row>
+		<row spans=",3,">
+			<label value="Search" style="font-size:9px" />
+			<textbox id="searchtext" style="font-size:9px" width="98%" />
+			<button label="Dig" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+</groupbox>
+-->
+
+<separator height="3px" />
+<hbox>
+	<label value="Date" style="font-size:9px" />
+	<datebox id="admintodaydate" format="yyyy-MM-dd" style="font-size:9px" />
+	<button label="Load records" style="font-size:9px" onClick="adminSetListDate()" />
+</hbox>
+
+<separator height="3px" />
+
+<hbox>
+
+<vbox>
+<div id="collections_holder" width="680px" />
+</vbox>
+
+<vbox>
+<grid width="500px">
+	<rows>
+		<row spans=",2,">
+			<label value="Customer name" style="font-size:9px" />
+			<textbox id="customer_name_tb" style="font-size:9px" width="300px" />
+			<button id="cfind_holder" label="Select customer" style="font-size:9px" onClick="selectcustomer_popup.open(cfind_holder)" />
+		</row>
+		<row>
+			<label value="Type" style="font-size:9px" />
+			<listbox id="collect_type" mold="select" style="font-size:9px" />
+			<label value="Receipt No" style="font-size:9px" />
+			<textbox id="receipt_no_tb" style="font-size:9px" width="98%" />
+		</row>
+		<row spans=",3">
+			<label value="Amount" style="font-size:9px" />
+			<textbox id="amount_tb" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Notes" style="font-size:9px" />
+			<textbox id="notes_tb" multiline="true" width="98%" height="50px" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<hbox>
+<button label="Store" style="font-size:9px" onClick="storeCollection()" />
+<button label="Clear" style="font-size:9px" onClick="clearCollectionFields()" />
+</hbox>
+
+<separator height="3px" />
+
+<grid>
+	<rows>
+		<row>
+			<label value="Shah Alam" style="font-size:9px" />
+			<label value="Johor Bahru" style="font-size:9px" />
+			<label value="K.Kinabalu" style="font-size:9px" />
+		</row>
+		<row>
+			<label id="sa_total_lbl" />
+			<label id="jb_total_lbl" />
+			<label id="kk_total_lbl" />
+		</row>
+		<row spans=",2">
+			<label value="Total all" style="font-size:9px" />
+			<label id="total_lbl" />
+		</row>
+		<row spans="3">
+			<label value="(Amounts sum-up as they are, no currency conversion being performed)" style="font-size:8px" />
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+<button label="Export list" style="font-size:9px" onClick="exportCollectionList()" />
+<button label="Delete rec" style="font-size:9px" onClick="deleteRec()" />
+<separator height="3px" />
+
+<div id="adminstuff" style="background:#ff0000;padding:2px">
+	
+</div>
+
+</vbox>
+
+</hbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(admintodaydate);
+
+//kiboo.setTodayDatebox(enddate);
+//kiboo.setTodayDatebox(finishby);
+
+lbhand.populateDropdownListbox(collect_type, collectionType);
+
+//lbhand.populateDropdownListbox(requesttype, requestTypes);
+//lbhand.populateDropdownListbox(requestpriority, requestPriority);
+
+global_todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+
+listTodayCollections();
+
+if(useraccessobj.accesslevel == 9) adminstuff.setVisible(true);
+
+adminstuff.setVisible(true); // 22/11/2011: just make it visible so everyone can delete whatever entry
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

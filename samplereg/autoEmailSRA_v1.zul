@@ -1,0 +1,410 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="emailsra_win_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "E-Mail SRA to Client";
+MYVERSION = "v0.1";
+/*
+Written by	: Victor Wong
+Dated		: 27/09/2012
+
+HARDCODED position in the SRA PDF template
+page-height=820
+our ref = 385,193
+date = 385,213
+attention = 128,213
+company = 128,230
+tel = 128,258
+fax = 385,258
+Number of samples received = 320,320
+Temperature = 320,337
+Mode of sample delivery = 320,354
+your po = 320,373
+your coc = 320,391
+tickers = 
+70,421
+70,433
+70,446
+70,458
+Comments = 128,505
+
+
+*/
+import java.awt.Color;
+import java.io.FileOutputStream;
+/*
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+*/
+
+import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.Image;
+import com.itextpdf.text.pdf.*;
+import com.itextpdf.text.*;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+param_folderno = myincludeid = Executions.getCurrent().getParameter("fn");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+TEMPFILEFOLDER = "tmp/";
+String glob_sra_filename = "";
+Object glob_folder_record = null;
+
+int timesemailed = 0; // to let user know - else they keep on sending .. lol
+
+void makeSRA_PDF()
+{
+	jfr = glob_folder_record; // jfr - local var
+
+	templatefn = session.getWebApp().getRealPath("alsimg/SRA_TEMPLATE_v1.pdf");
+	pixfn = session.getWebApp().getRealPath("alsimg/alstechnichem_logo_smaller.jpg");
+	outfn = session.getWebApp().getRealPath(TEMPFILEFOLDER + glob_sra_filename);
+
+	PdfReader pdfReader = new PdfReader(templatefn);
+	PdfStamper pdfStamper = new PdfStamper(pdfReader,new FileOutputStream(outfn));
+	BaseFont bf_helv = BaseFont.createFont(BaseFont.HELVETICA, "Cp1252", false);
+	PdfContentByte cb = pdfStamper.getUnderContent(1);
+/*
+	Image image = Image.getInstance(pixfn);
+	image.setAbsolutePosition(50f, 750f);
+	cb.addImage(image);
+	*/
+
+	// all HARDCODED positioning - if template changes, have to redo coordinates - take note of pageheight
+	pageheight = 820; // take pageheight-ypos
+	cb.beginText();
+
+	cb.setFontAndSize(bf_helv,12);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customer_name")), 128, 580, 0);
+	cb.setFontAndSize(bf_helv,10);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("folderno_str")), 385, 622, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, jfr.get("datecreated").toString().substring(0,10), 385, 602, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("attention")), 128, 602, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("telephone_no")), 128, 557, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("fax_no")), 385, 557, 0);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, jfr.get("samplecount").toString(), 320, 492, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("temperature")), 320, 476, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("deliverymode")), 320, 459, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customerpo")), 320, 440, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customercoc")), 320, 440, 0);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("allgoodorder") == 1) ? "X" : "",85, 388, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("paperworknot") == 1) ? "X" : "",85, 376, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("paperworksamplesnot") == 1) ? "X" : "",85, 364, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("samplesdamaged") == 1) ? "X" : "",85, 352, 0);
+
+	//cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("extranotes")), 128, 310, 0);
+
+	com.itextpdf.text.pdf.ColumnText ct = new ColumnText(cb);
+	ct.setSimpleColumn(
+	new Phrase(
+	new Chunk(kiboo.checkNullString(jfr.get("extranotes")),
+	FontFactory.getFont(FontFactory.HELVETICA, 9, Font.NORMAL))),
+	(float)128, (float)320, (float)530, (float)36, (float)15, Element.ALIGN_LEFT | Element.ALIGN_TOP);
+	//ct.setText(new Phrase(kiboo.checkNullString(jfr.get("extranotes"))));
+	ct.go();
+
+	cb.endText();
+	pdfStamper.close();
+}
+
+void fillupForm()
+{
+	Object[] email_customers_lb_headers = {
+	new listboxHeaderObj("Email",true),
+	new listboxHeaderObj("Name",true),
+	new listboxHeaderObj("Phone",true),
+	};
+
+	from_box.setValue(useraccessobj.email);
+	folder_company_lbl.setValue(glob_folder_record.get("folderno_str") + " :: " + 
+		glob_folder_record.get("customer_name"));
+
+	tarcode = glob_folder_record.get("ar_code");
+
+	// show them email addresses def in customer_emails..
+	sqlstm = "select contact_name,contact_email " + 
+	"from customer_emails where ar_code='" + tarcode + "' order by contact_name";
+
+	custemails = sqlhand.gpSqlGetRows(sqlstm);
+	if(custemails.size() == 0) return;
+
+	Listbox newlb = lbhand.makeVWListbox(omholder, email_customers_lb_headers, "otheremails_lb", 6);
+	newlb.setCheckmark(true);
+	newlb.setMultiple(true);
+
+	//error_msg.setValue(custemails.toString());
+
+	for(dpi : custemails)
+	{
+		ArrayList kaboom = new ArrayList();
+		kaboom.add(dpi.get("contact_email"));
+		kaboom.add(dpi.get("contact_name"));
+		strarray = kiboo.convertArrayListToStringArray(kaboom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void emailTheSRA()
+{
+	//if(otheremails_lb.getSelectedCount() == 0) return;
+
+	if(timesemailed>1)
+	{
+		guihand.showMessageBox("Oiii.. you have already emailed this for " + timesemailed.toString() + ".. DO NOT SPAM");
+		return;
+	}
+
+	ddall = "";
+	
+	if(omholder.getFellowIfAny("otheremails_lb") != null)
+	{
+		for(selitem : otheremails_lb.getSelectedItems())
+		{
+			ddall += lbhand.getListcellItemLabel(selitem,0) + ",";
+		}
+	}
+
+	youremail = from_box.getValue();
+	toemail = to_box.getValue();
+
+	if(!youremail.equals("")) ddall += youremail + ",";
+	if(!toemail.equals("")) ddall += toemail + ",";
+
+	// no one to send email to .. haha
+	if(ddall.equals(""))
+	{
+		guihand.showMessageBox("Please put in some email address for me to send the SRA to..");
+		return;
+	}
+
+	ddall = ddall.substring(0,ddall.length()-1);
+
+	makeSRA_PDF();
+
+	pdf_fname = session.getWebApp().getRealPath(TEMPFILEFOLDER + glob_sra_filename);
+
+	ArrayList = exfns = extractDocuments(docu_lb);
+	exfns.add(pdf_fname);
+
+	String[] tfna = exfns.toArray(new String[exfns.size()]);
+
+	mymsg = msg_box.getValue();
+
+	subjstr = "Re: Sample Receipt Advice(SRA) for " + glob_folder_record.get("folderno_str");
+	msgtxt = mymsg + 
+	"\n\nThis e-mail has been automatically generated." +
+	"\n--     PLEASE DO NOT REPLY      --" +
+	"\n\nALS acknowledges the risks associated with supplying electronic media" +
+	"\nreports based on client requirements.  This type of format has the ability" +
+	"\nto embed viruses within the code and, as such, ALS has introduced a three" +
+	"\ntier layer of protection throughout their company resources.  However, ALS" +
+	"\ncannot guarantee any attachment is virus free and will not be held liable" +
+	"\nfor any disruption to business.  It is highly recommended that all" +
+	"\nattachments received are scanned prior to opening." +
+	"\n\n****************************************************************************" +
+	"\nThe information contained in this email is confidential. If the reader is" +
+	"\nnot the intended recipient then you must notify the sender immediately by" +
+	"\nreturn email and then delete all copies of this email. You must not copy," +
+	"\ndistribute, print or otherwise use the information. Email may be stored by" +
+	"\nthe Company to support operational activities. All information will be held" +
+	"\nin accordance with the Company's Privacy Policy which can be found on the" +
+	"\nCompany's website - www.alsglobal.com." +
+	"\n****************************************************************************";
+
+	retv = sendEmailWithAttachment(SMTP_SERVER,"elabman@alsglobal.com.my",ddall,subjstr,msgtxt,tfna);
+	if(retv == 1) status_msg.setValue("ERROR: Cannot email SRA..");
+
+	// update jobfolders.srngenerate_date
+	iorigid = glob_folder_record.get("origid").toString();
+	todate = kiboo.todayISODateString();
+	sqlstm = "update jobfolders set srngenerate_date='" + todate + "' where origid=" + iorigid;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	timesemailed++;
+	status_msg.setValue("SRA emailed to selected persons for " + timesemailed.toString() + " times");
+}
+
+// Extract docs from documentstorage.documenttable to ./tmp - return filenames arraylist
+// ilistbox=listbox with selected origid->file
+ArrayList extractDocuments(Object ilistbox)
+{
+	ArrayList retfns = new ArrayList();
+	if(ilistbox.getSelectedCount() == 0) return retfns;
+	
+	dsql = sqlhand.als_DocumentStorage();
+	
+	for(selitem : ilistbox.getSelectedItems())
+	{
+		iorig = lbhand.getListcellItemLabel(selitem,2);
+		sqlstm = "select file_name,file_data from documenttable where origid=" + iorig;
+		docrec = dsql.firstRow(sqlstm);
+		
+		if(docrec != null)
+		{
+			tfname = session.getWebApp().getRealPath(TEMPFILEFOLDER + docrec.get("file_name"));
+			retfns.add(tfname);
+
+			net.sourceforge.jtds.jdbc.BlobImpl myblob = docrec.get("file_data");
+			wopst = myblob.getBinaryStream();
+
+			FileOutputStream fos = new FileOutputStream(tfname);  
+			int b = 0;  
+			while ((b = wopst.read()) != -1)
+			{
+				fos.write(b);
+			}
+			fos.close();
+		}
+	}
+
+	dsql.close();
+	return retfns;
+}
+
+void showOtherDocuments()
+{
+	Object[] docs_lb_headers = {
+	new listboxHeaderObj("File",true),
+	new listboxHeaderObj("Description",true),
+	new listboxHeaderObj("origid",false),
+	};
+
+	doclnk = "DOCS" + glob_folder_record.get("folderno_str");
+	dsql = sqlhand.als_DocumentStorage();
+	sqlstm = "select origid,file_title,file_description from documenttable where docu_link='" + doclnk + "' and deleted=0";
+	drecs = dsql.rows(sqlstm);
+	dsql.close();
+	if(drecs.size() == 0) return;
+	
+	Listbox newlb = lbhand.makeVWListbox(documents_holder, docs_lb_headers, "docu_lb", 6);
+	newlb.setCheckmark(true);
+	newlb.setMultiple(true);
+
+	//error_msg.setValue(custemails.toString());
+
+	for(dpi : drecs)
+	{
+		ArrayList kaboom = new ArrayList();
+		kaboom.add(dpi.get("file_title"));
+		kaboom.add(dpi.get("file_description"));
+		kaboom.add(dpi.get("origid").toString());
+		strarray = kiboo.convertArrayListToStringArray(kaboom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+]]>
+</zscript>
+
+<window id="emailsra_win" width="460px"  title="${MYTITLE} ${MYVERSION}" 
+position="center" mode="overlapped" border="normal" closable="true">
+<div>
+<button label="X Close" style="font-size:9px" onClick="emailsra_win.detach()" />
+<label id="error_msg" style="text-decoration:blink" />
+<separator height="3px" />
+
+<div id="workarea" visible="false">
+	<div style="background:#75507b;padding:2px">
+		<label id="folder_company_lbl" style="color:#eeeeee;font-weight:bold" />
+	</div>
+	<separator height="3px" />
+
+	<hbox>
+	<grid width="430px">
+		<rows>
+			<row spans="2">
+				<label style="font-size:9px">
+				(If you enter your email address, you will be included in the email CC)
+				</label>
+			</row>
+			<row>
+				<label value="Your email" style="font-size:9px" />
+				<textbox id="from_box" style="font-size:9px" width="99%" />
+			</row>
+			<row>
+				<label value="To" style="font-size:9px" />
+				<textbox id="to_box" style="font-size:9px" width="99%" />
+			</row>
+			<row spans="2">
+				<label style="font-size:9px">
+				Select other documents you want to attach..
+				</label>
+			</row>
+			<row spans="2">
+				<div id="omholder" />
+			</row>
+			<row spans="2">
+				<div id="documents_holder" />
+			</row>
+			<row spans="2">
+				<label value="Message(will be included in email)" style="font-size:9px" />
+			</row>
+			<row spans="2">
+				<textbox id="msg_box" multiline="true" width="99%" height="100px" />
+			</row>
+		</rows>
+	</grid>
+
+	</hbox>
+
+	<separator height="3px" />
+	<button label="Send SRA + Other-documents attached in email" onClick="emailTheSRA()" />
+	<separator height="3px" />
+	<label id="status_msg" style="text-decoration:blink" />
+
+</div>
+
+</div>
+<zscript>
+<![CDATA[
+
+if(param_folderno == null) emailsra_win.detach();
+if(param_folderno.equals("")) emailsra_win.detach();
+
+sqlstm = "select jf.origid,jf.ar_code, jf.folderno_str, cust.customer_name, cust.telephone_no, cust.fax_no," +
+	"jf.datecreated,jf.attention,jf.temperature, jf.deliverymode, jf.customerpo, jf.customercoc," +
+	"jf.allgoodorder, jf.paperworknot, jf.paperworksamplesnot, jf.samplesdamaged, jf.extranotes, " +
+	"(select count(origid) from jobsamples js where js.jobfolders_id=jf.origid) as samplecount " +
+	"from jobfolders jf left join customer cust on cust.ar_code = jf.ar_code where " +
+	"jf.deleted=0 and jf.folderstatus<>'DRAFT' and jf.origid=" + param_folderno;
+
+glob_folder_record = sqlhand.gpSqlFirstRow(sqlstm);
+if(glob_folder_record == null)
+	error_msg.setValue("ERR: Cannot access database.. " + param_folderno);
+else
+{
+	glob_sra_filename = (glob_folder_record.get("folderno_str").equals("")) ?
+		"SRA.pdf" : glob_folder_record.get("folderno_str") + "_SRA.pdf";
+
+	fillupForm();
+	showOtherDocuments();
+	workarea.setVisible(true);
+}
+
+]]>
+</zscript>
+
+</window>
+</zk>
+

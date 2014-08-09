@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="clientemails_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.5";
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+File : client_extra_email.zul
+Written by : Victor Wong
+
+*NOTES*
+Pop-up window for user to create additional email addresses for clients - set auto-email flags too
+
+02/04/2012: ported to byte-compl
+
+*/
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+selected_arcode = "";
+selected_customername = "";
+selected_email_origid = "";
+selected_email_name = "";
+selected_email_address = "";
+
+// Clear input fields and reset global vars
+void clearInputFields()
+{
+	contact_name.setValue("");
+	contact_email.setValue("");
+	contact_designation.setValue("");
+	contact_phone.setValue("");
+
+	selected_email_origid = ""; // reset
+	selected_email_name = "";
+	selected_email_address = "";
+
+	send_srn.setChecked(false);
+	send_invoice.setChecked(false);
+	send_coa.setChecked(false);
+	send_misc.setChecked(false);
+
+	update_email_btn.setLabel("New");
+}
+
+// Save/Update button clicker
+void saveUpdate_clicker()
+{
+	if(selected_arcode.equals("")) return;
+
+	icname = kiboo.replaceSingleQuotes(contact_name.getValue());
+	icemail = kiboo.replaceSingleQuotes(contact_email.getValue());
+	icdesignation = kiboo.replaceSingleQuotes(contact_designation.getValue());
+	icphone = kiboo.replaceSingleQuotes(contact_phone.getValue());
+
+	s_srn = (send_srn.isChecked()) ? "1" : "0";
+	s_coa = (send_coa.isChecked()) ? "1" : "0";
+	s_invoice = (send_invoice.isChecked()) ? "1" : "0";
+	s_misc = (send_misc.isChecked()) ? "1" : "0";
+
+	if(icname.equals("") || icemail.equals(""))
+	{
+		guihand.showMessageBox("Name and e-mail required..");
+		return;
+	}
+
+	sqlstm = "insert into customer_emails (ar_code,contact_name,contact_designation,contact_email," + 
+	"contact_phone,deliver_these,send_srn,send_coa,send_invoice,send_misc,field1,field2,field3) values " +
+	"('" + selected_arcode + "','" + icname + "','" + icdesignation + "','" + icemail + "','" + icphone + 
+	"','(COA)'," + s_srn + "," + s_coa + "," + s_invoice + "," + s_misc + ",'','','')";
+
+	msgtxt = "Inserted new name/email for " + selected_customername;
+
+	// Do update instead of insert
+	// 19/2/2011: added auto-email stuff flags update
+	if(!selected_email_origid.equals(""))
+	{
+		sqlstm = "update customer_emails set contact_name='" + icname + 
+		"', contact_designation='" + icdesignation + "', contact_email='" + icemail + "'," +
+		"contact_phone='" + icphone + "', send_srn=" + s_srn + ",send_coa=" + s_coa + ",send_invoice=" + s_invoice + ",send_misc=" + s_misc +
+		" where origid=" + selected_email_origid;
+		
+		msgtxt = "Updated..";
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showCustomerEmails(); // refresh
+	guihand.showMessageBox(msgtxt);
+}
+
+// Delete name/email clicker
+void delete_clicker()
+{
+	if(selected_email_origid.equals("")) return;
+	if (Messagebox.show("Delete email address : " + selected_email_address, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+		
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "delete from customer_emails where origid=" + selected_email_origid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlhand.addAuditTrail(selected_arcode,"ContactEmail: Deleted " + selected_email_name + " / " + selected_email_address, useraccessobj.username, todaydate);
+
+	showCustomerEmails(); // refresh
+	clearInputFields();
+}
+
+// onSelect for showCustomerEmails()
+class custemailsLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_email_origid = lbhand.getListcellItemLabel(selitem,0);
+
+		cstem = sqlhand.getCustomerEmails_Rec(selected_email_origid);
+		if(cstem != null)
+		{
+			selected_email_name = cstem.get("contact_name");
+			selected_email_address = cstem.get("contact_email");
+
+			contact_name.setValue(cstem.get("contact_name"));
+			contact_email.setValue(cstem.get("contact_email"));
+			contact_designation.setValue(cstem.get("contact_designation"));
+			contact_phone.setValue(cstem.get("contact_phone"));
+
+			send_srn.setChecked((cstem.get("send_srn") == 0) ? false : true);
+			send_coa.setChecked((cstem.get("send_coa") == 0) ? false : true);
+			send_invoice.setChecked((cstem.get("send_invoice") == 0) ? false : true);
+			send_misc.setChecked((cstem.get("send_misc") == 0) ? false : true);
+
+			update_email_btn.setLabel("Update"); // tik-tok the button label
+		}
+	}
+}
+
+// Dig and show emails -> customer
+void showCustomerEmails()
+{
+	Object[] email_customers_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Name",true),
+	new listboxHeaderObj("Email",true),
+	new listboxHeaderObj("Phone",true),
+	new listboxHeaderObj("SRN",true),
+	new listboxHeaderObj("COA",true),
+	new listboxHeaderObj("INV",true),
+	new listboxHeaderObj("OTH",true),
+	};
+
+	customer_email_lbl.setLabel(selected_customername);
+
+	Listbox newlb = lbhand.makeVWListbox(customeremails_holder, email_customers_lb_headers, "customeremails_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select origid,contact_name,contact_email,contact_phone,send_srn,send_coa,send_invoice,send_misc " + 
+	"from customer_emails where ar_code='" + selected_arcode + "' order by contact_name";
+	custemails = sql.rows(sqlstm);
+	sql.close();
+
+	if(custemails.size() == 0) return;
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", new custemailsLB_Listener());
+
+	for(dpi : custemails)
+	{
+		ArrayList kaboom = new ArrayList();
+		kaboom.add(dpi.get("origid").toString());
+		kaboom.add(dpi.get("contact_name"));
+		kaboom.add(dpi.get("contact_email"));
+		kaboom.add(dpi.get("contact_phone"));
+
+		kkb = (dpi.get("send_srn") == 0) ? "---" : "YES";
+		kaboom.add(kkb);
+		kkb = (dpi.get("send_coa") == 0) ? "---" : "YES";
+		kaboom.add(kkb);
+		kkb = (dpi.get("send_invoice") == 0) ? "---" : "YES";
+		kaboom.add(kkb);
+		kkb = (dpi.get("send_misc") == 0) ? "---" : "YES";
+		kaboom.add(kkb);
+		
+		strarray = kiboo.convertArrayListToStringArray(kaboom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// onSelect for searchCustomer_clicker()
+class customersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_arcode = lbhand.getListcellItemLabel(selitem,0);
+		selected_customername = lbhand.getListcellItemLabel(selitem,1);
+		clearInputFields(); // clear previously entered stuff
+		showCustomerEmails();
+	}
+}
+void searchCustomer_clicker()
+{
+	Object[] customers_lb_headers = {
+	new listboxHeaderObj("AR.Code",true),
+	new listboxHeaderObj("Customer",true),
+	};
+
+	isearch = searchtext.getValue();
+	if(isearch.equals("")) return;
+	isearch = kiboo.replaceSingleQuotes(isearch);
+
+	Listbox newlb = lbhand.makeVWListbox(customers_holder, customers_lb_headers, "customers_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select ar_code,customer_name from customer where customer_name like '%" + isearch + "%' or address1 like '%" + isearch + "%' " +
+	"or address2 like '%" + isearch + "%' or address3 like '%" + isearch + "%' order by customer_name";
+	custrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(custrecs.size() == 0) return;
+	newlb.setRows(30);
+	newlb.addEventListener("onSelect", new customersLB_Listener());
+
+	for(dpi : custrecs)
+	{
+		ArrayList kaboom = new ArrayList();
+		kaboom.add(dpi.get("ar_code"));
+		kaboom.add(dpi.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kaboom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+]]>
+</zscript>
+
+<window id="clientemails_win" width="900px" height="510px" title="Customer e-Mail Addresses ${MYVERSION}" position="center" mode="overlapped" border="normal" closable="true"
+sizable="true">
+<div style="padding:2px">
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+	<groupbox mold="3d" width="360px">
+	<caption label="Customer search" />
+	<vbox>
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="searchtext" width="200px" style="font-size:9px" />
+		<button id="search_customer_btn" label="Search" style="font-size:9px" onClick="searchCustomer_clicker()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="customers_holder" />
+	</vbox>
+	</groupbox>
+	
+	<groupbox mold="3d">
+		<caption id="customer_email_lbl" label="E-Mail Addresses" />
+		<vbox>
+		<div id="customeremails_holder" />
+		<separator height="3px" />
+		<hbox>
+		<grid>
+			<rows>
+				<row>
+					<label value="Name" style="font-size:9px" />
+					<textbox id="contact_name" width="250px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Designation" style="font-size:9px" />
+					<textbox id="contact_designation" width="250px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="E-Mail" style="font-size:9px" />
+					<textbox id="contact_email" width="250px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="CellPhone" style="font-size:9px" />
+					<textbox id="contact_phone" width="250px" style="font-size:9px" />
+				</row>
+			</rows>
+		</grid>
+
+		<groupbox>
+			<caption label="Auto-email" />
+			<checkbox id="send_srn" label="SRN" style="font-size:9px" />
+			<checkbox id="send_coa" label="COA" style="font-size:9px" />
+			<checkbox id="send_invoice" label="Invoice" style="font-size:9px" />
+			<checkbox id="send_misc" label="Others" style="font-size:9px" />
+		</groupbox>
+
+		</hbox>
+		<separator height="3px" />
+		<hbox>
+			<button id="clear_email_btn" label="Clear fields" style="font-size:9px" onClick="clearInputFields()" />
+			<button id="update_email_btn" label="New" style="font-size:9px" onClick="saveUpdate_clicker()" />
+			<button id="delete_email_btn" label="Delete" style="font-size:9px" onClick="delete_clicker()" />
+		</hbox>
+		</vbox>
+	</groupbox>
+	
+</hbox>
+</div>
+<zscript>
+kiboo.setTodayDatebox(hiddendatebox);
+</zscript>
+</window>
+</zk>

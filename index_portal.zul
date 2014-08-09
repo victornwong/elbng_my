@@ -1,0 +1,783 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="als_portal_main" ?>
+<?page title="ALS Technichem (M) Sdn Bhd - e-LabMan"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+<!--
+index.zul
+{{IS_NOTE
+Title: e-LabMan
+Description: LIMS+Office - will contains modules for acct-dept, lab, sample-registration , etc.
+Written by: Victor Wong
+Date Started: 17/1/2010
+Go Live : 1/3/2010
+}}IS_NOTE
+
+{{IS_RIGHT
+Designed and knock-up by Victor Wong
+}}IS_RIGHT
+-->
+<zk>
+
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobalfuncs.zs" />
+<zscript src="alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal/securityfuncs.zs" />
+<zscript src="alsglobal/alsglobal_birtreport.zs" />
+
+<zscript>
+<![CDATA[
+
+import org.zkoss.zk.ui.*;
+
+int includeCounter = 0;
+firstTimeSlab = 0;
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null)
+{
+	Executions.sendRedirect(MAINLOGIN_PAGE);
+}
+
+// actually execute the modules
+void activateModule(Object apmod)
+{
+	// make use of global counter includeCounter
+	newid = apmod.module_name + includeCounter;
+	includeCounter++;
+	apfn = apmod.module_fn;
+	mydivname = (apmod.module_gui == GUI_PANEL) ? "workbox" : "miscwindows" ;
+	globalActivateWindow(mydivname,apfn,newid,apmod.parameters, useraccessobj);
+}
+
+// Run other modules
+void runexternal(int whichone)
+{
+	// now run the module
+	for(i=0; i < applicationModules.length; i++)
+	{
+		if(whichone == applicationModules[i].module_num)
+		{
+			// security checkpoint - securityfuncs.zs
+			if(checkUserAccesslevel_AppModules(applicationModules[i],useraccessobj.accesslevel))
+				activateModule(applicationModules[i]);
+			else
+				showAccessDenied_Box(useraccessobj);
+		}
+	}
+}
+
+// Some security checking codes here
+	
+// Logout from the program WebReport
+void logoutSystem()
+{
+	Window loginwindow = Path.getComponent("//als_portal_login/loginwin");
+	loginwindow.setVisible(true);
+	Include logininc = Path.getComponent("//als_portal_login/mainprogram");
+	logininc.setSrc("");
+	useraccessobj.clearAll();
+} // end of logoutSystem()
+	
+void showCustomerAddressSearchBox()
+{
+	wnid = makeRandomId("badtaste");
+	globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", wnid, "getcust=1",useraccessobj);	
+}
+
+void changePassword()
+{
+	wnid = makeRandomId("badtaste");
+	globalActivateWindow("miscwindows","adminmodules/changepassword.zul", wnid, "chgpwd=1",useraccessobj);	
+}
+
+void showFrontSlab()
+{
+	// for admin - don't need to see frontslab everytime login
+	if(useraccessobj.accesslevel == 9 && firstTimeSlab == 0)
+	{
+		firstTimeSlab = 1;
+		return;
+	}
+	wnid = makeRandomId("fslab");
+	globalActivateWindow("workbox","frontslab_dashboard.zul", wnid, "what=1", useraccessobj);
+}
+
+void showTaskSlab()
+{
+	//if(useraccessobj.accesslevel < 9) return;
+	// for admin - don't need to see task slab everytime login
+	if(useraccessobj.accesslevel == 9 && firstTimeSlab == 0)
+	{
+		firstTimeSlab = 1;
+		return;
+	}
+	wnid = makeRandomId("tskslb");
+	globalActivateWindow("miscwindows","taskslab.zul", wnid, "what=1", useraccessobj);
+}
+
+void showZTCSlab()
+{
+	//if(useraccessobj.accesslevel < 9) return;
+	
+	// for admin - don't need to see frontslab everytime login
+	if(useraccessobj.accesslevel == 9 && firstTimeSlab == 0)
+	{
+		firstTimeSlab = 1;
+		return;
+	}
+
+	wnid = makeRandomId("ztcslb");
+	globalActivateWindow("miscwindows","ztcslab.zul", wnid, "what=1", useraccessobj);
+
+}
+
+// allow admin to switch branch - easier, no need to relogin after updating user details
+void adminSwitchBranchClicker()
+{
+//switchbranch_holder
+
+	dubra = branch_drd.getSelectedItem().getLabel();
+	useraccessobj.branch = dubra;
+	
+	// update the branch-label
+	branch_lbl.setValue("Branch: " + useraccessobj.branch);
+	
+	admintukarbranch_popup.close();
+}
+
+void showFunBox()
+{
+/*
+	if(useraccessobj.username.equals("padmin"))
+	{
+		runBirtReportTemplate(JOBSAMPLETESTS_DUMP);
+		return;
+	}
+*/
+	//showMessageBox("Waktu makan je..");
+	
+	kk = new Label();
+	kk.setValue("westside stories..");
+	kk.setParent(westside);
+
+	westside.setVisible(true);
+}
+
+// Uses allReportModules def in alsglobal_birtreport.zs
+void runBirtReportTemplate(int iwhich)
+{
+	for(i=0; i < allReportModules.length; i++)
+	{
+		if(iwhich == allReportModules[i].module_num)
+		{
+			bid = allReportModules[i].module_num.toString();
+			rtit = allReportModules[i].module_name.replace(" ","%20");
+			wnid = makeRandomId("brv");
+			params = "bid=" + bid + "&rti=" + rtit;
+			globalActivateWindow("miscwindows","reporting/birtReportViewer.zul", wnid, params, useraccessobj);
+		}
+	}
+}
+
+]]>
+</zscript>
+
+<!-- to show input boxes to get details for uploaded file popup -->
+<popup id="admintukarbranch_popup">
+<groupbox width="150px">
+<caption label="Admin change branch" />
+	<hbox>
+		<label value="Branch" style="font-size:9px" />
+		<listbox id="branch_drd" mold="select" style="font-size:9px" />
+	</hbox>
+	<hbox>
+		<button label="Change" style="font-size:9px" onClick="adminSwitchBranchClicker()" />
+		<button label="Close" style="font-size:9px" onClick="admintukarbranch_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<div id="mainding" width="1578px">
+
+<borderlayout width="100%" height="90000px">
+
+<!-- northside -->
+<north border="none">
+<div>
+
+<div style="background:#008899;padding:3px">
+<hbox>
+	<label id="username_lbl" style="font-weight:bold;color:#FFFFFF" />
+	<separator width="2px" />
+	<label id="accesslevel_lbl" style="font-weight:bold;color:#FFFFFF" />
+	<separator width="2px" />
+	<label id="branch_lbl" style="font-weight:bold;color:#FFFFFF" />
+	
+	<separator width="5px" />
+
+	<button label="Change password" style="font-size:9px" onClick="changePassword()" />
+	
+	<separator width="20px" />
+	<button label="FaceBook" style="font-size:9px" onClick="showFunBox()" />
+	<button label="FrontSlab" style="font-size:9px" onClick="showFrontSlab()" />
+	<!-- <button label="TaskSlab" style="font-size:9px" onClick="showTaskSlab()" /> -->
+	<button label="Search customer" style="font-size:9px" onClick="showCustomerAddressSearchBox()" />
+	<!-- <button label="ZTC" style="font-size:9px" onClick="showZTCSlab()" /> -->
+	
+	<separator width="80px" />
+	<button label="Switch branch" style="font-size:9px" onClick="admintukarbranch_popup.open(adminmenuitem)" />
+	<button label="Logoff" style="font-size:9px" onClick="logoutSystem()" />
+</hbox>
+
+<zscript>
+username_lbl.setValue("Your id: " + useraccessobj.username + " | ");
+
+aclvlstr = useraccessobj.accesslevel.toString();
+if(aclvlstr.equals("9")) aclvlstr = "ADMIN";
+
+accesslevel_lbl.setValue("Level: " + aclvlstr + " | ");
+branch_lbl.setValue("Branch: " + useraccessobj.branch);
+</zscript>
+</div>
+
+  <menubar width="100%">
+	<menu label="Sample Registration">
+		<menupopup>
+			<menuitem label="Register new samples" onClick="runexternal(SAMPLEREG)" />
+			<menuitem label="Assign test parameters" onClick="runexternal(ASSIGNTESTS)" />
+			<menuitem label="Folder/jobs browser" onClick="runexternal(BROWSEJOBS)" />
+			<menuitem label="Tag folder" onClick="runexternal(FOLDERTAGGER)" />
+			<menuseparator />
+			<menuitem label="E-Mail SRN or documents **NEW**" onClick="runexternal(EMAIL_SRN_DOCU)" />
+			<menuitem label="Folder registration daily report" onClick="runexternal(FOLDERS_DAILY_REPORT)" />
+			<menuitem label="Folders/Samples counter" onClick="runexternal(FOLDERSAMPLES_COUNTER)" />
+			<menuseparator />
+			<menuitem label="ChainOfCustody(COC) Manager" onClick="runexternal(COC_MANAGER)" />
+			<menuseparator />
+			<menu label="Special samples handling">
+				<menupopup>
+					<menuitem label="IDS" onClick="runexternal(SPECIAL_IDS_SAMPREG)" />
+					<menuitem label="Fonterra -bulum-" />
+					<menuitem label="ASMA -bulum-" />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menuitem label="Check sample ID" onClick="runexternal(CHECK_SAMPLEID)"/>
+		</menupopup>
+     </menu>
+
+ 	<menu id="lab_menuitem" label="Labs" visible="false" >
+		<menupopup>
+		<!-- <menuitem label="Test/Service/Sale Items" onClick="runexternal(STOCK_ITEMS_MANAGER)" /> -->
+			<!-- <menuitem label="Folders/Jobs schedule" onClick="runexternal(FOLDERSCHEDULE)"/> -->
+		
+			<menuitem label="Samples Tracker **NEW**" onClick="runexternal(SAMPLES_TRACKER)" />
+			<menu label="Folder/Jobs tracker">
+				<menupopup>
+					<menuitem label="Track by client" onClick="runexternal(FOLDERTRACK_BY_CLIENT)" />
+					<menuitem label="Track by date" onClick="runexternal(FOLDERTRACK_BY_DATE)" />
+					<menuitem label="Track by test parameters" onClick="runexternal(FOLDERTRACK_BY_TEST)" />
+				</menupopup>
+			</menu>
+
+			<menuitem label="Due folders list" onClick="runexternal(DUEFOLDERREPORT)" />
+			<menuseparator />
+			<menuitem label="Runs list manager" onClick="runexternal(RUNSLIST_MOD)" />
+			<menuitem label="Draft report template" onClick="runexternal(DRAFT_TEMPLATE_MOD)" />
+
+			<menu label="Results">
+				<menupopup>
+					<!-- <menuitem label="Entry by run list" onClick="runexternal(RESULT_ENTRY_BYRUNLIST)" /> -->
+					<menuitem label="Results entry v.2 -NEW-" onClick="runexternal(RESULT_ENTRY_V2)" />
+					<!-- <menuitem label="Entry by folder" onClick="runexternal(RESULTENTRY_BY_FOLDER)" /> -->
+
+					<menu label="Import instrument results">
+						<menupopup>
+							<menuitem label="ICP-OES + FIMS" onClick="runexternal(RESULT_METALS_LIQUID)" />
+							<!-- <menuitem label="FIMS" onClick="runexternal(MERCURY_RESULTS_ENTRY)" /> -->
+							<menuitem label="HPLC" />
+							<!-- <menuitem label="GC-MS" onClick="runexternal(GCMS_RESULT_ENTRY)" /> -->
+						</menupopup>
+					</menu>
+
+					<menuitem label="Balance data entry" onClick="runexternal(BALANCE_DATA_ENTRY)" />
+					<menuseparator />
+					<menuitem label="Balance data EV" onClick="runexternal(BALANCE_ENTRY_EV)" />
+
+					<!--
+					<menu label="Food">
+						<menupopup>
+							<menuitem label="Proximate" />
+							<menuitem label="ELISA/HPLC" />
+							<menuitem label="Others" />
+						</menupopup>
+					</menu>
+					<menuitem label="Microbiology" />
+					-->
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menuitem label="Release folders/results" onClick="runexternal(RELEASE_FOLDER_MANAGER)" />
+			<menuseparator />
+			<menuitem label="Subcontract -bulum-" />
+			<menuseparator />
+			<menu id="labreports_menuitem" label="Lab reports">
+				<menupopup>
+					<menuitem label="Samples-Tests Check List data-dump" onClick="runBirtReportTemplate(JOBSAMPLETESTS_DUMP)" />
+					<menuitem label="Divisions breakdown -bulum-" />
+					<menuitem label="Tests breakdown **NEW TRY ME**" onClick="runexternal(TESTSBREAKDOWN_REPORT)"/>
+				</menupopup>
+			</menu>
+			<!--
+			<menuseparator />
+			<menu id="dataexport_menuitem" label="Data Exchange">
+				<menupopup>
+					<menuitem label="ESDAT Import/Export" />
+					<menuitem label="EDD" />
+					<menuitem label="SEDD" />
+					<menuseparator />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menu id="specialproject_menuitem" label="Projects">
+				<menupopup>
+					<menuitem label="GHD Qatar" onClick="runexternal(PROJECT_GHD_QATAR)" />
+					<menuitem label="Worley Parsons -bulum-" />
+					<menuitem label="ASMA" onClick="runexternal(PROJECT_ASMA)" />
+				</menupopup>
+			</menu>
+			-->
+		</menupopup>
+	</menu>
+
+	<menu id="reporting_menuitem" label="Reporting" visible="false">
+		<menupopup>
+			<menuitem label="Update COA PRINTOUT date" onClick="runexternal(UPDATE_COAPRINTOUT_DATE)" />
+			<menuitem label="Update COA COMPLETE date" onClick="runexternal(UPDATE_REALCOA_DATE)" />
+			<menuitem label="COA release date summary report" onClick="runexternal(LABCOATAT_SUMMARY)" />
+			<menuseparator />
+			<menuitem label="Send COA via e-mail to client" onClick="runexternal(SEND_EMAIL_COA)" />
+			<menuseparator />
+			<menuitem label="Potrait COA - (sample per page)" onClick="runexternal(COA_POTRAIT_V1)"/>
+			<!--
+			<menuitem label="Landscape COA Type 1 - Test by SampleID" onClick="runexternal(LANDSCAPE_COA)"/>
+			<menuitem label="Landscape COA Type 2 - SampleID by Test" onClick="runexternal(LANDSCAPE_COA_SAMP_TEST)" />
+			-->
+		</menupopup>
+	</menu>
+
+	<menu id="qc_menuitem" label="QC" visible="false" >
+		<menupopup>
+			<menuitem label="Control data -bulum-" />
+			<menuitem label="Tests QC-reference setup -bulum-" />
+			<menuseparator />
+			<menuitem label="Service/Calibration schedule -bulum-" />
+			<menuseparator />
+			<menuitem label="Equipment browser" onClick="runexternal(EQUIPMENT_BROWSER)" />
+			<menuitem label="Equipment manager" onClick="runexternal(EQUIPMENT_MANAGER)" />
+		</menupopup>
+	</menu>
+
+	<menu label="Dispatch/Containers" id="dispatchmenuitem" visible="false" >
+		<menupopup>
+			<menuitem label="Collect cheque requests to ISIS" onClick="runexternal(COLLECTCHEQUE_TRACKER)" />
+			<menuitem label="Send AD-HOC TASK email to ISIS" onClick="runexternal(SEND_EMAIL_OUTSOURCE)" />
+			<menuseparator />
+			<menuitem label="Today destinations" onClick="runexternal(TODAYDESTINATIONS)" />
+			<menuitem label="Update status" onClick="runexternal(DISPATCHUPDATESTATUS)" />
+			<menuitem label="Dispatch scheduling" onClick="runexternal(DISPATCHSCHEDULING)"/>
+			<menuseparator />
+			<menuitem label="Dispatch - Collect cheque listing" onClick="runBirtReportTemplate(BIRT_DISPATCH_COLLECTCHEQ)" />
+			<menuseparator />
+			<menuitem label="Customers additional address" onClick="runexternal(CUSTOMEREXTRA_ADDRESS)" />
+			<menuitem label="Dispatcher management" onClick="runexternal(DISPATCHERMANAGER)" />
+			<menuseparator />
+			<menuitem label="Courier tracking" onClick="runexternal(COURIER_OUTGOING_TRACKING)" />
+			<menuseparator />
+			<menu label="Containers request">
+				<menupopup>
+					<menuitem label="Usual request" onClick="runexternal(USUAL_CONTAINTER_REQ)" />
+					<menuitem label="Vials Method 5035 request" onClick="runexternal(VIAL_METHOD5035_REQ)"/>
+					<menuseparator />
+					<menuitem label="Update packed requests" />
+				</menupopup>
+			</menu>
+
+		</menupopup>
+	</menu>
+
+	<menu label="PR/PO" id="prpo_menuitem" visible="false" >
+		<menupopup>
+			<menuitem label="Purchase requisition maker" onClick="runexternal(PURCHASE_REQ_MODULE)" />
+			<!-- <menuitem label="Purchase requisition tracker" /> -->
+			<menuitem label="Purchase items setup" onClick="runexternal(PURCHASE_ITEMS_SETUP)" />
+			<menuseparator />
+			<menuitem label="Purchase Order tracking -bulum-" />
+		</menupopup>
+	</menu>
+	
+	<menu label="CreditControl" id="creditcontrol_menu" visible="false">
+		<menupopup>
+			<menuitem label="Frontdesk CASH/CHEQUE/BANK-IN Collection" onClick="runexternal(FRONTDESK_COLLECTION)" />
+			<menuitem label="Invoice / Credit-control Tracker" onClick="runexternal(INVOICE_CREDITCONTROL_TRACKER)" />
+		</menupopup>
+	</menu>
+
+    <menu label="Billing" id="billingmenuitem" visible="false" >
+		<menupopup>
+			<menu label="Folders/Billing/Invoices">
+				<menupopup>
+					<menuitem label="Folder/Jobs Billing" onClick="runexternal(FOLDERSMANAGER)" />
+					<menuitem label="Browse MySoft invoices" onClick="runexternal(INVOICEDOMAN)" />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menu label="Billing Reports">
+				<menupopup>
+					<menuitem label="Converted cash folder report" onClick="runBirtReportTemplate(BIRT_CONVERTEDCASHFOLDER)" />
+					<!-- <menuitem label="Billing/TAT Monitoring" onClick="runexternal(BILLING_TAT_MONITORING)" /> -->
+					<menuitem label="Combined billing cross-ref" onClick="runBirtReportTemplate(BIRT_FOLDERDOINV_CROSSREF)" />
+					<menuitem label="Billing/TAT v.3" onClick="runBirtReportTemplate(BIRT_FOLDERINVOICECOA_LIST)" />
+					<menuitem label="Invoice + Payment Listing" onClick="runBirtReportTemplate(BIRT_INVOICEPAID_LIST)" />
+					<menuitem label="Billing breakdown report" onClick="runexternal(BILLING_BREAKDOWN_REPORT)" />
+					<menuseparator />
+					<menuitem label="Debtor ledger data extractor v.1" onClick="runBirtReportTemplate(BIRT_DEBTLEDGER_EXTRACT)" />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menuitem label="Test/Service/Sale Items" onClick="runexternal(STOCK_ITEMS_MANAGER)" />
+			<!--
+			<menu label="Stock Master">
+				<menupopup>
+					<menuitem label="Division setup" />
+					<menuitem label="Section/Group mapping" />
+				</menupopup>
+			</menu>
+			-->
+			<menuseparator />
+			<menu label="Clients Related">
+				<menupopup>
+					<menuitem label="ZERO TOLERANCE CLIENTS Setup" onClick="runexternal(ZEROTOLERANCECLIENTS)" />
+					<menuitem label="Client tracking" onClick="runexternal(CLIENT_TRACKING)" />
+					<menuitem label="Client category + salesman setup" onClick="runexternal(CUSTOMER_CATEGORY)" />
+					<menuitem label="Credit period / limit setup" onClick="runexternal(CUSTOMER_CREDIT_PERIOD)" />
+					<menuitem label="Clients e-Mail addresses" onClick="runexternal(CLIENT_EXTRA_EMAIL)" />
+					<menuseparator />
+					<menuitem label="Clients account setup" onClick="runexternal(SETUP_CLIENT)" />
+					<menuitem label="Client credit application -bulum-" />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menu label="Track sent-out documents">
+				<menupopup>
+					<menuitem label="Invoices + COA" onClick="runexternal(BILLDOCSMAN)" />
+					<menuitem label="Cash sales" onClick="runexternal(CASHSALES_SENDOUT)" />
+					<menuseparator />
+					<menuitem label="Deliver-by-hand tracker" onClick="runexternal(DELIVERBYHAND_TRACKER)" />
+				</menupopup>
+			</menu>
+			<!-- <menuitem label="Documents tracking" onClick="runexternal(MARCHDOCTRACKING)" /> -->
+			<menuseparator />
+			<menuitem label="CreditNote lagi -bulum-" />
+			<menu label="Report/Search modules">
+				<menupopup>
+					<menuitem label="Committed/Uploaded report" onClick="runBirtReportTemplate(BIRT_COMMITEDFOLDERS)" />
+					<menuitem label="Samples by client list" onClick="runBirtReportTemplate(BIRT_SAMPLES_BY_CLIENT)" />
+					<menuitem label="Mysoft username gen invoice" onClick="runBirtReportTemplate(BIRT_USERNAME_INVOICE)" />
+					<menuitem label="Retrieve invoices by client-code(AR Code)" onClick="runBirtReportTemplate(BIRT_INVOICES_BY_CLIENT_CODE)" />
+					<menuitem label="Retrieve invoices by branch (HQ/JB)" onClick="runBirtReportTemplate(BIRT_INVOICES_BY_BRANCH)" />
+					<menuitem label="Check samples ID in Invoices (12/02/2010 backwards)" onClick="runBirtReportTemplate(BIRT_SAMPLES_IN_INVOICE)" />
+					<menuitem label="Find customer PO# in invoices" onClick="runBirtReportTemplate(BIRT_SEARCHCUSTOMERPO)" />
+
+				</menupopup>
+			</menu>
+         </menupopup>
+	</menu>
+
+	<menu label="Documents/Trails" id="docutrails_menu">
+		<menupopup>
+			<menuitem label="Document/PO/COC/COA attachements" onClick="runexternal(TRAILER_DOCUMENTS)" />
+			<menu label="Trails">
+				<menupopup>
+					<menuitem label="Clients" onClick="runexternal(TRAILER_BYCLIENT)" />
+					<menuitem label="Job/Folders" />
+				</menupopup>
+			</menu>
+			<menuseparator />
+			<menuitem label="e-LabBrain documents manager" onClick="runexternal(LABBRAIN_DOC_MANAGER)" />
+		</menupopup>
+	</menu>
+
+	<menu label="Sales/Marketing" id="salesmenuitem" visible="false" >
+		<menupopup>
+			<menu label="Quotations">
+				<menupopup>
+					<menuitem label="Quotations maker" onClick="runexternal(QUOTATION_MAKER)" />
+					<menuitem label="Quotations tracker" onClick="runexternal(QUOTATION_TRACKER)" />
+					<menuitem label="Trackers report" onClick="runBirtReportTemplate(BIRT_QUOTEDUMPTRACKS)" />
+					<menuseparator />
+					<menuitem label="Browse old quotations in MySoft" onClick="runexternal(OLDMYSOFTQUOTES_BROWSER)" />
+					<menuitem label="Extract quotations in MySoft" onClick="runexternal(BIRT_EXTRACT_MYSOFT_QUOTES)" />
+					<!-- <menuitem label="Prospects analysis -P2-" /> -->
+				</menupopup>
+			</menu>
+
+			<menu label="Reports">
+				<menupopup>
+					<menuitem label="Converted cash folder report" onClick="runBirtReportTemplate(BIRT_CONVERTEDCASHFOLDER)" />
+					<menuitem label="Billing/TAT v.3" onClick="runBirtReportTemplate(BIRT_FOLDERINVOICECOA_LIST)" />
+					<menuitem label="Invoice + Payment Listing" onClick="runBirtReportTemplate(BIRT_INVOICEPAID_LIST)" />
+				</menupopup>
+			</menu>
+
+			<menu label="Clients">
+				<menupopup>
+					<menuitem label="Clients e-Mail addresses" onClick="runexternal(CLIENT_EXTRA_EMAIL)" />
+					<menuitem label="Clients category setup" onClick="runexternal(CUSTOMER_CATEGORY)" />
+				</menupopup>
+			</menu>
+			<!--
+			<menuitem label="Market analysis -P2-" />
+			<menuseparator />
+			<menu label="Sales report">
+				<menupopup>
+					<menuitem label="Invoices by salesperson -bulum-" />
+					<menuitem label="Quotations by salesperson -bulum-" />
+				</menupopup>
+			</menu>
+			-->
+		</menupopup>
+	</menu>
+
+<!--
+	<menu label="Human Resources" id="hrm_menuitem">
+		<menupopup>
+			<menuitem label="Staff list -bulum-" />
+			<menuitem label="MC / Leaves -bulum-" />
+		</menupopup>
+	</menu>
+
+	<menu label="Packing/Containers" id="containers_menuitem" visible="false">
+		<menupopup>
+			<menu label="Chiller box management">
+				<menupopup>
+					<menuitem label="Box rental" onClick="runexternal(BOX_RENTAL)" />
+					<menuitem label="New boxes" onClick="runexternal(BOX_MANAGER)" />
+				</menupopup>
+			</menu>
+			<menu label="Containers request">
+				<menupopup>
+					<menuitem label="Usual request" onClick="runexternal(USUAL_CONTAINTER_REQ)" />
+					<menuitem label="Vials Method 5035 request" onClick="runexternal(VIAL_METHOD5035_REQ)"/>
+				</menupopup>
+			</menu>
+		</menupopup>
+	 </menu>
+-->
+
+	 <menu label="Data Setup" id="setupmenuitem" visible="false">
+		<menupopup>
+			<menuitem label="Clients e-Mail addresses" onClick="runexternal(CLIENT_EXTRA_EMAIL)" />
+			<menuseparator />
+			<menuitem label="Test packages" onClick="runexternal(TESTPACKAGES)" />
+			<menu label="Static tables">
+				<menupopup>
+					<menuitem label="Locations" onClick="runexternal(LABLOCATION_MANAGER)" />
+					<menuitem label="Units" onClick="runexternal(MEASUREMENT_UNITS)" />
+					<menuitem label="CAS# List" onClick="runexternal(CAS_MANAGER)" />
+					<menuitem label="Sample matrix configuration" onClick="runexternal(MATRIX_MANAGER)" />
+				</menupopup>
+			</menu>
+			<menu label="Mappings">
+				<menupopup>
+					<menuitem label="Analyte metadata mappings" onClick="runexternal(CAS_MAPPING)" />
+					<menuitem label="Method mapping (WorleyParsons)" onClick="runexternal(WP_METHOD_MAPPING)" />
+				</menupopup>
+			</menu>
+		</menupopup>
+	 </menu>
+
+	<menu label="Admin" id="adminmenuitem" visible="false">
+		<menupopup>
+			<menu label="Users management">
+				<menupopup>
+					<menuitem label="Switch branch" onClick="admintukarbranch_popup.open(adminmenuitem)"/>
+					<!--
+					<menuitem label="Users" onClick="runexternal(USERSETUP)"/>
+					<menuitem label="Usergroup" onClick="runexternal(USERGROUPSETUP)"/>
+					<menuitem label="Access setup" onClick="runexternal(USERACCESS)" />
+					-->
+					<menuitem label="User control center " onClick="runexternal(USER_CONTROLLER)" />
+					<menuseparator />
+					
+					<menu label="Webreport system management">
+						<menupopup>
+							<menuitem label="Users" onClick="runexternal(WEBREPORT_USERSETUP)" />
+						</menupopup>
+					</menu>
+				</menupopup>
+			</menu>
+			
+			<menu label="Database/System management">
+				<menupopup>
+					<menuitem label="Job/Folders/Samples" onClick="runexternal(FOLDERS_DB_MAN)" />
+					<menuitem label="Audit Logs" onClick="runexternal(ADMIN_AUDIT_LOGS)" />
+					<menuseparator />
+					<menuitem label="Clean tmp folder" />
+				</menupopup>
+			</menu>
+		</menupopup>
+	</menu>
+
+	<menu label="Help">
+		<menupopup>
+			<menuitem label="General help" onClick="runexternal(HELPBOX)" />
+			<menuitem label="About" onClick="runexternal(ABOUTBOX)" />
+		</menupopup>
+	</menu>
+	
+	<menu id="victormenus" label="Victor" visible="false">
+		<menupopup>
+			<menuitem label="release folders -v2" onClick="runexternal(RELEASEFOLDERS_V2)" />
+			<menuitem label="assign tests -v5" onClick="runexternal(ASSIGN_TEST_V5)" />
+			<menuitem label="upload COA date -v2" onClick="runexternal(UPDATECOA_DATE_DEV)" />
+			<menuitem label="docu manager -v1" onClick="runexternal(DOCUMANAGER)" />
+			<!-- <menuitem label="billing uploader -recode" onClick="runexternal(BILLING_UPLOAD_DEVELOPE)" /> -->
+			<menuitem label="wcprepaidkit -v1" onClick="runexternal(WC_PREPAIDKIT)" />
+			<!-- <menuitem label="monthly bill -v1" onClick="runexternal(BILLING_MOD_DEVELOPE)" /> -->
+			<!-- <menuitem label="radfolderbrowser-3" onClick="runexternal(FOLDERS_BROWSER_DEVELOPE)" /> -->
+			<!-- <menuitem label="quotemaker-3" onClick="runexternal(QUOTATION_MAKER_DEVELOPE)" /> -->
+			<!-- <menuitem label="invoice-coa-sendout v3" onClick="runexternal(BILLDOCSMAN3)" /> -->
+			<!-- <menuitem label="Assign-test-4-victoronly" onClick="runexternal(ASSIGNTESTS_DEVELOP)" /> -->
+			<menuitem label="Sample reg develop v.5" onClick="runexternal(SAMPLEREG_DEVELOP)" />
+
+			<!--	
+			<menuitem label="AMBANK I/O" onClick="runexternal(AMBANK_EDD)" />
+			<menuitem label="Stock-division-group" onClick="runexternal(STOCKDIVISIONGROUP)" />
+			<menuitem label="Stock-browser" onClick="runexternal(STOCKBROWSWER)" />
+			<menuitem label="Supplier Setup" onClick="runexternal(SUPPLIER_SETUP)" />
+
+			<menuitem label="GRN Maker" onClick="runexternal(GRNMAKER)" />
+			<menuitem label="user controller" onClick="runexternal(USERCONT)" />
+			<menuitem label="setup warehouse" onClick="runexternal(SETUPWAREHOUSE)" />
+			<menuitem label="setup suppliercat" onClick="runexternal(SUPPLIERCAT_SETUP)" />
+			<menuitem label="purchase-req" onClick="runexternal(LGKPURREQ)" />
+			-->
+
+		</menupopup>
+	</menu>
+	
+<!--
+	<menu label="Collaborate"> 
+		<menupopup>
+			<menuitem label="Messages" onClick="runexternal(COLLAB_MESSAGE)" />
+			<menuitem label="Reminders" onClick="" />
+			<menuitem label="Tasks" />
+		</menupopup>
+	</menu>
+-->	
+	<!-- <menuitem label="Logoff" onClick="logoutSystem()" /> -->
+
+ </menubar>
+
+ </div>
+
+</north>
+
+<!-- this is the content part, everything will play here. -->
+<center>
+<div>
+	<borderlayout width="100%" height="10000px">
+
+	<west flex="true" splittable="true" collapsible="true">
+		<div id="westside" visible="false">
+				<!--
+				<fisheyebar id="fisheyemenubar" attachEdge="center" labelEdge="center" orient="vertical"
+				style="margin-top:150px; margin-left:12px">
+					<fisheye image="/alsimg/alstechnichem_logo.jpg" />
+					<fisheye image="/icons/sharepoint-1-icon.png" label="Address" onClick="showCustomerAddressSearchBox()" />
+					<fisheye image="/icons/Generic-Folder-icon.png" label="Documents" onClick="runexternal(BILLDOCSMAN)" />
+					<fisheye image="/icons/Documents-icon.png" label="Folders" onClick="runexternal(BROWSEJOBS)" />
+					<fisheye image="/icons/Downloads-icon.png" label="Dispatch" onClick="runexternal(TODAYDESTINATIONS)" />
+					<fisheye image="/icons/OmniGraffle-Professional-5-icon.png" label="Check SampleID" onClick="runexternal(CHECK_SAMPLEID)" />
+					<fisheye image="/icons/Users-icon.png" label="Change password" onClick="changePassword()" />
+					<fisheye image="/mirisimg/logoff.png" label="Logoff"  onClick="logoutSystem()" />
+				</fisheyebar>
+				-->
+		</div>
+	</west>
+
+	<!--   style="background:#dfe8f6 url('img/postpone_ad.png') no-repeat;" -->
+	<center >
+		<div>
+			<hbox>
+			<div id="workbox" />
+			<div id="worksandbox" />
+			</hbox>
+		</div>
+	</center>
+	</borderlayout>
+</div>
+</center>
+
+<south border="none">
+<div>
+    <div id="miscwindows" />
+</div>
+</south>
+
+</borderlayout>
+
+<zscript>
+<![CDATA[
+
+populateDropdownListbox(branch_drd, dd_branches);
+
+// show username in menu-bar
+// username_mi.setLabel("User: " + useraccessobj.username);
+
+// Set menu-items visible based on access level and usergroup
+checkAdminAccess_Menuitem(adminmenuitem);
+
+checkMenuItem_Visible(billingmenuitem,ADMIN_BIRT_REPORTS_USERGROUP,ADMIN_BIRT_REPORTS_ACCESSLEVEL);
+checkMenuItem_Visible(salesmenuitem,SALES_MARKETING_USERGROUP,SALES_MARKETING_ACCESSLEVEL);
+
+checkMenuItem_Visible(dispatchmenuitem,RECEPTION_USERGROUP,RECEPTION_ACCESSLEVEL);
+checkMenuItem_Visible(qc_menuitem,QCOFFICER_USERGROUP,QCOFFICER_ACCESSLEVEL);
+
+checkMenuItem_Visible(reporting_menuitem,REPORTGEN_USERGROUP,REPORTGEN_ACCESSLEVEL);
+checkMenuItem_Visible(setupmenuitem, STATICDATA_SETUP_USERGROUP, STATICDATA_SETUP_ACCESSLEVEL);
+
+//checkMenuItem_Visible(containers_menuitem,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+checkMenuItem_Visible(prpo_menuitem, PURCHASING_USERGROUP, PURCHASING_ACCESSLEVEL);
+
+checkMenuItem_Visible(lab_menuitem,LAB_USERGROUP,LAB_ACCESSLEVEL);
+checkMenuItem_Visible(creditcontrol_menu,CREDIT_CONTROL_USERGROUP,CREDIT_CONTROL_ACCESSLEVEL);
+
+usernam = useraccessobj.username;
+if(usernam.equals("padmin") || usernam.equals("toymaker") || usernam.equals("sharon")) victormenus.setVisible(true);
+
+//if(!userb.equals("metest"))
+
+//6/7/2010: run front-slab
+//showFrontSlab();
+
+//showZTCSlab();
+
+]]>
+</zscript>
+
+</div>
+
+<!--
+</window>
+-->
+
+</zk>
+
+

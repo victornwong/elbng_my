@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="viewcoapot_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : BIRT generate portrait COA single-sample / page
+Written by: Victor Wong
+
+**NOTES**
+Knock-off from the main module - just change the rpt filename and some stuff
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_jobfolder_id = Executions.getCurrent().getParameter("folder_no");
+param_signator = Executions.getCurrent().getParameter("signator");
+param_signator2 = Executions.getCurrent().getParameter("signator2");
+param_disclaimer = Executions.getCurrent().getParameter("disc");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+
+	templatefn = COA_PORTRAIT_DISCLAIMERS;
+	if(param_disclaimer.equals("2")) templatefn = COA_PORTRAIT_NODISCLAIMERS;
+	if(param_disclaimer.equals("3")) templatefn = COA_PORTRAIT_EXISTINGPAPER;
+	if(param_disclaimer.equals("4")) templatefn = COA_PORTRAIT_EXISTINGPAPER_CONTI;
+
+	thesrc = birtURL() + templatefn + "&folderjob_id=" + param_jobfolder_id + 
+	"&signator=" + param_signator + "&signator2=" + param_signator2;
+
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_potsing_box" width="900px" height="700px" title="Generate Certificate Of Analysis Template" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+
+<button label="Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+<separator height="3px" />
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

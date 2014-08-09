@@ -1,0 +1,920 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="impresicp_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Results Import (ICP-OES/FIMS/ICP-MS)";
+MYVERSION = "v2.0";
+MYPANEL = "impresicp2";
+/*
+Title		: Import results from ICP-OES/FIMS/ICP-MS
+Written by	: Victor Wong
+Dated		: 26/02/2013
+
+Totally new module with functions requested by users. CSV chopper knock-off from other modules
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+luhand = new LookupFuncs();
+
+TESTPICK_COLOR = "background:#AAAAAA";
+SELECTED_COLOR = "background:#a40000";
+
+NUM_RESULTS = 25;
+
+glob_selected_folderstr = "";
+glob_selected_folder = "";
+glob_selected_sample = "";
+
+Object prevSelectedFolder = null;
+String prevSelectedFolder_style = "";
+
+Object prevSelectedImport = null;
+String prevSelectedImport_style = "";
+
+Object prevSelectedBlank = null;
+String prevSelectedBlank_style = "";
+
+String[] combounits;
+String[] usualresults;
+
+rawDataUpload_Type = 0;
+
+class testOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow)
+			{
+				if(prevSelectedFolder_style.equals(""))
+					prevSelectedFolder.setStyle(null);
+				else
+					prevSelectedFolder.setStyle(prevSelectedFolder_style);
+			}
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder_style = (selrow.getStyle() == null) ? "" : selrow.getStyle();
+		prevSelectedFolder = selrow;
+		selrow.setStyle(TESTPICK_COLOR);
+
+		//selid = selrow.getId();
+		//selid = selid.substring(2,selid.length());
+	}
+}
+
+void loadTests(String iwhat)
+{
+	if(testparams_holder.getFellowIfAny("testsgrid") != null) testsgrid.setParent(null);
+
+	sqlstm = "select jtp.origid, jtp.mysoftcode, smd.description, smd.description2, jtp.releasedby, jtp.releaseddate " +
+	"from jobtestparameters jtp left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+	"where jtp.jobsamples_id=" + iwhat;
+
+	jtests = sqlhand.gpSqlGetRows(sqlstm);
+	if(jtests.size() == 0)
+	{
+		guihand.showMessageBox("No tests being assigned yet!??!");
+		return;
+	}
+
+	thegrid = new Grid();
+	thegrid.setId("testsgrid");
+	gridrows = new Rows();
+	gridrows.setParent(thegrid);
+	
+	for(dpi : jtests)
+	{
+		tprow = gridhand.gridMakeRow("","background:#729fcf","",gridrows);
+		gridhand.makeLabelToParent(kiboo.checkNullString(dpi.get("description")),"",tprow);
+		tprow.addEventListener("onClick", new testOnSelect());
+		tprow.setId("M" + dpi.get("mysoftcode").toString());
+		
+		// result textbox
+		resultbox = new Combobox();
+		gridhand.makeComboitem(resultbox,usualresults);
+		resultbox.setId("R" + dpi.get("origid").toString());
+		resultbox.setStyle("font-size:9px");
+		resultbox.setParent(tprow);
+
+		// units combobox
+		unitsbox = new Combobox();
+		gridhand.makeComboitem(unitsbox,combounits);
+		unitsbox.setStyle("font-size:9px");
+		unitsbox.setParent(tprow);
+		unitsbox.setId("U" + dpi.get("origid").toString());
+
+		if(dpi.get("releasedby") != null || dpi.get("releaseddate") != null)
+		{
+			resultbox.setDisabled(true);
+			unitsbox.setDisabled(true);
+			tprow.setStyle("background:#73d216");
+			gridhand.makeLabelToParent("RELEASED","",tprow);
+		}
+
+/*
+		prvres = gridhand.gridMakeRow("","background:#737d28","",gridrows);
+		// get last result-entered/units if any
+		sqlstm3 = "select top 1 result_unit,final,username,analysed_date from elb_chemistry_results " +
+		"where jobtestparameter_id=" + dpi.get("origid").toString() + " and mysoftcode=" + dpi.get("mysoftcode").toString() + 
+		"order by origid desc";
+
+		prevrec = sql.firstRow(sqlstm3);
+
+		if(prevrec != null)
+		{
+			oldres = (prevrec.get("final") == null) ? "" : prevrec.get("final");
+			oldunit = (prevrec.get("result_unit") == null) ? "" : prevrec.get("result_unit");
+
+			gridhand.makeLabelToParent(oldres,"",prvres);
+			gridhand.makeLabelToParent(oldunit,"",prvres);
+			gridhand.makeLabelToParent(prevrec.get("username"),"",prvres);
+			gridhand.makeLabelToParent(prevrec.get("analysed_date").toString().substring(0,10),"",prvres);
+		}
+		else // blank previous results labels
+		{
+			gridhand.grid_makeBlankColumn(prvres,4);
+		}
+*/
+
+	}
+	
+	thegrid.setParent(testparams_holder);
+	testparams_holder.setVisible(true);
+}
+
+class samples_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_selected_sample = lbhand.getListcellItemLabel(isel,0);
+		sampleid_lbl.setValue(glob_selected_sample);
+		loadTests(glob_selected_sample);
+	}
+}
+
+Object[] samples_headers =
+{
+	new listboxHeaderWidthObj("SampID",true,"55px"),
+	new listboxHeaderWidthObj("Marking",true,""),
+};
+
+void loadSamples(String iwhat)
+{
+	sqlstm = "select js.origid,js.samplemarking from jobsamples js " + 
+	"where js.deleted=0 and js.jobfolders_id=" + iwhat;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(samples_holder, samples_headers, "samples_lb", 5);
+	jsamps = sqlhand.gpSqlGetRows(sqlstm);
+	if(jsamps.size() == 0) return;
+
+	if(jsamps.size() < 20) newlb.setRows(10);
+	else newlb.setRows(20);
+
+	newlb.addEventListener("onSelect", new samples_onSelect());
+	for(dpi : jsamps)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("samplemarking")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+class loadfolders_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_selected_folder = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_folderstr = lbhand.getListcellItemLabel(isel,1);
+		folder_lbl.setValue(glob_selected_folderstr);
+		loadSamples(glob_selected_folder);
+	}
+}
+
+Object[] folders_headers =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Folder",true,""),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("F.Stat",true,""),
+};
+
+// itype: 1=by folder, 2=by sampleid, 3=by samplemarking
+void loadFolders(int itype)
+{
+	foldn = kiboo.replaceSingleQuotes(folder_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+	smpmark = kiboo.replaceSingleQuotes(samplemarking_tb.getValue());
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+
+	if(itype == 1 && foldn.equals("")) return;
+	if(itype == 2 && sampid.equals("")) return;
+	if(itype == 3 && smpmark.equals("")) return;
+
+	sqlstm ="select top 20 jf.origid, jf.folderno_str, jf.folderstatus, cust.customer_name " +
+	"from jobfolders jf left join customer cust on cust.ar_code = jf.ar_code " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid where ";
+
+	midpart = "jf.folderno_str like '%" + foldn + "%' ";
+	if(itype == 2) midpart = "js.sampleid_str like '%" + sampid + "%' ";
+	if(itype == 3) midpart = "js.samplemarking like '%" + smpmark + "%' " + 
+	"and jf.datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	sqlstm += midpart +
+	"and jf.deleted=0 " +
+	"group by jf.origid, jf.folderno_str, jf.folderstatus, cust.customer_name " +
+	"order by jf.origid";
+
+	Listbox newlb = lbhand.makeVWListbox_Width(folders_holder, folders_headers, "folders_lb", 5);
+	jfolders = sqlhand.gpSqlGetRows(sqlstm);
+	if(jfolders.size() == 0) return;
+
+/*
+	if(samples_holder.getFellowIfAny("samples_lb") != null)
+	{
+		samples_lb.setParent(null);
+	}
+*/
+
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new loadfolders_onSelect());
+	for(dpi : jfolders)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("folderno_str")));
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(dpi.get("folderstatus"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// itype: 1=icpoes, 2=icpms, 3=fims
+void uploadRawData(int itype)
+{
+	uploaded_csvRaw = Fileupload.get(true);
+	if(uploaded_csvRaw == null) return;
+	formatstr = uploaded_csvRaw.getFormat();
+/*
+	if(!formatstr.equals("csv"))
+	{
+		guihand.showMessageBox("Please upload CSV exported from WinLab DataManager");
+		return;
+	}
+*/
+	bytearray = uploaded_csvRaw.getByteData();
+	String mystring = new String(bytearray);
+	chopped_csv = mystring.split("\r\n");
+	// some CSV "\n" as new line	
+	if(chopped_csv.length == 1) chopped_csv = mystring.split("\n");
+	if(chopped_csv.length == 0) { guihand.showMessageBox("Oii.. Nothing to process!!!"); return; }
+
+	typl = "ICP-OES";
+	switch(itype)
+	{
+		case 2:
+			typl = "ICP-MS";
+			break;
+		case 3:
+			typl = "FIMS";
+			break;
+	}
+
+	importtype_lbl.setValue(typl);
+	importfilename_lbl.setValue(uploaded_csvRaw.getName());
+	raw_importtype_lbl.setValue(typl);
+	raw_importfilename_lbl.setValue(uploaded_csvRaw.getName());
+	blk_importtype_lbl.setValue(typl);
+	blk_importfilename_lbl.setValue(uploaded_csvRaw.getName());
+
+	rawDataUpload_Type = itype;
+
+	String[] strarray = new String[3];
+	String shwstr = "";
+	HashMap analypos_hm = new HashMap();
+	int colc = 1;
+
+	HashMap sampres_hm = new HashMap();
+
+	if(itype == 1) // ICP-OES csv import
+	{
+		ArrayList chops = new ArrayList();
+
+		// organize those strings
+		for(i=1; i<chopped_csv.length; i++)
+		{
+			String[] ckk = new String[3];
+			kkb = chopped_csv[i];
+			split3 = kkb.split(",");
+			for(j=0; j<split3.length; j++)
+			{
+				ktmp = split3[j];
+				split3[j] = ktmp.replace("\"","");
+			}
+
+			ckk[0] = split3[0];
+			ckk[1] = split3[1];
+			ckk[2] = split3[2];
+			chops.add(ckk);
+		}
+
+		for(dpi : chops)
+		{
+			k1 = dpi[0];
+			k2 = dpi[1];
+			k3 = dpi[2];
+			// add 'em analytes posi in a row
+			if(!analypos_hm.containsKey(k2))
+			{
+				analypos_hm.put(k2,colc);
+				colc++;
+			}
+			// add 'em sample-IDs and allocate string array to store results
+			if(!sampres_hm.containsKey(k1))
+			{
+				sampres_hm.put(k1,new String[NUM_RESULTS]);
+				resarray = sampres_hm.get(k1);
+				resarray[0] = k1; // store sample-id in string[0]
+			}
+		}
+
+		for(dpi : chops)
+		{
+			k1 = dpi[0];
+			k2 = dpi[1];
+			k3 = dpi[2];
+			resarray = sampres_hm.get(k1);
+			if(resarray != null)
+			{
+				respos = analypos_hm.get(k2); // analyte result array posi
+				resarray[respos] = k3; // store the result
+			}
+		}
+		// populate raw-results and blanks
+		if(imports_holder.getFellowIfAny("importresults") != null) importresults.setParent(null);
+		if(importblanks_holder.getFellowIfAny("blankresults") != null) blankresults.setParent(null);
+		if(compute_holder.getFellowIfAny("compute_stuff") != null) compute_stuff.setParent(null);
+
+		thegrid = new Grid();
+		thegrid.setId("importresults");
+		gridrows = new Rows();
+		gridrows.setId("rawrows");
+		gridrows.setParent(thegrid);
+
+		blankgrid = new Grid();
+		blankgrid.setId("blankresults");
+		blnkrows = new Rows();
+		blnkrows.setId("blankrows");
+		blnkrows.setParent(blankgrid);
+
+		computegrid = new Grid();
+		computegrid.setId("compute_stuff");
+		cmptrows = new Rows();
+		cmptrows.setId("computerows");
+		cmptrows.setParent(computegrid);		
+
+		// raw-results grid header row
+		hdrow = gridhand.gridMakeRow("","background:#729fcf","",gridrows);
+		gridhand.makeLabelToParent("SampleID","",hdrow);
+
+		// blanks grid header row
+		bhdrow = gridhand.gridMakeRow("","background:#729fcf","",blnkrows);
+		gridhand.makeLabelToParent("SampleID","",bhdrow);
+
+		// compute grid header row
+		cphdrow = gridhand.gridMakeRow("","background:#729fcf","",cmptrows);
+		gridhand.makeLabelToParent("SampleID","",cphdrow);
+
+		for(i=1; i < analypos_hm.size()+1; i++)
+		{
+			Iterator iter = analypos_hm.entrySet().iterator();
+			while(iter.hasNext())
+			{
+				HashMap.Entry aii = (HashMap.Entry)iter.next();
+				posi = aii.getValue();
+				if(posi == i)
+				{
+					gridhand.makeLabelToParent(aii.getKey(),"",hdrow);
+					gridhand.makeLabelToParent(aii.getKey(),"",bhdrow);
+					gridhand.makeLabelToParent(aii.getKey(),"",cphdrow);
+				}
+			}
+		}
+
+		// results rows
+		Iterator iter = sampres_hm.entrySet().iterator();
+		while(iter.hasNext())
+		{
+			HashMap.Entry mii = (HashMap.Entry)iter.next();
+			rsy = mii.getValue();
+
+			chknonsamp = rsy[0].toUpperCase();
+			if(!chknonsamp.contains("BLK") && !chknonsamp.contains("SPK") && !chknonsamp.contains("CHK"))
+			{
+				tprow = gridhand.gridMakeRow("","","",gridrows);
+				tprow.addEventListener("onClick", new impresClick());
+				tprow.addEventListener("onDoubleClick", new impresDClick());
+				//tprow.setId("M" + dpi.get("mysoftcode").toString());
+				for(i=0;i<rsy.length;i++)
+				{
+					gridhand.makeLabelToParent(kiboo.checkNullString(rsy[i]),"",tprow);
+				}
+			}
+			else // for BLK,SPK,CHK
+			{
+				btprow = gridhand.gridMakeRow("","","",blnkrows);
+				btprow.addEventListener("onClick", new impblkClick());
+				btprow.addEventListener("onDoubleClick", new impblkDClick());
+				//tprow.setId("M" + dpi.get("mysoftcode").toString());
+				for(i=0;i<rsy.length;i++)
+				{
+					gridhand.makeLabelToParent(kiboo.checkNullString(rsy[i]),"",btprow);
+				}
+			}
+		}
+
+		thegrid.setParent(imports_holder);
+		blankgrid.setParent(importblanks_holder);
+		computegrid.setParent(compute_holder);
+
+	} // ENDOF itype=1, ICPOES imports
+}
+
+// itype: 1=normal fill grid, 2=clear raw/blank grid row-color-style(for detecting selected)
+void computeGridFiller(Component iselrow, int itype)
+{
+	switch(itype)
+	{
+		case 1:
+			kgr = compute_holder.getFellow("compute_stuff").getChildren().get(0);
+			trw = gridhand.gridMakeRow("","","",kgr);
+			kcl = iselrow.getChildren();
+			for(kk : kcl)
+			{
+				gridhand.makeLabelToParent(kk.getValue(),"",trw);
+			}
+			break;
+
+		case 2:
+			if(iselrow == null) return;
+			kpar = iselrow.getParent().getId();
+			if(kpar.equals("rawrows")) prevSelectedImport_style = "";
+			if(kpar.equals("blankrows")) prevSelectedBlank_style = "";
+			iselrow.setStyle("");
+			break;
+
+		case 3:
+			if(compute_holder.getFellowIfAny("computerows") == null) return;
+			kchd = computerows.getChildren();
+			ArrayList mdel = new ArrayList();
+			for(crw : kchd)
+			{
+				fst = crw.getChildren().get(0);
+				fstv = fst.getValue();
+				if(!fstv.equals("SampleID")) mdel.add(crw);
+			}
+			for(kd : mdel)
+			{
+				kd.setParent(null);
+			}
+
+			// change selected-color in raw and blank grid
+			for(ll : rawrows.getChildren())
+			{
+				ll.setStyle("");
+				prevSelectedImport_style = "";
+			}
+			for(ll : blankrows.getChildren())
+			{
+				ll.setStyle("");
+				prevSelectedBlank_style = "";
+			}
+
+			break;
+	}
+}
+
+class impresDClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+		if(compute_holder.getFellowIfAny("compute_stuff") != null)
+		{
+			// make not already imported
+			if(prevSelectedImport_style.equals(SELECTED_COLOR)) { guihand.showMessageBox("Already imported.."); return; }
+			computeGridFiller(selrow,1);
+			prevSelectedImport_style = SELECTED_COLOR;
+			selrow.setStyle(SELECTED_COLOR);
+		}
+	}
+}
+
+class impresClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+		if(prevSelectedImport != null)
+		{
+			if(prevSelectedImport != selrow)
+			{
+				if(prevSelectedImport_style.equals(""))
+					prevSelectedImport.setStyle(null);
+				else
+					prevSelectedImport.setStyle(prevSelectedImport_style);
+			}
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+		prevSelectedImport_style = (selrow.getStyle() == null) ? "" : selrow.getStyle();
+		prevSelectedImport = selrow;
+		selrow.setStyle(TESTPICK_COLOR);
+		//selid = selrow.getId();
+		//selid = selid.substring(2,selid.length());
+	}
+}
+
+class impblkDClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+		if(compute_holder.getFellowIfAny("compute_stuff") != null)
+		{
+			if(prevSelectedBlank_style.equals(SELECTED_COLOR)) { guihand.showMessageBox("Already imported.."); return; }
+			computeGridFiller(selrow,1);
+			prevSelectedBlank_style = SELECTED_COLOR;
+			selrow.setStyle(SELECTED_COLOR);
+		}
+	}
+}
+
+class impblkClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+
+		if(prevSelectedBlank != null)
+		{
+			if(prevSelectedBlank != selrow)
+			{
+				if(prevSelectedBlank_style.equals(""))
+					prevSelectedBlank.setStyle(null);
+				else
+					prevSelectedBlank.setStyle(prevSelectedBlank_style);
+			}
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+		prevSelectedBlank_style = (selrow.getStyle() == null) ? "" : selrow.getStyle();
+		prevSelectedBlank = selrow;
+		selrow.setStyle(TESTPICK_COLOR);
+		//selid = selrow.getId();
+		//selid = selid.substring(2,selid.length());
+	}
+}
+
+// remove row from grid based on 1st component in row with getValue=iwhat
+void removeGridRow(Component irows, String iwhat)
+{
+	for(kki : irows.getChildren())
+	{
+		fsitm = kki.getChildren().get(0);
+		fsval = fsitm.getValue();
+		if(fsval.contains(iwhat)) { kki.setParent(null); break; }
+	}
+}
+
+// KNOCKOFF FROM results_metals_liquid.zul
+// 30/9/2010: streamline icp-oes calculation into 1 func- itype: 1=LiquidDirectRun, 2=LiquidDigested, 3=semiSolid
+// liquidDirectRun = (raw-data * dilution factor) - (blank)
+// liquidDigested = (((raw-data * dilution factor) - (blank)) * (markup volume)) / (sample volume)
+// semiSolid = ((raw-data * dilution factor) - (blank * markup volume)) / (sample volume * DWF)
+// { "mg/kg","mg/100g","mg/L","ug/L" }
+// type 4 = semiSolid = ((((rawdata * dilution factor) - blank) / 1000) * markup volume * DWF) / sample weight
+void ICPOES_Calculation_EX(int itype)
+{
+	removeGridRow(computerows,"COMPUTED"); // remove prev computed-results if avail
+
+	//rawval = Float.parseFloat(rawdata_lbl.getValue());
+	//blnkval = Float.parseFloat(blank_lbl.getValue());
+	diluval = Float.parseFloat(dilutionfactor_tb.getValue());
+	markup = Float.parseFloat(markup_tb.getValue());
+	samplevol = Float.parseFloat(sampleweight_tb.getValue());
+	dwfval = Float.parseFloat(dwf_tb.getValue());
+
+	igd = computerows.getChildren();
+	clsz = igd.get(0).getChildren().size();
+	float[] rawsd = new float[clsz];
+	float[] blanksd = new float[clsz];
+	igda = igd.toArray();
+	avgc = 0;
+	
+	//for(i=0;i<clsz;i++) { rawsd[i] = 0.0; }
+
+	for(i=1; i<igda.length; i++)
+	{
+		smida = igda[i].getChildren().toArray();
+		cblnk = smida[0].getValue();
+		touse = rawsd;
+		if(cblnk.contains("BLK")) touse = blanksd;
+		else avgc++;
+
+		for(j=1; j<smida.length; j++)
+		{
+			tva = smida[j].getValue();
+			try
+			{
+				nvl = Float.parseFloat(tva);
+				touse[j-1] = touse[j-1] + nvl;
+
+			} catch (Exception e) {}
+		}
+	}
+
+	DecimalFormat nf = new DecimalFormat("0.000");
+
+	cprow = gridhand.gridMakeRow("","","",computerows);
+	gridhand.makeLabelToParent("COMPUTED","",cprow);
+	for(i=0;i<blanksd.length-1;i++)
+	{
+		finalresult = 0.0;
+		blnkval = blanksd[i];
+		rawval = rawsd[i] / avgc;
+
+		switch(itype)
+		{
+			case 1:
+				finalresult = (rawval * diluval) - blnkval;
+				break;
+			case 2:
+				finalresult = (((rawval * diluval) - blnkval) * markup) / samplevol;
+				break;
+			case 3:
+				finalresult = (((rawval * diluval) - blnkval) * markup) / (samplevol * dwfval);
+				theunits = 0;
+				break;
+			case 4:
+				finalresult = ((((rawval * diluval) - blnkval) / 1000) * markup * dwfval) / samplevol;
+				break;
+		}
+
+		gridhand.makeLabelToParent(nf.format(finalresult),"",cprow);
+		//gridhand.makeLabelToParent(rawval.toString(),"",cprow);
+	}
+
+}
+
+
+]]>
+</zscript>
+
+<popup id="compute_popup">
+	<hbox>
+		<button label="Clear all" style="font-size:9px" onClick="computeGridFiller(self,3)" />
+	</hbox>
+	<separator height="2px" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Markup volume (ml)" style="font-size:9px" />
+				<combobox id="markup_tb" width="40px" value="20">
+					<comboitem label="20" />
+					<comboitem label="25" />
+					<comboitem label="50" />
+					<comboitem label="100" />
+					<comboitem label="1000" />
+				</combobox>
+				<label value="Dry weight factor" style="font-size:9px" />
+				<textbox id="dwf_tb" value="1" width="40px" />
+			</row>
+			<row>
+				<label value="Sample weight (g)" style="font-size:9px" />
+				<textbox id="sampleweight_tb" value="20" width="40px" />
+				<label value="Dilution factor" style="font-size:9px" />
+				<combobox id="dilutionfactor_tb" width="40px" value="1">
+					<comboitem label="10" />
+					<comboitem label="100" />
+					<comboitem label="200" />
+					<comboitem label="500" />
+					<comboitem label="1000" />
+				</combobox>
+			</row>
+			<row spans="4">
+			<label style="font-size:9px">
+			(Multiple raw-results will be averaged before calc)
+			</label>
+			</row>
+		</rows>
+	</grid>
+	<!--
+	<separator height="2px" />
+	<checkbox id="comp_average" label="Average and compute" style="font-size:9px" />
+	-->
+	<separator height="2px" />	
+	<hbox>
+		<button label="Liquid direct-run" style="font-size:9px" onClick="ICPOES_Calculation_EX(1)" />
+		<button label="Liquid digested" style="font-size:9px" onClick="ICPOES_Calculation_EX(2)" />
+		<button label="Semi/Solid" style="font-size:9px" onClick="ICPOES_Calculation_EX(3)" />
+		<button label="Semi/Solid FIM" style="font-size:9px" onClick="ICPOES_Calculation_EX(4)" />
+		<button label="Insert" />
+	</hbox>
+	<separator height="2px" />
+	<div id="compute_holder" width="500px" />
+</popup>
+
+<popup id="rawimport_popup">
+	<grid>
+		<rows>
+			<row spans="2">
+				<label>
+				IMPORT RAW RESULTS
+				</label>
+			</row>
+			<row>
+				<label id="raw_importtype_lbl" style="font-size:9px" />
+				<label id="raw_importfilename_lbl" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<hbox>
+		<button label="Clear imported" style="font-size:9px" onClick="computeGridFiller(prevSelectedImport,2)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="imports_holder" width="500px" />
+</popup>
+
+<popup id="blankimport_popup">
+	<grid>
+		<rows>
+			<row spans="2">
+				<label>
+				IMPORT BLANKS
+				</label>
+			</row>
+			<row>
+				<label id="blk_importtype_lbl" style="font-size:9px" />
+				<label id="blk_importfilename_lbl" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<div id="importblanks_holder" width="500px" />
+</popup>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+<grid width="800px">
+	<rows>
+		<row spans="1,1,1,1,2">
+			<label style="font-size:9px" value="Folder" />
+			<hbox>
+				<textbox id="folder_tb" style="font-size:9px" />
+				<button label="Dig" style="font-size:9px" onClick="loadFolders(1)" />
+			</hbox>
+			<label style="font-size:9px" value="Sample-ID" />
+			<hbox>
+				<textbox id="sampleid_tb" style="font-size:9px" />
+				<button label="Dig" style="font-size:9px" onClick="loadFolders(2)" />
+			</hbox>
+
+			<label style="font-size:8px">
+			(Will show max. 20 folders only per go)
+			</label>
+		</row>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+			
+			<label style="font-size:9px" value="Samplemarking" />
+			<hbox>
+				<textbox id="samplemarking_tb" value="choco" style="font-size:9px" />
+				<button label="Search" style="font-size:9px" onClick="loadFolders(3)" />
+			</hbox>
+
+		</row>
+	</rows>
+</grid>
+
+<div>
+	<button id="imp_icpoes_btn" label="Upload ICP-OES" style="font-size:9px" onClick="uploadRawData(1)" />
+	<button label="Upload ICP-MS" style="font-size:9px" onClick="uploadRawData(2)" />
+	<button label="Upload FIMS" style="font-size:9px" onClick="uploadRawData(3)" />
+	
+	<separator height="3px" />
+	<grid>
+		<rows>
+			<row>
+				<label id="importtype_lbl" style="font-size:9px" />
+				<label id="importfilename_lbl" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</div>
+
+</hbox>
+
+<separator height="3px" />
+
+<hbox>
+
+<groupbox mold="3d">
+	<div id="folders_holder" width="400px" />
+	<separator height="3px" />
+	<grid>
+		<rows>
+			<row style="background:#2e3436">
+				<label value="Folder" style="color:#eeeeee" />
+				<label id="folder_lbl" style="color:#eeeeee" />
+			</row>
+		</rows>
+	</grid>
+	<div id="samples_holder" width="400px" />
+</groupbox>
+
+<div>
+<grid>
+	<rows>
+		<row style="background:#2e3436">
+			<label value="SampleID" style="color:#eeeeee" />
+			<label id="sampleid_lbl" style="color:#eeeeee" />
+		</row>
+		<row spans="2">
+			<label style="font-size:8px">
+			(If results were released, you cannot enter new ones)
+			</label>
+		</row>
+	</rows>
+</grid>
+
+<div id="testparams_holder" height="450px" width="500px" style="border:1px solid gray;overflow:auto;padding:2px;"
+visible="false" />
+</div>
+
+<vbox>
+	<button label="IMPORT Results" onClick="rawimport_popup.open(self)" />
+	<button label="IMPORT Blanks" onClick="blankimport_popup.open(self)" />
+	<button label="Compute and insert" onClick="compute_popup.open(self)" />
+	<separator height="5px" />
+	<button label="View previous results" style="font-size:9px" />
+	<button label="SAVE RESULTS" />
+</vbox>
+
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+combounits = luhand.getLookupChildItems_StringArray("dd_combounits",2);
+usualresults = luhand.getLookupChildItems_StringArray("dd_usualresults",2);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

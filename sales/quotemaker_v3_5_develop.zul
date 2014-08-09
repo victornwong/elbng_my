@@ -1,0 +1,2049 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="quotation_maker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript src="../alsglobal/searchcustomer_panel.zs" />
+<zscript src="../alsglobal/quotation_funcs.zs" />
+<zscript>
+<![CDATA[
+MOD_TITLE = "Quotation Maker";
+MYVERSION = "v3.52D";
+/*
+Title: Quotation Maker
+Written by: Victor Wong
+Date started: 14/7/2010
+02/04/2012: ported to byte-compl
+
+**NOTES**
+
+24/02/2012: snapshot of quotemaker_v2_develop.zul - this new version will do quote-versioning.
+28/02/2012: uses printquotation_adavers.zul to printout with diff template : BIRT_QUOTETEMPLATE_VERSION = "quotation_v4_version.rptdesign"
+13/03/2012: request by sharon to add "authorization" for quotes over RM5000 and 10% discount - selected user will authorized the quotes
+01/06/2012: req after sales had a meeting, RM20K max-limit for registered client, RM5K for new client - quotation approval
+07/08/2012: customer-sector input - if user select MISC, activate textbox for extra input, else disable.
+
+try {
+	wodi = Integer.parseInt(qtnum);
+} catch (NumberFormatException e)
+{
+	return;
+}
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+
+sechand = new SecurityFuncs();
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+lbhandler = new ListboxHandler();
+sqlhand = new SqlFuncs();
+guihand = new GuiFuncs();
+quotehand = new QuotationFuncs();
+luhand = new LookupFuncs();
+
+TestsPanel testspanel;
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+global_selected_mysoftcode = global_loaded_quote = global_quote_status = global_quote_curcode = "";
+global_quote_owner = global_selected_quoteitem = selected_quotestring = "";
+
+// 18/05/2012: grand-total of the selected quote
+global_quote_grandtotal = 0.0;
+
+// 24/02/2012: keep track on quotation version
+global_quote_version = "";
+global_version_edit = true;
+
+global_selected_versiontoload = "";
+last_load_quoteitems_type = 0;
+old_show_quote = 1;
+selected_qpackage_id = "";
+
+// check if quotation version is = current
+boolean currentQuoteVersion(String qorigid, String iversion)
+{
+	retval = false;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return retval;
+	sqlstm = "select version from elb_quotations where origid=" + qorigid;
+	vrec = sql.firstRow(sqlstm);
+	sql.close();
+
+	curv = (vrec.get("version") == null) ? "0" : vrec.get("version").toString();
+	if(curv.equals(iversion)) retval = true;
+
+	return retval;
+}
+
+// true = disable all fields, false = enable
+void disableQuote_MetadataFields(boolean iwhat)
+{
+	Object[] jkl = { qt_ar_code, qt_address1, qt_address2, qt_city, qt_zipcode, qt_state, qt_country, qt_telephone,
+		qt_fax, qt_contact_person1, qt_email, qt_notes, qt_exchangerate, qt_curcode };
+
+	for(i=0; i<jkl.length; i++)
+	{
+		jkl[i].setDisabled(iwhat);
+	}
+}
+
+Object[] quotations_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ar_code",false),
+	new listboxHeaderObj("Q#",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Last.Update",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Q.Stat",true),
+};
+
+Object[] quotations22_lb_headers = {
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("ar_code",false,""),
+	new listboxHeaderWidthObj("Q#",true,"20px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Crt.Date",true,"20px"),
+	new listboxHeaderWidthObj("Total",true,"50px"),
+	new listboxHeaderWidthObj("User",true,"25px"),
+	new listboxHeaderWidthObj("Q.Stat",true,"20px"),
+	new listboxHeaderWidthObj("Appr",true,"50px"),
+	new listboxHeaderWidthObj("Apr.Date",true,"20px"),
+	new listboxHeaderWidthObj("V",true,"20px"),
+};
+
+// onSelect for showQuotations_Listbox()
+class quotes_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quotations_lb.getSelectedItem();
+		loadQuotation_clicker();
+	}
+}
+
+// itype: 0=previous, 1=show owner's by date, 2=load all by date, 3=load all by date and searchstring
+// 4=by QT number, 5=by username created quotation
+void showQuotations_Listbox(int itype)
+{
+	//Listbox newlb = makeVWListbox(quotes_div, quotations_lb_headers, "quotations_lb", 5);
+	Listbox newlb = lbhandler.makeVWListbox_Width(quotes_div, quotations22_lb_headers, "quotations_lb", 20);
+	
+	showtype = itype;
+	if(itype == 0) showtype = old_show_quote;
+	else old_show_quote = itype;
+
+	srchstr = kiboo.replaceSingleQuotes(quote_search.getValue());
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	qtnum = kiboo.replaceSingleQuotes(qtnumber_search.getValue());
+	byusercreated = quotemaker_user_lb.getSelectedItem().getLabel();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+
+	basesql = "select top 200 origid,ar_code,customer_name,datecreated,username," + 
+	"qstatus,deleted,version,approveby,approvedate,quote_net from elb_Quotations ";
+	sufsql = " order by datecreated desc";
+	othercheck = " where username='" + useraccessobj.username + "' and deleted=0 ";
+	sqlstm = basesql;
+	
+	switch(showtype)
+	{
+		case 1:
+			sqlstm += othercheck + " and datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 2:
+			sqlstm += "where datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 3:
+			sqlstm += "where (customer_name like '%" + srchstr + "%' or address1 like '%" + srchstr + "%' or " +
+			"address2 like '%" + srchstr + "%' or contact_person1 like '%" + srchstr + "%') " +
+			"and datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 4:
+			try {
+				wodi = Integer.parseInt(qtnum);
+			} catch (NumberFormatException e)
+			{
+				return;
+			}
+			sqlstm += "where origid=" + wodi.toString();
+			break;
+		case 5:
+				sqlstm += "where username='" + byusercreated + "' and datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+	}
+
+	//if(useraccessobj.accesslevel > 8) sqlstm = basesql + sufsql;
+	
+	qtrows = sql.rows(sqlstm);
+	sql.close();
+
+	if(qtrows.size() == 0) return;
+	//if(qtrows.size() < 6) newlb.setRows(5);
+
+	newlb.addEventListener("onSelect", new quotes_lb_Listener());
+	DecimalFormat nf = new DecimalFormat("##.00");
+	ArrayList kabom = new ArrayList();
+	for(dpi : qtrows)
+	{
+		origid = dpi.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(dpi.get("ar_code"));
+		// text-decoration: line-through
+		delstr = (dpi.get("deleted") == 1) ? "[DEL] " : "";
+		qcode = delstr + QUOTE_PREFIX + origid;
+		kabom.add(qcode);
+
+		customername = kiboo.checkEmptyString(lbhandler.trimListitemLabel(dpi.get("customer_name"),30));
+		kabom.add(customername);
+
+		datecreated = dpi.get("datecreated").toString().substring(0,10);
+		if(datecreated.equals("1900-01-01")) datecreated = "---";
+
+		kabom.add(datecreated);
+
+		/*
+		lastup = "---";
+		lastupdate = dpi.get("lastupdate");
+		if(lastupdate != null)
+		{
+			kkx = lastupdate.toString().substring(0,10);
+			if(!kkx.equals("1900-01-01")) lastup = kkx;
+		}
+		kabom.add(lastup);
+		*/
+		kabom.add( (dpi.get("quote_net") != null) ? nf.format(dpi.get("quote_net")) : "0.00" );
+
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("qstatus"));
+		
+		kabom.add(kiboo.checkNullString(dpi.get("approveby")));
+		kabom.add(kiboo.checkNullDate(dpi.get("approvedate"),"---"));
+
+		kabom.add((dpi.get("version") == null) ? "0" : dpi.get("version").toString());
+
+		lbhandler.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+	//newlb.invalidate();
+	//quotes_div.invalidate();
+	//quotemaker_panel.invalidate();
+
+
+
+	//java.io.StringWriter wr = new java.io.StringWriter();
+	//newlb.redraw(wr);
+
+} // end showQuotations_Listbox()
+
+// Create a new quote - whatelse!!
+void newQuotation_clicker()
+{
+	todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+	quotehand.insertQuotation_Rec(useraccessobj.username,todaysdate);
+	showQuotations_Listbox(0);
+}
+
+// This textbox onDrop event knockoff from registernew_samples_v2.zul - modded for this
+void dropAR_Code(Event event)
+{
+	Component dragged = event.dragged;
+	iarcode = dragged.getLabel();
+
+	comprec = sqlhand.getCompanyRecord(iarcode); // func in alsglobal_sqlfuncs.zs
+
+	if(comprec != null)
+	{
+		self.setValue(iarcode);
+
+		// populate fields
+		qt_customer_name.setValue(comprec.get("customer_name"));
+		qt_contact_person1.setValue(comprec.get("contact_person1"));
+		qt_address1.setValue(comprec.get("address1") + comprec.get("address2"));
+		qt_address2.setValue(comprec.get("address3") + comprec.get("Address4"));
+		qt_telephone.setValue(comprec.get("telephone_no"));
+		qt_fax.setValue(comprec.get("fax_no"));
+		qt_email.setValue(comprec.get("E_mail"));
+
+		//qt_exchangerate.setValue(comprec.get("
+		lbhandler.matchListboxItems(qt_curcode,comprec.get("CurCode"));
+	}
+}
+
+// 14/1/2011: use built-in customer selector
+void playAssignCustomerWindow()
+{
+//	uniqwindowid = makeRandomId("xqx");
+//	globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", uniqwindowid, "getcust=1",useraccessobj);
+	selectcustomer_popup.open(cfind_holder);
+}
+
+// Load and show quotation's metadata
+void loadQuotation_clicker()
+{
+//tab1 quotes_div, quotations_lb_headers, "quotations_lb" QUOTE_PREFIX
+	if(!lbhandler.check_ListboxExist_SelectItem(quotes_div, "quotations_lb")) return;
+
+	qtid = quotations_lb.getSelectedItem().getLabel(); // 1st col is elb_Quotations.origid
+	qtrec = quotehand.getQuotation_Rec(qtid);
+
+	tab1.setLabel("Quotation: " + QUOTE_PREFIX + qtid + " :: " + qtrec.get("customer_name"));
+	quote_metadata_div.setVisible(true);
+
+	if(qtrec == null) return;
+
+	global_loaded_quote = qtrec.get("origid").toString();
+
+	qtarcode = qtrec.get("ar_code").trim();
+	qt_ar_code.setValue(qtarcode);
+
+	qt_customer_name.setValue(qtrec.get("customer_name"));
+
+	qt_customer_name.setDisabled(false);
+	// if this quote is based on client in system - disable the customer-name box
+	if(!qtarcode.equals("")) qt_customer_name.setDisabled(true);
+
+	qt_address1.setValue(kiboo.checkNullString(qtrec.get("address1")));
+	qt_address2.setValue(kiboo.checkNullString(qtrec.get("address2")));
+	qt_city.setValue(kiboo.checkNullString(qtrec.get("city")));
+	qt_zipcode.setValue(kiboo.checkNullString(qtrec.get("zipcode")));
+	qt_state.setValue(kiboo.checkNullString(qtrec.get("state")));
+	qt_country.setValue(kiboo.checkNullString(qtrec.get("country")));
+	qt_telephone.setValue(kiboo.checkNullString(qtrec.get("telephone")));
+	qt_fax.setValue(kiboo.checkNullString(qtrec.get("fax")));
+	qt_contact_person1.setValue(kiboo.checkNullString(qtrec.get("contact_person1")));
+	qt_email.setValue(kiboo.checkNullString(qtrec.get("email")));
+	qt_notes.setValue(kiboo.checkNullString(qtrec.get("notes")));
+
+	doexh = qtrec.get("exchangerate");
+	exhrate = new BigDecimal(1);
+	if(doexh != null) exhrate = new BigDecimal(doexh);
+
+	qt_exchangerate.setValue(exhrate);
+	
+	global_quote_curcode = qtrec.get("curcode");
+	lbhandler.matchListboxItems(qt_curcode,global_quote_curcode);
+	global_quote_status = qtrec.get("qstatus");
+	
+	//qt_salesperson
+	salesm = (qtrec.get("salesperson") == null) ? "" : qtrec.get("salesperson");
+	lbhandler.matchListboxItemsColumn(qt_salesperson,salesm,1);
+
+	terms = (qtrec.get("terms") == null) ? "" : qtrec.get("terms");
+	lbhandler.matchListboxItemsColumn(qt_terms,terms,0);
+	
+	global_quote_owner = qtrec.get("username");
+
+	showQuoteItems(last_load_quoteitems_type);
+	savequote_btn.setDisabled(false);
+	disableQuote_MetadataFields(false);
+	printquotation_btn.setDisabled(true); // disable quote printing if quotation is NEW
+
+	if(!global_quote_status.equals(QTSTAT_NEW)) // && useraccessobj.accesslevel < 9) // admin can do
+	{
+		savequote_btn.setDisabled(true);
+		disableQuote_MetadataFields(true);
+		printquotation_btn.setDisabled(false); // enable quote printing if quotation is committed
+	}
+
+	// 15/05/2011: show supporting documents
+	selected_quotestring = QUOTE_PREFIX + global_loaded_quote;
+	showDocumentsList(selected_quotestring);
+
+	// 24/02/2012: show version
+	global_quote_version = (qtrec.get("version") == null) ? "0" : qtrec.get("version").toString();
+	quote_version.setValue(global_quote_version);
+
+	// 24/02/2012: allow editing for current q-version loaded
+	global_selected_versiontoload = global_quote_version; // for other checkings below..
+	global_version_edit = true;
+	qt_metadata_div.setVisible(true);
+
+	// 29/02/2012: if it's not version 0, disable save-metadata and get-customer button
+	// and disable ar_code textbox
+	//savequote_btn.setDisabled(true);
+	assign_customer_btn.setDisabled(true);
+	qt_ar_code.setDisabled(true);
+
+	if(global_quote_version.equals("0"))
+	{
+		//savequote_btn.setDisabled(false);
+		assign_customer_btn.setDisabled(false);
+		qt_ar_code.setDisabled(false);
+	}
+	
+	// 18/05/2012: auto-insert grand-total into quote-table
+	sqlstm = "update elb_quotations set quote_net=" + global_quote_grandtotal.toString() + " where origid=" + qtid;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	// 18/05/2012: quote amount >= RM5k, enable print-btn if already approved by sales-manager
+	// 01/06/2012: set to RM20K - 
+	if(global_quote_grandtotal >= 20000.00 && !qtarcode.equals("") && !qtarcode.equals("CASH"))
+	{
+		if(qtrec.get("approveby") == null) printquotation_btn.setDisabled(true);
+	}
+
+	// check non-reg client >= RM5K
+	if(global_quote_grandtotal >= 5000.00 && (qtarcode.equals("") || qtarcode.equals("CASH")) )
+	{
+		if(qtrec.get("approveby") == null) printquotation_btn.setDisabled(true);
+	}
+
+	// 29/06/2012: temporary disabled control - boss and chong not around to approve quotes!!!
+	printquotation_btn.setDisabled(false);
+
+	// 07/08/2012: customer-sector
+	custsect = (qtrec.get("customer_sector") == null) ? "" : qtrec.get("customer_sector");
+	lbhandler.matchListboxItemsColumn(qt_customer_sector,custsect,0);
+
+	qt_new_sector.setValue( kiboo.checkNullString(qtrec.get("new_sector")) );
+	qt_new_sector.setDisabled(true); // always disabled unless MISC in customer-sector - HARDCODED
+	if(custsect.equals("MISC")) qt_new_sector.setDisabled(false);
+
+}
+
+// Save whatever metadata entered for quotation
+void saveQuotation_clicker()
+{
+	ar_code = kiboo.replaceSingleQuotes(qt_ar_code.getValue());
+	customer_name = kiboo.replaceSingleQuotes(qt_customer_name.getValue());
+	
+	if(customer_name.equals(""))
+	{
+		guihand.showMessageBox("Cannot save - Customer.Name is blank");
+		return;
+	}
+	
+	address1 = kiboo.replaceSingleQuotes(qt_address1.getValue());
+	address2 = kiboo.replaceSingleQuotes(qt_address2.getValue());
+	city = kiboo.replaceSingleQuotes(qt_city.getValue());
+	zipcode = kiboo.replaceSingleQuotes(qt_zipcode.getValue());
+	state = kiboo.replaceSingleQuotes(qt_state.getValue());
+	country = kiboo.replaceSingleQuotes(qt_country.getValue());
+	telephone = kiboo.replaceSingleQuotes(qt_telephone.getValue());
+	fax = kiboo.replaceSingleQuotes(qt_fax.getValue());
+	contact_person1 = kiboo.replaceSingleQuotes(qt_contact_person1.getValue());
+	email = kiboo.replaceSingleQuotes(qt_email.getValue());
+	notes = kiboo.replaceSingleQuotes(qt_notes.getValue());
+	curcode = qt_curcode.getSelectedItem().getLabel();
+	exchangerate = qt_exchangerate.getValue();
+
+	selitem = qt_terms.getSelectedItem();
+	terms = lbhandler.getListcellItemLabel(selitem,0);
+
+	selitem = qt_salesperson.getSelectedItem();
+	salesp = lbhandler.getListcellItemLabel(selitem,1);
+
+	// 07/08/2012: customer sector
+	selitem = qt_customer_sector.getSelectedItem();
+	custsect = lbhandler.getListcellItemLabel(selitem,0);
+	newcustsect = kiboo.replaceSingleQuotes(qt_new_sector.getValue());
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	thecon = sql.getConnection();
+
+	pstmt = thecon.prepareStatement("update elb_Quotations set ar_code=?,customer_name=?,address1=?,address2=?,city=?,zipcode=?,state=?," +
+	"country=?,telephone=?,fax=?,contact_person1=?,email=?,notes=?,curcode=?,exchangerate=?,salesperson=?,terms=?, customer_sector=?, new_sector=?" + 
+	" where origid=?");
+
+	pstmt.setString(1,ar_code);
+	pstmt.setString(2,customer_name);
+	pstmt.setString(3,address1);
+	pstmt.setString(4,address2);
+	pstmt.setString(5,city);
+	pstmt.setString(6,zipcode);
+	pstmt.setString(7,state);
+	pstmt.setString(8,country);
+
+	pstmt.setString(9,telephone);
+	pstmt.setString(10,fax);
+	pstmt.setString(11,contact_person1);
+	pstmt.setString(12,email);
+	pstmt.setString(13,notes);
+	pstmt.setString(14,curcode);
+	pstmt.setFloat(15,exchangerate.floatValue());
+
+	pstmt.setString(16,salesp);
+	pstmt.setString(17,terms);
+
+	pstmt.setString(18,custsect);
+	pstmt.setString(19,newcustsect);
+
+	pstmt.setInt(20,Integer.parseInt(global_loaded_quote));
+
+	pstmt.executeUpdate();
+	sql.close();
+	guihand.showMessageBox("Quotation's metadata saved..");
+	showQuotations_Listbox(0);
+	
+	editquoteitem_btn.setDisabled(false);
+	deletequoteitem_btn.setDisabled(false);
+}
+
+// Will change quotation status from NEW to COMMITTED - will say already sent to customer, cannot change anything - only admin modd
+void commitQuotation_clicker()
+{
+	if(!lbhandler.check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+
+	// if it's committed.. just return
+	if(global_quote_status.equals(QTSTAT_COMMIT)) return;
+
+	// before committing the quotation, make sure mandatory fields are populated..
+	customer_name = kiboo.replaceSingleQuotes(qt_customer_name.getValue());
+	contact_person1 = kiboo.replaceSingleQuotes(qt_contact_person1.getValue());
+
+	shwmsg = "";
+
+	if(customer_name.equals("") || contact_person1.equals("")) shwmsg = "Customer.Name and Contact.Person is mandatory..";
+
+	// check if there're items quoted
+	if(quote_items_lb.getItemCount() == 0) shwmsg = "Duh.. no items in quotation";
+
+	if(!shwmsg.equals(""))
+	{
+		guihand.showMessageBox(shwmsg);
+		return;
+	}
+
+	if (Messagebox.show("Once quotation is committed, you cannot change anything..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	quotehand.setQuotation_Status(global_loaded_quote,QTSTAT_COMMIT);
+	
+	// 29/02/2012: only current version 0 can save metadata
+	if(global_quote_version.equals("0")) saveQuotation_clicker();
+
+	loadQuotation_clicker(); // reload whatever quotation's metadata again, to disable some buttons/stuff
+	showQuotations_Listbox(0);
+
+	// 19/1/2011: disable some stuff
+	disableQuote_MetadataFields(true);
+	deletequoteitem_btn.setDisabled(true);
+	editquoteitem_btn.setDisabled(true);
+
+	printquotation_btn.setDisabled(true); // disable quotation printing
+	// 18/05/2012: check if quote amount > rm5000, if no, enable printing.. else check if already approve by sales-manager
+	// 01/06/2012: set to RM20K
+	if(global_quote_grandtotal >= 20000.00)
+	{
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null ) return;
+		
+		// update grand-total
+		sqlstm1 = "update elb_quotations set quote_net=" + global_quote_grandtotal.toString() + " where origid=" + global_loaded_quote;
+		sql.execute(sqlstm1);
+		// check if already approved by sales-manager
+		sqlstm2 = "select approveby from elb_quotations where origid=" + global_loaded_quote;
+		crec = sql.firstRow(sqlstm2);
+		if(crec != null)
+		{
+			// if already approved, enable print btn
+			if(crec.get("approveby") != null) printquotation_btn.setDisabled(false);
+		}
+
+		sql.close();
+	}
+	
+	global_quote_status = QTSTAT_COMMIT; // set quote-status as committed
+}
+
+// Auto select those test-parameters boxes - knockoff from assign_tests_v2.zul - modded abit le
+void autoAssignTestParametersBox(String imysoftcode)
+{
+	istockrec = samphand.getStockMasterDetails(imysoftcode.toString());
+	if(istockrec == null) return;
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+
+	lbhandler.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhandler.matchListboxItems(section_groupcode_lb, igroupcode);
+
+	tscode = istockrec.get("ID").toString();
+	lbhandler.matchListboxItems(tests_description_lb,tscode);
+}
+
+void showQuoteItems_Metadata()
+{
+	qirec = quotehand.getQuoteItem_Rec(global_selected_quoteitem);
+	if(qirec == null) return;
+
+	qi_description.setValue(qirec.get("description"));
+	qi_description2.setValue(qirec.get("description2"));
+	qi_unitprice.setValue(qirec.get("unitprice").toString());
+	qi_quantity.setValue(qirec.get("quantity").toString());
+	qi_discount.setValue(qirec.get("discount").toString());
+	qi_lor.setValue(qirec.get("lor"));
+
+	editquoteitem_btn.setLabel("Update..");
+}
+
+void clearQuoteItem_inputs()
+{
+	global_selected_quoteitem = ""; // reset global
+	qi_description.setValue("");
+	qi_description2.setValue("");
+	qi_unitprice.setValue("");
+	qi_quantity.setValue("");
+	qi_discount.setValue("");
+	qi_lor.setValue("");
+
+	editquoteitem_btn.setLabel("New..");
+}
+
+// onSelect listener for showQuoteItems()
+class quote_items_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quote_items_lb.getSelectedItem();
+		mysoftc = lbhandler.getListcellItemLabel(selitem,1);
+		global_selected_quoteitem = lbhandler.getListcellItemLabel(selitem,0);
+		//autoAssignTestParametersBox(mysoftc);
+		showQuoteItems_Metadata();
+	}
+}
+
+// 27/02/2012: add itype to load other quote-version from db
+// itype: 1=normal loading, 2=load different version
+// quote_items_div quote_items_lb global_loaded_quote global_quote_status
+void showQuoteItems(int itype)
+{
+Object[] quote_items_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Tests",true),
+	new listboxHeaderObj("Method.Ref",true),
+	new listboxHeaderObj("Stk",true),
+	new listboxHeaderObj("LOR",true),
+	new listboxHeaderObj("U.P",true),
+	new listboxHeaderObj("Qty",true),
+	new listboxHeaderObj("Dsct",true),
+	new listboxHeaderObj("Gross",true),
+	new listboxHeaderObj("Nett",true),
+};
+
+	if(global_loaded_quote.equals("")) return;
+
+	last_load_quoteitems_type = itype;
+
+	Listbox newlb = lbhandler.makeVWListbox(quote_items_div, quote_items_lb_headers, "quote_items_lb", 5);
+	quoteitems_meta_div.setVisible(true);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+
+	// 27/02/2012: update any quote-items with version == null to 0
+	sqlstm3 = "update elb_quotation_items set version=0 where version is null";
+	sql.execute(sqlstm3);
+
+	// 27/02/2012: chk quote version to load
+	sqlstm2 = "select version from elb_quotations where origid=" + global_loaded_quote;
+	vrec = sql.firstRow(sqlstm2);
+	verstr = (vrec.get("version") == null) ? "0" : vrec.get("version").toString();
+
+	// type 2 = load selected version
+	if(itype == 2)
+	{
+		verstr = global_selected_versiontoload;
+	}
+
+	sqlstm = "select origid,mysoftcode,description,description2,LOR,unitprice,quantity," + 
+	"discount,total_gross,total_net from elb_Quotation_Items " +
+	"where quote_parent=" + global_loaded_quote + " and version=" + verstr +
+	" order by origid";
+
+	qitems = sql.rows(sqlstm);
+	sql.close();
+
+	if(qitems.size() < 1) return;
+
+	bunvalue = (qitems.size() > 10) ? 15 : 10;
+	newlb.setRows(bunvalue);
+	rowcounter = 1;
+
+	//newlb.setCheckmark(true);
+	//newlb.setMultiple(true);
+
+	newlb.addEventListener("onSelect", new quote_items_lb_Listener());
+	newlb.setMultiple(true);
+
+	grandtotal = 0.0;
+	DecimalFormat nf = new DecimalFormat("##.00");
+	ArrayList kabom = new ArrayList();
+	for(dpi : qitems)
+	{
+		mysc = dpi.get("mysoftcode").toString();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(mysc);
+
+		kabom.add(rowcounter.toString() + ".");
+		kabom.add(lbhandler.trimListitemLabel(kiboo.checkNullString(dpi.get("description")),25));
+		kabom.add(lbhandler.trimListitemLabel(kiboo.checkNullString(dpi.get("description2")),25));
+
+		stkitem = (mysc.equals("") || mysc.equals("0")) ? "---" : "-Y-";
+		kabom.add(stkitem);
+
+		thelor = (dpi.get("LOR").equals("")) ? "---" : dpi.get("LOR");
+		kabom.add(thelor);
+		// float thing need to format abit, show 2 decimal places only
+		kabom.add(nf.format(dpi.get("unitprice")));
+		kabom.add(dpi.get("quantity").toString());
+		discstr = (dpi.get("discount") == 0) ? "---" : nf.format(dpi.get("discount"));
+		kabom.add(discstr);
+		kabom.add(nf.format(dpi.get("total_gross")));
+		total_net = dpi.get("total_net");
+		grandtotal += total_net;
+		kabom.add(nf.format(total_net));
+		lbhandler.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		rowcounter++;
+		kabom.clear();
+	}
+
+	global_quote_grandtotal = grandtotal; // save to glob-var
+
+	quoteitems_grandtotal_lbl.setValue("Grand total: " + global_quote_curcode + " " + nf.format(grandtotal));
+	deletequoteitem_btn.setDisabled(false);
+	editquoteitem_btn.setDisabled(false);
+
+	// 27/02/2012: quote is not "NEW" and global_version_edit(loaded old version) = false
+	if(!global_quote_status.equals(QTSTAT_NEW) && !global_version_edit)
+	{
+		deletequoteitem_btn.setDisabled(true);
+		editquoteitem_btn.setDisabled(true);
+	}
+}
+
+// Popup - update quote-item clicker
+// updateQuoteItem_Value( java.lang.String, float, float, java.lang.String, java.lang.String, java.lang.String, java.lang.String )
+void updateQuoteItem_clicker()
+{
+	if(global_loaded_quote.equals("")) return; // no quote loaded, return lor
+
+	if(!global_quote_status.equals(QTSTAT_NEW))
+	{
+		guihand.showMessageBox("Quotation already committed, cannot update..");
+		return;
+	}
+
+	// 28/02/2012: check if latest version..
+	if(!currentQuoteVersion(global_loaded_quote,global_selected_versiontoload))
+	{
+		guihand.showMessageBox("Not current version.. cannot update items");
+		return;
+	}
+
+	unitprice = kiboo.replaceSingleQuotes(qi_unitprice.getValue());
+	quantity = kiboo.replaceSingleQuotes(qi_quantity.getValue());
+	discount = kiboo.replaceSingleQuotes(qi_discount.getValue());
+	lor = kiboo.replaceSingleQuotes(qi_lor.getValue());
+	desc1 = kiboo.replaceSingleQuotes(qi_description.getValue());
+	desc2 = kiboo.replaceSingleQuotes(qi_description2.getValue());
+
+	if(unitprice.equals("")) unitprice = "0";
+	if(quantity.equals("")) quantity = "1";
+	if(discount.equals("")) discount = "0";
+
+	if(!global_selected_quoteitem.equals("")) // it's an update
+	{
+		quotehand.updateQuoteItem_Value(global_selected_quoteitem,unitprice,discount,quantity,lor,desc1,desc2);
+	}
+	else // it's a new item insert
+	{
+		curcode = qt_curcode.getSelectedItem().getLabel();
+		dunitp = Double.parseDouble(unitprice);
+		quotehand.insertQuoteItem_Rec2(global_loaded_quote,"0",desc1,desc2,curcode,dunitp,global_quote_version);
+	}
+
+	showQuoteItems(last_load_quoteitems_type); // refresh quote-items listbox
+	clearQuoteItem_inputs();
+}
+
+// onSelect event to be used in TestsPanel()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		global_selected_mysoftcode = tests_description_lb.getSelectedItem().getLabel(); // 1st col is mysoftcode
+		insertitem_btn.setVisible(true);
+	}
+}
+
+class testParam_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = tests_description_lb.getSelectedItem();
+		global_selected_mysoftcode = lbhandler.getListcellItemLabel(selitem,0);
+		addQuoteItems_clicker();
+	}
+}
+
+// quote_items_div quote_items_lb global_loaded_quote global_quote_status
+// tests_description_lb testparameters_column global_selected_mysoftcode
+void addQuoteItems_clicker()
+{
+	if(global_loaded_quote.equals("")) return;
+	if(!global_quote_status.equals(QTSTAT_NEW))
+	{
+		guihand.showMessageBox("Quotation already committed, cannot add item.");
+		return;
+	}
+
+	if(!lbhandler.check_ListboxExist_SelectItem(testparameters_column,"tests_description_lb")) return;
+
+	// check if mysoftcode already in list - either don't insert or add elb_Quotation_Items.quantity
+	if(lbhandler.ExistInListbox(quote_items_lb,global_selected_mysoftcode,1))
+	{
+		guihand.showMessageBox("Item is already in your quotation.. update quantity instead");
+		return;
+	}
+
+	// 27/02/2012: if older version loaded, cannot add any items
+	if(!global_version_edit)
+	{
+		guihand.showMessageBox("Not current quotation version, cannot add item..");
+		return;
+	}
+
+	stkrec = sqlhand.getMySoftMasterProductRec(global_selected_mysoftcode);
+	if(stkrec == null) return;
+
+	curcode = qt_curcode.getSelectedItem().getLabel();
+
+	quotehand.insertQuoteItem_Rec2(global_loaded_quote, global_selected_mysoftcode, 
+ 		stkrec.get("Description"), stkrec.get("Description2"), curcode, stkrec.get("Selling_Price"),global_quote_version);
+
+	showQuoteItems(last_load_quoteitems_type); // refresh quote-items listbox
+}
+
+// delete a quote-item clicker
+void deleteQuoteItem_clicker()
+{
+	//if(global_loaded_quote.equals("")) return;
+	//if(global_selected_quoteitem.equals("")) return;
+
+	if(!global_quote_status.equals(QTSTAT_NEW))
+	{
+		guihand.showMessageBox("Quotation already committed, cannot delete anything.. too bad");
+		return;
+	}
+
+	// 28/02/2012: check if latest version..
+	if(!currentQuoteVersion(global_loaded_quote,global_selected_versiontoload))
+	{
+		guihand.showMessageBox("Not current version.. cannot delete items");
+		return;
+	}
+
+	selcnts = quote_items_lb.getSelectedCount();
+	if(selcnts > 0)
+	{
+		selitems = quote_items_lb.getSelectedItems();
+		// loop and delete selected quote-items
+		for(dpi : selitems)
+		{
+			selorigid = dpi.getLabel();
+			quotehand.deleteQuoteItem_Rec(selorigid);
+		}
+		showQuoteItems(last_load_quoteitems_type); // refresh quote-items listbox
+		clearQuoteItem_inputs();
+	}
+}
+
+void printQuotation_clicker()
+{
+	if(!lbhandler.check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+
+	if(useraccessobj.accesslevel != 9) // admin: print any quotation - debugging purposes
+	{
+		shwmsg = "";
+
+		// check if quotation is committed.. if not, don't let ppl print
+		//if(global_quote_status.equals(QTSTAT_NEW)) shwmsg = "Please commit the quotation before printing/exporting..";
+		if(global_quote_status.equals(QTSTAT_RETIRED)) shwmsg = "Quotation is already RETIRED, why do you want to print it?";
+
+		if(!shwmsg.equals(""))
+		{
+			guihand.showMessageBox(shwmsg);
+			return;
+		}
+	}
+
+	theparam = "qid=" + global_loaded_quote;
+	uniqid = kiboo.makeRandomId("pq");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","sales/printquotation_adavers.zul", uniqid, theparam, useraccessobj);
+}
+
+void retireQuotation_clicker()
+{
+	if(!lbhandler.check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+
+	shwmsg = "";
+
+	if(global_quote_status.equals(QTSTAT_RETIRED)) shwmsg = "This quotation is already RETIRED, need not do it again..";
+	if(global_quote_status.equals(QTSTAT_NEW)) shwmsg = "This quotation is not even committed.. cannot RETIRE";
+	if(!global_quote_owner.equals(useraccessobj.username)) shwmsg = "You're not even the owner of this quotation.. cannot RETIRE";
+
+	if(!shwmsg.equals(""))
+	{
+		guihand.showMessageBox(shwmsg);
+		return;
+	}
+
+	if (Messagebox.show("About to retire this quotation, once retired, prices in this quote will be ineffective for this client..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	setQuotation_Status(global_loaded_quote,QTSTAT_RETIRED);
+	showQuotations_Listbox(0); // refresh lor
+}
+
+
+// -------- search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+// knockoff from assign_tests_v2.zul
+void autoAssignTestParametersBox(String imysoftcode)
+{
+	istockrec = samphand.getStockMasterDetails(imysoftcode);
+	if(istockrec == null) return;
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+	lbhandler.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhandler.matchListboxItems(section_groupcode_lb, igroupcode);
+	tscode = istockrec.get("ID").toString();
+	lbhandler.matchListboxItems(tests_description_lb,tscode);
+}
+
+class itemsearchDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = founditems_lb.getSelectedItem();
+		selected_test = lbhandler.getListcellItemLabel(selitem,0);
+		autoAssignTestParametersBox(selected_test);
+		//showStockItem_Metadata(selected_test);
+		//newstockitem_btn.setLabel("Update test/sale item"); // change button label if item selected
+		searchitem_popup.close();
+	}
+}
+
+void searchStockItem_clicker()
+{
+Object[] finditems_lb_headers = {
+	new dblb_HeaderObj("mysoftcode",false,"id",2),
+	new dblb_HeaderObj("Stock.Code",true,"stock_code",1),
+	new dblb_HeaderObj("Test",true,"description",1),
+	new dblb_HeaderObj("Method",true,"description2",1),
+	new dblb_HeaderObj("Division",true,"stock_cat",1),
+	new dblb_HeaderObj("Section",true,"groupcode",1),
+	};
+
+	srchstr = kiboo.replaceSingleQuotes(itemsearch_text.getValue());
+	if(srchstr.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select id,stock_code,description,description2,stock_cat,groupcode from stockmasterdetails " + 
+		"where item_type='Service Item' and nominal_code like '5%' " +
+		"and (stock_code like '%" + srchstr + "%' or description like '%" + srchstr + "%' or description2 like '%" + srchstr + "%') " +
+		"order by description" ;
+
+	Listbox newlb = lbhandler.makeVWListbox_onDB(founditems_holder,finditems_lb_headers,"founditems_lb",5,sql,sqlstatem);
+	sql.close();
+
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+	if(newlb.getItemCount() > 0)
+	{
+		dc_obj = new itemsearchDoubleClick_Listener();
+		lbhandler.setDoubleClick_ListItems(newlb, dc_obj);
+	}
+}
+// -------- ENDOF search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+//----- Quote-package stuff, can mod and use in other modules -----
+
+void listQuotePackage_Items()
+{
+	Object[] qpitems_lb_headers = {
+	new listboxHeaderObj("Item",true),
+	new listboxHeaderObj("Price",true),
+	};
+	
+	Listbox newlb = lbhandler.makeVWListbox(qpack_items_holder, qpitems_lb_headers, "qpitems_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select itemdesc,selling_price from elb_quotepackage_items where qpack_parent=" + selected_qpackage_id;
+	qpirecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(qpirecs.size() == 0) return;
+	newlb.setRows(8);
+	//newlb.addEventListener("onSelect", new searchcustomersLB_Listener());
+
+	DecimalFormat nf = new DecimalFormat("##.00");
+
+	for(dpi : qpirecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("itemdesc"));
+		kabom.add(nf.format(dpi.get("selling_price")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhandler.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+class qpackagesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_qpackage_id = lbhandler.getListcellItemLabel(selitem,0);
+
+		// show quote-package metadata
+		qprec = quotehand.getQuotePackageRec(selected_qpackage_id);
+		if(qprec != null)
+		{
+			qpack_name.setValue(qprec.get("qpack_name"));
+			company_name.setValue(qprec.get("company_name"));
+			qpack_notes.setValue(qprec.get("notes"));
+			
+			qpack_items_lbl.setLabel("Package items : " + selected_qpackage_id);
+		}
+
+		grabItems_btn.setDisabled(false);
+
+		// check if already defined some quote items -- else disable grab-items button
+		if(quotePackageItems_Avail(selected_qpackage_id) != 0)
+		{
+			grabItems_btn.setDisabled(true);
+			listQuotePackage_Items();
+		}
+	}
+}
+
+void listQuotePackages()
+{
+Object[] quotepacks_lb_headers = 
+	{
+	new dblb_HeaderObj("##",true,"origid",2),
+	new dblb_HeaderObj("Pack.Name",true,"qpack_name",1),
+	new dblb_HeaderObj("Company",true,"company_name",1),
+	};
+
+	// show the quote-packages
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstatem = "select origid,qpack_name,company_name from elb_quotation_package";
+	Listbox newlb = lbhandler.makeVWListbox_onDB(recallpacks_holder,quotepacks_lb_headers,"qpackages_lb",5,sql,sqlstatem);
+	sql.close();
+	if(newlb.getItemCount() == 0) return;
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+	//newlb.addEventListener("onSelect", new qpackagesLB_Listener());
+}
+
+// Let user create quote-package, abit of checking before showing the popup
+void makeQuotePackage_clicker()
+{
+	listQuotePackages();
+	quotemaker_popup.open(qpackmaker_btn);
+}
+
+void createNewQuotePackage_clicker()
+{
+	arcode = qt_ar_code.getValue();
+	custname = qt_customer_name.getValue();
+	todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into elb_quotation_package (qpack_name,ar_code,company_name,notes,datecreated,username) values " + 
+	"('','" + arcode + "','" + custname + "','','" + todaysdate + "','" + useraccessobj.username + "')";
+	sqlhand.gpSqlExecuter(sqlstm);
+	listQuotePackages(); // refresh
+}
+
+void saveQuotePackageStuff()
+{
+	qpname = kiboo.replaceSingleQuotes(qpack_name.getValue());
+	qpcomp = kiboo.replaceSingleQuotes(company_name.getValue());
+	qpnotes = kiboo.replaceSingleQuotes(qpack_notes.getValue());
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update elb_quotation_package set qpack_name='" + qpname + "',company_name='" + qpcomp + 
+	"',notes='" + qpnotes + "' where origid=" + selected_qpackage_id;
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	listQuotePackages(); // refresh
+}
+
+void grabQuoteItems_ToPackage()
+{
+	if(selected_qpackage_id.equals("")) return;
+	if(quote_items_div.getFellowIfAny("quote_items_lb") == null) return;
+	if(quote_items_lb.getItemCount() == 0)
+	{
+		guihand.showMessageBox("No quote items. Nothing to grab");
+		return;
+	}
+}
+
+// Memorize whatever quoted items - only store the quotation origid and recalling will retrieve whatever from the quotation
+void memorizeQuoteItems_clicker()
+{
+	if(global_loaded_quote.equals("")) return;
+	if(quote_items_div.getFellowIfAny("quote_items_lb") == null) return;
+	if(quote_items_lb.getItemCount() == 0)
+	{
+		guihand.showMessageBox("No items to memorize");
+		return;
+	}
+
+	memorizeQuote_popup.open(memorizequote_btn);
+}
+
+// Really save the quotation items into package
+void reallyMemorizeItems()
+{
+	packname = kiboo.replaceSingleQuotes(quotePack_name.getValue());
+	if(packname.equals(""))
+	{
+		guihand.showMessageBox("Need a quotation-package name to memorize the items..");
+		return;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// now delete previous quote-package if exist
+	sqlstm = "delete from elb_quotation_package where quotation_id=" + global_loaded_quote;
+	sql.execute(sqlstm);
+
+	todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+	arcode = kiboo.replaceSingleQuotes(qt_ar_code.getValue());
+	custname = kiboo.replaceSingleQuotes(qt_customer_name.getValue());
+	sqlstm = "insert into elb_quotation_package (qpack_name,ar_code,company_name,notes,datecreated,username,quotation_id) values " + 
+	"('" + packname + "','" + arcode + "','" + custname + "','','" + todaysdate + "','" + useraccessobj.username + "'," + global_loaded_quote + ")";
+	sql.execute(sqlstm);
+	sql.close();
+
+	guihand.showMessageBox("Quotation items memorized in package: " + packname);
+}
+
+class quotepack_dc_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		packorigid = qpackages_lb.getSelectedItem().getLabel();
+		recallQuote_popup.close();
+		reallyRecallItems(packorigid);
+	}
+}
+
+// itype: 0 = load all, 1 = load by search-string
+void listQuotePackages_v2(int itype)
+{
+Object[] quotepacks_lb_headers = 
+	{
+	new dblb_HeaderObj("##",false,"origid",2),
+	new dblb_HeaderObj("Pack.Name",true,"qpack_name",1),
+	new dblb_HeaderObj("Company",true,"company_name",1),
+	};
+
+	sqlstatem = "select origid,qpack_name,company_name from elb_quotation_package";
+	srctext = kiboo.replaceSingleQuotes(recallpackname.getValue());
+	if(itype == 1) sqlstatem += " where qpack_name like '%" + srctext + "%' or company_name like '%" + srctext + "%'";
+
+	// show the quote-packages
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	Listbox newlb = lbhandler.makeVWListbox_onDB(recallpacks_holder,quotepacks_lb_headers,"qpackages_lb",5,sql,sqlstatem);
+	sql.close();
+
+	if(newlb.getItemCount() == 0) return;
+
+	newlb.setRows(10);
+	dc_obj = new quotepack_dc_Listener();
+	lbhandler.setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+void recallQuoteItems_clicker()
+{
+	if(global_loaded_quote.equals("")) return;
+	recallQuote_popup.open(recallquote_btn);
+}
+
+void reallyRecallItems(String packorigid)
+{
+	if(global_loaded_quote.equals("")) return;
+	
+	if(!global_quote_status.equals(QTSTAT_NEW))
+	{
+		guihand.showMessageBox("This quotation is not NEW.. no more amendments");
+		return;
+	}
+
+	qprec = quotehand.getQuotePackageRec(packorigid);
+	if(qprec == null)
+	{
+		guihand.showMessageBox("Error retrieving quotation-package record..");
+		return;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	refquoteid = qprec.get("quotation_id");
+	// load quoted-items in package and insert into current loaded quotation
+	sqlstm = "select * from elb_quotation_items where quote_parent=" + refquoteid;
+	qitems = sql.rows(sqlstm);
+	sql.close();
+	if(qitems.size() == 0) return;
+
+	for(dpi : qitems)
+	{
+		mysoftc = dpi.get("mysoftcode").toString();
+		desc1 = dpi.get("description");
+		desc2 = dpi.get("description2");
+		curcode = dpi.get("curcode");
+		Double sellingp = dpi.get("unitprice");
+		quotehand.insertQuoteItem_Rec2(global_loaded_quote,mysoftc,desc1,desc2,curcode,sellingp,global_quote_version);
+	}
+
+	showQuoteItems(last_load_quoteitems_type); // refresh quote-items listbox
+}
+
+//----- End of quote-package stuff -----
+
+//--- Documents attachment funcs ---
+
+void showDocumentsList(String iquotenum)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + iquotenum;
+
+	ds_sql = sqlhand.als_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can see everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = lbhandler.makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+	
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+
+}
+
+void viewDocument()
+{
+	if(!lbhandler.check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = kiboo.makeRandomId("vd");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+// 15/05/2011: modded for quotation-module
+void doViewDoculinkPopup()
+{
+//quotes_div, quotations_lb_headers, "quotations_lb",
+	if(!lbhandler.check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+	selitem = quotations_lb.getSelectedItem();
+	quoteid = QUOTE_PREFIX + lbhandler.getListcellItemLabel(selitem,0);
+
+	documentLinkProp.global_eq_origid = quoteid;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+//--- ENDOF documents attachement funcs ---
+
+// 03/08/2011: converted committed quotation to test-package - will discard non-stock items
+// quotations must be COMMITTED before converting to test-package
+void convertQuotation_TestPackage()
+{
+	//if(!check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+	if(global_loaded_quote.equals("")) return;
+
+	// admin can convert any quotation to test-package --	
+	if(useraccessobj.accesslevel != 9)
+	{
+		shwmsg = "";
+
+		if(global_quote_status.equals(QTSTAT_RETIRED)) shwmsg = "This quotation is already RETIRED, cannot convert..";
+		if(global_quote_status.equals(QTSTAT_NEW)) shwmsg = "Please commit quotation before converting to test-package";
+
+		if(!shwmsg.equals(""))
+		{
+			guihand.showMessageBox(shwmsg);
+			return;
+		}
+	}
+
+	if (Messagebox.show("Will transfer only pre-defined quoted stock-items to test-package. Open-items will NOT be transfered..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// check if there's already a test-package converted from this quotation	
+	sqlstm = "select origid from testpackages where fromquotation=" + global_loaded_quote;
+	existtp = sql.firstRow(sqlstm);
+	whopid = "";
+	if(existtp != null)
+	{
+		whopid = existtp.get("origid").toString();
+
+		// if exist testpackage converted from quotation, delete all testpackage_items, will inject new ones
+		sqlstm = "delete from testpackage_items where testpackage_id=" + whopid;
+		sql.execute(sqlstm);
+	}
+
+	// get data from elb_quotation_items by selected quotation - must be stock-items
+	sqlstm = "select mysoftcode,lor,unitprice from elb_quotation_items where mysoftcode <> 0 and quote_parent=" + global_loaded_quote;
+	quoteitems = sql.rows(sqlstm);
+	if(quoteitems.size() == 0) { sql.close(); return; }
+	
+	// if not exist converted quote-items in testpackage, create a new test package
+	if(whopid.equals(""))
+	{
+		quoterec = quotehand.getQuotation_Rec(global_loaded_quote);
+		arcode = quoterec.get("ar_code");
+		packname = "QT" + global_loaded_quote + " TRANSFERED";
+		todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+		sqlstm = "insert into testpackages (package_name,lastupdate,deleted,ar_code,username,fromquotation) values " +
+		"('" + packname + "','" + todaysdate + "',0,'" + arcode + "','" + useraccessobj.username + "'," + global_loaded_quote + ")";
+		
+		sql.execute(sqlstm);
+		
+		// get the new testpackage origid
+		sqlstm = "select origid from testpackages where fromquotation=" + global_loaded_quote;
+		norig = sql.firstRow(sqlstm);
+		whopid = norig.get("origid").toString();
+	}
+	
+	// inject quote-items as testpackage-items
+	sortc = 1;
+	for(dpi : quoteitems)
+	{
+		mysc = dpi.get("mysoftcode").toString();
+		uprice = dpi.get("unitprice").toString();
+		lor = dpi.get("lor");
+
+		sqlstm = "insert into testpackage_items (mysoftcode,testpackage_id,deleted,sorter,lor,bill,units,unitprice) values " +
+		"(" + mysc + "," + whopid + ",0," + sortc.toString() + ",'" + lor + "','YES',''," + uprice + ")";
+
+		sql.execute(sqlstm);
+		sortc++;
+	}
+
+	sql.close();
+
+	guihand.showMessageBox("Quoted stock-items transfered into test-package..");
+}
+
+//--- version control thing for quotation --
+
+void makeNewVersion()
+{
+	if(global_loaded_quote.equals("")) return;
+
+	bvernum = (Integer.parseInt(global_quote_version) + 1).toString();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// make dup and inc the version num
+
+	sqlstm = "insert into elb_quotation_items (mysoftcode,description,description2, lor, quote_parent, quantity,curcode,unitprice," +
+	"discount, total_net, total_gross,field1, field2, field3,field4, field5, version) " +
+	"select mysoftcode,description,description2, lor, quote_parent, quantity,curcode,unitprice,discount, total_net, total_gross," +
+	"field1, field2, field3,field4, field5, version + 1 from elb_quotation_items " +
+	"where quote_parent=" + global_loaded_quote + " and version=" + global_quote_version;
+
+	sql.execute(sqlstm);
+
+	sqlstm2 = "update elb_quotations set version=" + bvernum + ", qstatus='" + QTSTAT_NEW + "' where origid=" + global_loaded_quote;
+	sql.execute(sqlstm2);
+	
+	sql.close();
+
+	global_quote_version = bvernum;
+	quote_version.setValue(global_quote_version);
+
+	// have to refresh quotes-listbox !!!! and clear metadata.. get user to re-select
+	showQuotations_Listbox(0); // refresh lor
+	qt_metadata_div.setVisible(false);
+
+}
+
+void loadPreviousVersion()
+{
+	if(global_loaded_quote.equals("")) return;
+	
+	Object[] sm_lb_headers = {
+	new dblb_HeaderObj("verstr",true,"version",2),
+	};
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct version from elb_quotation_items where quote_parent=" + global_loaded_quote + " order by version desc";
+	Listbox newlb = lbhandler.makeVWListbox_onDB(ldver_holder,sm_lb_headers,"qt_versiondd",1,sql,sqlstm);
+	sql.close();
+	newlb.setMold("select");
+	newlb.setStyle("font-size:9px");
+	newlb.setSelectedIndex(0); // default
+
+	loadquotever_popup.open(loadquotever_butt);
+}
+
+void realLoadPrevVersion()
+{
+	global_selected_versiontoload = qt_versiondd.getSelectedItem().getLabel();
+
+	global_version_edit = false; // always set to non-editable when load diff version
+
+	// current-version = true, can edit
+	if(currentQuoteVersion(global_loaded_quote, global_selected_versiontoload)) global_version_edit = true;
+
+//alert(global_selected_versiontoload + " :: " + currver + " :: " + global_version_edit);
+
+	quote_version.setValue(global_selected_versiontoload);
+	showQuoteItems(2);
+}
+
+// 18/05/2012: sales manager to approve quotations if total > RM5000 - toggle print-btn
+// TODO: maybe send noti email to whoever once approved
+void approveQuotation()
+{
+	if(global_loaded_quote.equals("")) return;
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "update elb_quotations set approveby='" + useraccessobj.username + "', " +
+	"approvedate='" + todate + "' where origid=" + global_loaded_quote;
+	sqlhand.gpSqlExecuter(sqlstm);
+	showQuotations_Listbox(0); // refresh lor
+}
+
+// itype: 1=uncommit, 2=toggle deleted flag, 3=hard delete, 4=clear approval stuff
+void adminFunc(int itype)
+{
+	if(global_loaded_quote.equals("")) return;
+
+	switch(itype)
+	{
+		case 1:
+			quotehand.setQuotation_Status(global_loaded_quote,QTSTAT_NEW);
+			break;
+
+		case 2:
+			quotehand.toggleQuotation_DeletedFlag(global_loaded_quote);
+			break;
+
+		case 3:
+			if(Messagebox.show("HARD-DELETE quotation..", "Are you sure?",
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+			sqlstm = "delete from elb_Quotations where origid=" + global_loaded_quote + ";";
+			sqlstm += "delete from elb_Quotation_items where quote_parent=" + global_loaded_quote + ";";
+			sqlhand.gpSqlExecuter(sqlstm);
+			qt_metadata_div.setVisible(false);
+			global_loaded_quote = "";
+			global_quote_grandtotal = 0.0;
+			break;
+
+		case 4:
+			sqlstm = "update elb_quotations set approveby=null, approvedate=null where origid=" + global_loaded_quote;
+			sqlhand.gpSqlExecuter(sqlstm);
+			break;
+	}
+
+	showQuotations_Listbox(0); // refresh lor
+}
+
+// 07/08/2012: customer-sector funcs
+
+class custsectorlb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selstr = event.getReference().getLabel();
+
+		// HARDCODED: if selected item is "MISC", activate new-sector entry box for user to keyin something, else disable/clear new-sector box
+		if(!selstr.equals("MISC"))
+		{
+			qt_new_sector.setDisabled(true);
+			qt_new_sector.setValue(""); // clear, so no cheat-storing
+		}
+		else
+			qt_new_sector.setDisabled(false);
+	}
+}
+
+// update customer-sector ONLY
+void updateCustomerSector()
+{
+	if(global_loaded_quote.equals("")) return;
+	// 07/08/2012: customer sector
+	selitem = qt_customer_sector.getSelectedItem();
+	custsect = lbhandler.getListcellItemLabel(selitem,0);
+	newcustsect = kiboo.replaceSingleQuotes(qt_new_sector.getValue());
+	sqlstm = "update elb_quotations set customer_sector='" + custsect + "', new_sector='" + newcustsect + "' where origid=" + global_loaded_quote;
+	sqlhand.gpSqlExecuter(sqlstm);
+	guihand.showMessageBox("Customer-sector updated..");
+}
+
+]]>
+</zscript>
+
+<!-- load quote-version popup -->
+<popup id="loadquotever_popup">
+<groupbox mold="3d" width="300px">
+	<hbox>
+		<label value="Version" style="font-size:9px" />
+		<div id="ldver_holder" />
+		<button label="Load it" style="font-size:9px" onClick="realLoadPrevVersion()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- ENDOF load quote-version popup -->
+
+<!-- recall quotation-package popup -->
+<popup id="recallQuote_popup">
+<groupbox mold="3d" width="430px">
+	<caption label="Recall quotation items" />
+	<hbox>
+		<label value="Package name" style="font-size:9px" />
+		<textbox id="recallpackname" style="font-size:9px" width="200px" />
+		<button label="Find" style="font-size:9px" onClick="listQuotePackages_v2(1)" />
+		<button label="Load all packages" style="font-size:9px" onClick="listQuotePackages_v2(0)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="recallpacks_holder" />
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Recall" style="font-size:9px" onClick="reallyRecallItems()" />
+	<button label="Close" style="font-size:9px" onClick="recallQuote_popup.close()" />
+</hbox>
+</popup>
+<!-- end of recall quotation-package popup -->
+
+<!-- quotation-memorize popup -->
+<popup id="memorizeQuote_popup">
+<groupbox mold="3d" width="310px">
+	<caption label="Memorize quotation items" />
+	<label value="Quotation package name" style="font-size:9px" />
+	<textbox id="quotePack_name" width="300px" style="font-size:9px" />
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Save" style="font-size:9px" onClick="reallyMemorizeItems()" />
+	<button label="Close" style="font-size:9px" onClick="memorizeQuote_popup.close()" />
+</hbox>
+</popup>
+<!-- end of quotation-memorize popup -->
+
+<!-- Quotation-package maker popup -->
+<popup id="quotemaker_popup">
+<div width="650px">
+<button label="X Close" style="font-size:9px" onClick="quotemaker_popup.close()" />
+<separator height="3px" />
+<hbox>
+	<groupbox mold="3d" width="350px">
+		<caption label="Quotation Packages" />
+		<hbox>
+			<button id="newQuotePack_btn" label="New" style="font-size:9px" onClick="createNewQuotePackage_clicker()" />
+			<button id="delQuotePack_btn" label="Delete" style="font-size:9px" />
+		</hbox>
+		<separator height="3px" />
+		<div id="quotepacks_holder" />
+	</groupbox>
+	<groupbox mold="3d">
+		<caption id="qpack_items_lbl" label="Package items" />
+		<grid>
+		<rows>
+			<row>
+				<label value="Package name" style="font-size:9px" />
+				<textbox id="qpack_name" style="font-size:9px" width="200px" />
+			</row>
+			<row>
+				<label value="For company" style="font-size:9px" />
+				<textbox id="company_name" style="font-size:9px" width="200px" />
+			</row>
+			<row>
+				<label value="Some notes" style="font-size:9px" />
+				<textbox id="qpack_notes" multiline="true" width="200px" height="30px" style="font-size:9px" />
+			</row>
+		</rows>
+		</grid>
+		<separator height="3px" />
+		<div id="qpack_items_holder" />
+		<separator height="3px" />
+		<hbox>
+			<button id="grabItems_btn" label="Grab quote items" style="font-size:9px" onClick="grabQuoteItems_ToPackage()" />
+			<button id="saveQPackage_btn" label="Save package" style="font-size:9px" onClick="saveQuotePackageStuff()" />
+		</hbox>
+	</groupbox>
+</hbox>
+</div>
+</popup>
+<!-- End of Quotation-package maker popup -->
+
+<!-- stock items search popup -->
+<popup id="searchitem_popup">
+<groupbox mold="3d" width="600px" style="padding:3px">
+	<caption label="Search Items.." />
+	<hbox>
+		<label value="Search item" style="font-size:9px" />
+		<textbox id="itemsearch_text" style="font-size:9px" width="200px" />
+		<button label="Find" style="font-size:9px" onClick="searchStockItem_clicker()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="founditems_holder" />
+</groupbox>
+</popup>
+<!-- end of stock items search popup -->
+
+<!-- select customer popup -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<!-- documents management popup - modded for quotation maker -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_quotestring); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+
+</div>
+</popup>
+<!-- end of documents management popup -->
+
+
+<div width="1200px">
+<panel id="quotemaker_panel" title="${MOD_TITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+<groupbox mold="3d" width="620px" style="padding:2px">
+	<grid>
+		<rows>
+			<row>
+				<hbox>
+					<label value="Start" style="font-size:9px" />
+					<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+					<label value="End" style="font-size:9px" />
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				</hbox>
+				<hbox>
+					<button label="Load my quotes by date" style="font-size:9px" onClick="showQuotations_Listbox(1)" />
+					<button label="Load all quotes by date" style="font-size:9px" onClick="showQuotations_Listbox(2)" />				
+				</hbox>
+			</row>
+			<row>
+				<hbox>
+					<label value="Search" style="font-size:9px" />
+					<textbox id="quote_search" style="font-size:9px" />
+					<button label="Dig quotes" style="font-size:9px" onClick="showQuotations_Listbox(3)" />
+				</hbox>
+				<hbox>
+					<label value="QT" style="font-size:9px" />
+					<textbox id="qtnumber_search" style="font-size:9px" />
+					<button label="by number" style="font-size:9px" onClick="showQuotations_Listbox(4)" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<hbox>
+				<div id="quoteuser_holder" />
+				<button label="Load created by" style="font-size:9px" onClick="showQuotations_Listbox(5)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<div id="quotes_div" height="250px" style="border:0px;overflow:auto;padding:2px;" />
+	<separator height="3px" />
+	<hbox>
+		<button label="New quote" style="font-size:9px" onClick="newQuotation_clicker()" />
+		<button label="Commit" style="font-size:9px" onClick="commitQuotation_clicker()" />
+		<button id="printquotation_btn" label="Print/Export" style="font-size:9px" onClick="printQuotation_clicker()" />
+		<button id="approve_btn" label="Approve-quote" style="font-size:9px" onClick="approveQuotation()" disabled="true" />
+		<!-- <button label="Retire" style="font-size:9px" onClick="retireQuotation_clicker()" /> -->
+		<button label="Transfer to test-package" style="font-size:9px" tooltip="transfer_tooltip" onClick="convertQuotation_TestPackage()" />
+
+		<popup id="transfer_tooltip">
+			Can transfer only committed quotations
+		</popup>
+	</hbox>
+	<label style="font-size:8px" multiline="true">
+(Only committed quotations can be printed/exported)
+(Quotation amount > RM 20,000 for existing clients will require approval from sales-manager or general manager)
+(NON-REGISTERED clients quotation amount > RM 5,000 will require approval from sales-manager or general manager)
+	</label>
+	
+	<separator height="3px" />
+	<div id="admin_butts" style="background:#bb1122;padding:2px" visible="false">
+		<button id="uncomitquote_btn" label="Uncommit" style="font-size:9px" onClick="adminFunc(1)" />		
+		<button id="deletequote_btn" label="Delete" style="font-size:9px" onClick="adminFunc(2)" />
+		<button id="harddelete_btn" label="HARD DELETE" style="font-size:9px" onClick="adminFunc(3)" />
+		<button label="clear apprv" style="font-size:9px" onClick="adminFunc(4)" />
+	</div>
+</groupbox>
+
+<div id="qt_metadata_div" visible="false">
+
+<grid> <!-- versioning -->
+	<rows>
+		<row>
+			<label value="VERSION" style="font-size:9px" />
+			<label id="quote_version" style="font-size:9px" />
+			<hbox>
+				<button id="loadquotever_butt" label="Load previous version" style="font-size:9px" onClick="loadPreviousVersion()" />
+				<button label="New version" style="font-size:9px" onClick="makeNewVersion()" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+<separator height="2px" />
+
+<!-- tabbox and stuff for the quotation -->			
+<tabbox mold="accordion">
+<tabs>
+	<tab id="tab1" label="Customer + other details" />
+	<tab id="tab2" label="Quote items" />
+	<tab id="tab3" label="Supporting documents" />
+</tabs>
+<tabpanels>
+
+<!-- quote metadata -->
+<tabpanel>
+<div id="quote_metadata_div" style="padding:3px" visible="false">
+
+<grid width="560px" > <!-- metadata -->
+	<rows>
+	<row>
+		<label value="AR.Code" style="font-size:9px" />
+		<hbox>
+			<textbox id="qt_ar_code" width="60px" style="font-size:9px" /> <!-- droppable="true" onDrop="dropAR_Code(event)" /> -->
+			<button id="assign_customer_btn" label="Get customer" style="font-size:9px" onClick="playAssignCustomerWindow()" />
+			<label id="cfind_holder" />
+		</hbox>
+		<label value="Customer.Name" style="font-size:9px" />
+		<textbox id="qt_customer_name" width="99%" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="Contact.Person" style="font-size:9px" />
+		<textbox id="qt_contact_person1" width="99%" style="font-size:9px" />
+		<label value="Email" style="font-size:9px" />
+		<textbox id="qt_email" width="99%" style="font-size:9px" />	
+	</row>
+	<row spans=",3">
+		<label value="Address 1" style="font-size:9px" />
+		<textbox id="qt_address1" width="99%" style="font-size:9px" />
+	</row>
+	<row spans=",3">
+		<label value="Address 2" style="font-size:9px" />
+		<textbox id="qt_address2" width="99%" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="Zip" style="font-size:9px" />
+		<textbox id="qt_zipcode" width="99%" style="font-size:9px" />
+		<label value="City" style="font-size:9px" />
+		<textbox id="qt_city" width="99%" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="State" style="font-size:9px" />
+		<textbox id="qt_state" width="99%" style="font-size:9px" />
+		<label value="Country" style="font-size:9px" />
+		<textbox id="qt_country" width="99%" style="font-size:9px" />	
+	</row>
+	<row>
+		<label value="Telephone" style="font-size:9px" />
+		<textbox id="qt_telephone" width="99%" style="font-size:9px" />
+		<label value="Fax" style="font-size:9px" />
+		<textbox id="qt_fax" width="99%" style="font-size:9px" />	
+	</row>
+	<row spans=",3">
+		<label value="Notes" style="font-size:9px" />
+		<textbox id="qt_notes" multiline="true" width="99%" height="70px" style="font-size:9px" />	
+	</row>
+	<row>
+		<label value="Currency" style="font-size:9px" />
+		<listbox id="qt_curcode" mold="select" style="font-size:9px" />
+		<zscript>
+			luhand.populateListbox_ByLookup(qt_curcode,"currencycode",2);
+		</zscript>
+		<label value="Exch.Rate" style="font-size:9px" />
+		<decimalbox id="qt_exchangerate" format="#.#" style="font-size:9px" value="1" />
+	</row>
+	<row>
+		<label value="Terms" style="font-size:9px" />
+		<div id="terms_holder" />
+		<label value="Salesman" style="font-size:9px" />
+		<div id="salesman_holder" />
+	</row>
+	<row>
+		<label value="Customer sector" style="font-size:9px" />
+		<listbox id="qt_customer_sector" mold="select" style="font-size:9px" />
+		<label value="New sector entry" style="font-size:9px" />
+		<textbox id="qt_new_sector" width="99%" style="font-size:9px" disabled="true" />
+		<zscript>
+			luhand.populateListbox_ByLookup(qt_customer_sector,"QUOTE_CUST_SECTORS",2);
+			qt_customer_sector.addEventListener("onSelect", new custsectorlb_onSelect());
+		</zscript>
+	</row>
+	<row spans="3,">
+		<label style="font-size:9px">(Special until 31st August, you can update customer-sector on committed quotation)</label>
+		<button label="Update sector ONLY" style="font-size:9px" onClick="updateCustomerSector()" />
+	</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<button id="savequote_btn" label="Save quotation metadata" style="font-size:9px" onClick="saveQuotation_clicker()" />
+</div>
+</tabpanel>
+
+<!-- actual quote items -->
+<tabpanel>
+<div id="quoteitems_meta_div" style="padding:3px" visible="false">
+	<div id="quote_items_div" style="padding:2px" />
+	<div style="background:#EE8866;padding:3px">
+	<hbox>
+		<separator width="300px" />
+		<label id="quoteitems_grandtotal_lbl" style="font-size:11px;font-weight:bold" />
+	</hbox>
+	</div>
+	<separator height="3px" />
+	<grid>
+		<rows>
+		<row spans=",3">
+			<label value="Item.Name" style="font-size:9px" />
+			<textbox id="qi_description" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Method/Notes" style="font-size:9px" />
+			<textbox id="qi_description2" multiline="true" height="60px" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label id="qi_uprice_lbl" value="Unit price" style="font-size:9px" />
+			<textbox id="qi_unitprice" style="font-size:9px" />
+			<label value="Quantity" style="font-size:9px" />
+			<textbox id="qi_quantity" width="50px" style="font-size:9px" value="1" />
+		</row>
+		<row>
+			<label id="qi_discount_lbl" value="Discount" style="font-size:9px" />
+			<textbox id="qi_discount" style="font-size:9px" />
+			<label value="LOR" style="font-size:9px" />
+			<textbox id="qi_lor" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear fields" style="font-size:9px" onClick="clearQuoteItem_inputs()" />
+		<button id="editquoteitem_btn" label="New.." style="font-size:9px" onClick="updateQuoteItem_clicker()" />
+		<button id="deletequoteitem_btn" label="Delete" style="font-size:9px" onClick="deleteQuoteItem_clicker()" />
+		<separator width="5px" />
+		<button id="memorizequote_btn" label="Memorize" style="font-size:9px" onClick="memorizeQuoteItems_clicker()" />
+		<button id="recallquote_btn" label="Recall" style="font-size:9px" onClick="recallQuoteItems_clicker()" />
+	</hbox>
+</div>
+</tabpanel>
+
+<!-- quotation other documents attachment -->
+<tabpanel>
+<div style="padding:2px">
+	<div id="doculist_holder" />
+	<separator height="3px" />
+	<hbox>
+		<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+		<button id="viewdoculinks_btn" label="Upload supporting documents" onClick="doViewDoculinkPopup()" style="font-size:9px" />
+	</hbox>
+</div>
+</tabpanel>
+
+</tabpanels>
+</tabbox>			
+<!-- end of tabbox for quotation -->
+
+</div>
+</hbox>
+
+<separator height="3px" />
+<button id="searchitem_btn" label="Search test" style="font-size:9px" onClick="searchitem_popup.open(searchitem_btn)" />
+<!--
+<button id="quotepackage_btn" label="Quote package" style="font-size:9px" />
+<button id="qpackmaker_btn" label="Make package" style="font-size:9px" onClick="makeQuotePackage_clicker()" />
+-->
+<separator height="3px" />
+
+<hbox>
+<groupbox mold="3d" width="150px">
+	<div style="background:#7f7f7f;padding:2px">
+		<label value="Division" style="font-size:9px;color:#ffffff" />
+	</div>
+	<div id="division_column" />
+</groupbox>
+
+<groupbox mold="3d" width="150px">
+	<div style="background:#7f7f7f;padding:2px">
+		<label value="Section" style="font-size:9px;color:#ffffff" />
+	</div>
+	<div id="section_column" />
+</groupbox>
+
+<groupbox mold="3d">
+	<div id="testparameters_column" />
+	<separator height="3px" />
+	<button id="insertitem_btn" label="$$ Insert item $$" style="font-size:9px" visible="false" onClick="addQuoteItems_clicker()" />
+</groupbox>
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+//populateDivisionColumn(division_column);
+
+populateSalesman_dropdown(salesman_holder);
+populateTerms_dropdown(terms_holder);
+populateQuotationUser_dropdown(quoteuser_holder, "quotemaker_user_lb"); // quote-maker username
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+// Setup TestsPanel() - showType=1 (default no pricings)
+testspanel = new TestsPanel(division_column,"",section_column,"",testparameters_column,"");
+testspanel.showType=2;
+testspanel.populateDivisionColumn();
+testspanel.testOnClicker = new ALSTestParametersLB_Listener();
+testspanel.testOnDoubleClicker = new testParam_DoubleClicker();
+
+// 18/05/2012: quote > RM5000 need approval
+if(sechand.allowedUser(useraccessobj.username,"PERSON_APPROVE_QUOTE")) approve_btn.setDisabled(false);
+
+// Admin only stuff to show else hidden
+if(useraccessobj.accesslevel > 8)
+{
+	admin_butts.setVisible(true);
+}
+
+]]>
+</zscript>
+</zk>
+

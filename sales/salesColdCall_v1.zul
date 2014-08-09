@@ -1,0 +1,536 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="salescoldcallm"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript src="./salesColdCall_funs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Sales/Marketing Activities";
+MYVERSION = "v0.1.5";
+MYPANEL = "salcolcla";
+MYWIDTH = "1000px";
+/*
+Written by	: Victor Wong
+Dated		: 05/12/2013
+
+Revisions:
+23/06/2014: store division as contact-role
+
+*/
+import java.util.*;
+import java.text.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+dmshand = new DMSFuncs();
+
+glob_current_user = glob_sel_acticont = glob_sel_activity = glob_sel_custname = "";
+glob_acticont_rec = glob_activ_rec = null;
+last_loadcont = 0;
+
+glob_taskowner = useraccessobj.username;
+Object taskRecord = null;
+
+String JN_linkcode()
+{
+	return COLDCALL_PREFIX + glob_sel_acticont;
+}
+
+void contFunc(Object iwhat)
+{
+	itype = iwhat.getId();
+	todaydate =  kiboo.todayISODateTimeString();
+	refresh = false;
+	sqlstm = msgtext = "";
+	//lnkc = QUOTE_PREFIX + glob_sel_quote;
+
+	if(itype.equals("newcontact_b"))
+	{
+		sqlstm = "insert into rw_activities_contacts (username,datecreated,potential,deleted,cust_name) values " +
+		"('" + useraccessobj.username + "','" + todaydate + "','NEW',0,'NEW CUSTOMER')";
+
+		refresh = true;
+	}
+
+	if(itype.equals("updatecont_b"))
+	{
+		if(glob_sel_acticont.equals("")) return;
+
+		// 20/05/2014: add business-ROC, leadsource and campaign
+		Object[] ob = { a_cust_name, a_industry, a_designation, a_cust_address1, a_cust_address2, a_cust_address3, a_cust_address4,
+		a_cust_tel, a_cust_fax, a_cust_email, a_coldcdv, a_businessroc, a_leadsource, a_campaign };
+
+		dt = getString_fromUI(ob);
+		cntn = a_cont_temp.getSelectedItem().getLabel() + " " + kiboo.replaceSingleQuotes(a_contact_person.getValue().trim());
+
+		sqlstm = "update rw_activities_contacts set cust_name='" + dt[0] + "', industry='" + dt[1] + "'," +
+		"designation='" + dt[2] + "',cust_address1='" + dt[3] + "',cust_address2='" + dt[4] + "'," +
+		"cust_address3='" + dt[5] + "', cust_address4='" + dt[6] + "', cust_tel='" + dt[7] + "', cust_fax='" + dt[8] + "'," +
+		"cust_email='" + dt[9] + "',call_div='" + dt[10] + "',contact_person='" + cntn + "', businessroc='" + dt[11] + "', leadsource='" + dt[12] + "'," +
+		"campaign='" + dt[13] + "' where origid=" + glob_sel_acticont;
+
+		refresh = true;
+	}
+
+	if(itype.equals("dnusecontact_b")) // mark a contact as DO NOT USE / deleted flag
+	{
+		if(glob_sel_acticont.equals("")) return;
+		sqlstm = "update rw_activities_contacts set deleted=1-deleted where origid=" + glob_sel_acticont;
+		refresh = true;
+	}
+
+	if(itype.equals("savecoldcall_b")) // save cold-call records
+	{
+		if(glob_sel_acticont.equals("")) return;
+		coldcr = coldcallmform.freezeFormValues();
+		sqlstm = "update rw_activities_contacts set coldcall_rec='" + coldcr + "' where origid=" + glob_sel_acticont;
+		msgtext = "Cold-call data saved..";
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) listActiContacts(last_loadcont,glob_current_user);
+	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+}
+
+void actiFunc(Object iwhat)
+{
+	itype = iwhat.getId();
+	todaydate =  kiboo.todayISODateTimeString();
+	refresh = false;
+	sqlstm = msgtext = "";
+	//lnkc = QUOTE_PREFIX + glob_sel_quote;
+
+	if(itype.equals("realaddacti_b"))
+	{
+		if(glob_sel_acticont.equals("")) return;
+		Object[] ob = { k_contact_person, k_telephone, k_email, k_act_notes, k_designation, k_act_type };
+		dt = getString_fromUI(ob);
+		if(dt[0].equals("")) return;
+		sqlstm = "insert into rw_activities (parent_id,datecreated,contact_person,telephone,email,act_notes," + 
+		"designation,act_type,username) values " +
+		"(" + glob_sel_acticont + ",'" + todaydate + "','" + dt[0] + "','" + dt[1] + "','" + dt[2] + "','" + dt[3] + "','" + 
+		dt[4] + "','" + dt[5] + "','" + useraccessobj.username + "')";
+
+		refresh = true;
+		newacti_pop.close();
+	}
+
+	if(itype.equals("delacti_b"))
+	{
+		if(glob_sel_activity.equals("")) return;
+
+		if (Messagebox.show("Hard delete this activity", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) !=  Messagebox.YES) return;
+
+		sqlstm = "delete from rw_activities where origid=" + glob_sel_activity;
+		refresh = true;
+	}
+
+	if(itype.equals("updatacti_b"))
+	{
+		if( glob_sel_acticont.equals("") || glob_sel_activity.equals("") ) return;
+
+		Object[] ob = { o_contact_person, o_telephone, o_email, o_act_notes, o_designation, o_act_type };
+		dt = getString_fromUI(ob);
+		if(dt[0].equals("")) return;
+		sqlstm = "update rw_activities set contact_person='" + dt[0] + "',telephone='" + dt[1] + "',email='" + dt[2] + "'," +
+		"act_notes='" + dt[3] + "',designation='" + dt[4] + "',act_type='" + dt[5] + "' where origid=" + glob_sel_activity;
+		refresh = true;
+		updateactiv_pop.close();
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) listActivities(glob_sel_acticont);
+	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+}
+
+void adminFunc(String itype)
+{
+	todaydate = kiboo.todayISODateTimeString();
+	refresh = false;
+	sqlstm = msgtext = "";
+
+	if(itype.equals("adm_del_b"))
+	{
+		if(Messagebox.show("Delete this record??", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) !=  Messagebox.YES) return;
+
+		sqlstm = "delete from rw_activities_contacts where origid=" + glob_sel_acticont;
+		refresh = true;
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) listActiContacts(last_loadcont,glob_current_user);
+	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+}
+
+]]>
+</zscript>
+
+<popup id="potenial_pop" style="opacity:0.8;">
+<vbox>
+	<button label="NEW" width="100px" onClick="setContactPotential(self)" />
+	<button label="LEAD" width="100px" onClick="setContactPotential(self)" />
+	<button label="POTENTIAL" width="100px" onClick="setContactPotential(self)" />
+	<button label="OPPORTUNITY" width="100px" onClick="setContactPotential(self)" />
+</vbox>
+</popup>
+
+<popup id="updateactiv_pop" style="opacity:0.9" >
+<div sclass="shadowbox" style="background:#204a87;" >
+<div style="padding:5px;background:#2e3436">
+<label sclass="subhead1" value="Activity" />
+</div>
+<grid>
+	<rows>
+		<row>
+			<label value="Contact person" />
+			<textbox id="o_contact_person" width="99%" />
+			<label value="Designation" />
+			<listbox id="o_designation" mold="select" />
+		</row>
+		<row>
+			<label value="Tel / HP" />
+			<textbox id="o_telephone" width="99%" />
+			<label value="Email" />
+			<textbox id="o_email" width="99%" />
+		</row>
+		<row spans="1,3">
+			<label value="Activity type" />
+			<listbox id="o_act_type" mold="select" />
+		</row>
+		<row spans="1,3">
+			<label value="Activity notes" />
+			<textbox id="o_act_notes" multiline="true" height="70px" width="99%" sclass="k9" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<button id="updatacti_b" label="Update it" onClick="actiFunc(self)" />
+</div>
+</popup>
+
+<popup id="newacti_pop" style="opacity:0.8" >
+<div sclass="shadowbox" style="background:#204a87" >
+
+<div style="padding:5px;background:#2e3436">
+<label sclass="subhead1" value="Activity" />
+</div>
+
+<grid>
+	<rows>
+		<row>
+			<label value="Contact person" />
+			<textbox id="k_contact_person" width="99%" />
+			<label value="Designation" />
+			<listbox id="k_designation" mold="select" />
+		</row>
+		<row>
+			<label value="Tel / HP" />
+			<textbox id="k_telephone" width="99%" />
+			<label value="Email" />
+			<textbox id="k_email" width="99%" />
+		</row>
+		<row spans="1,3">
+			<label value="Activity type" />
+			<listbox id="k_act_type" mold="select" />
+		</row>
+		<row spans="1,3">
+			<label value="Activity notes" />
+			<textbox id="k_act_notes" multiline="true" height="70px" width="99%" sclass="k9" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<button id="realaddacti_b" label="Add it" onClick="actiFunc(self)" />
+</div>
+</popup>
+
+<!-- update file description popup -->
+<popup id="updatefiledesc_popup">
+<groupbox width="400px">
+	<caption id="updatefiledesc_label" />
+	<label value="Description" sclass="k9" />
+	<textbox id="update_file_description" multiline="true" height="70px" width="99%" sclass="k9" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Update" sclass="k9" onClick="updateFileDescription(documents_holder,COLDCALL_PREFIX,glob_sel_acticont)" />
+		<button label="Close" sclass="k9" onClick="updatefiledesc_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+
+<!-- upload a file popup -->
+<popup id="uploadfile_popup">
+<groupbox>
+<caption label="Upload a file" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Filename" sclass="k9" />
+				<textbox id="fileupl_file_title" width="200px" sclass="k9" />
+			</row>
+			<row>
+				<label value="Description" sclass="k9" />
+				<textbox id="fileupl_file_description" multiline="true" height="60px" width="200px" sclass="k9" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Select file" onClick="uploadFile(documents_holder,COLDCALL_PREFIX,glob_sel_acticont)" sclass="k9" />
+	<button label="Close" onClick="uploadfile_popup.close()"  sclass="k9" />
+</hbox>
+</popup>
+
+<popup id="adminpop">
+<div sclass="shadowbox" style="background:#F50C37;" >
+	<button id="adm_del_b" label="Delete record" sclass="k9" onClick="adminFunc(self.getId())" />
+</div>
+</popup>
+
+<style src="/real-world.css" />
+
+<div width="${PANELWIDTH}">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren style="background:#ea7724">
+
+<div sclass="shadowbox" style="background:#2e3436;" >
+<hbox>
+	<label value="Search" sclass="k9b" />
+	<textbox id="schbox" sclass="k9" />
+	<button label="Dig" sclass="k9mo" onClick="listActiContacts(1,glob_current_user)" />
+	<button label="List my contacts" sclass="k9mo" />
+	<button label="List all" sclass="k9mo" onClick="listActiContacts(1,glob_current_user)" />
+	<listbox id="listbyclass_lb" mold="select" sclass="k9" />
+	<button label="by class" sclass="k9mo" onClick="listActiContacts(3,glob_current_user)" />
+	<separator width="10px" />
+	<button id="newcontact_b" sclass="k9mo" label="New contacts" onClick="contFunc(self)" />
+	<button id="togpoten_b" sclass="k9mo" label="Set classification" onClick="potenial_pop.open(self)" />
+	<button id="dnusecontact_b" sclass="k9mo" label="Toggle do-not-use" onClick="contFunc(self)" />
+	<!-- <button id="expdump_b" label="Export dumb list" onClick="genColdCallDump()" disabled="true" /> -->
+	<separator width="20px" />
+	<button id="adminbutt" label="ADMIN" style="color:#ff0000;font-weight:bold" onClick="adminpop.open(self)" visible="false" />
+</hbox>
+<separator height="3px" />
+
+<div id="acticonts_holder" />
+<label style="font-size:9px;color:#aaaaaa">**(These customers are not linked to MYSOFT)</label>
+
+<separator height="3px" />
+
+<div id="workarea" visible="false" >
+<tabbox>
+	<tabs>
+		<tab label="Contact details" />
+		<tab label="Activities" />
+		<tab label="Cold-call data" />
+		<tab label="Quotations" />
+	</tabs>
+	<tabpanels>
+		<tabpanel>
+			<div>
+				<separator height="3px" />
+				
+				<hbox>
+					<div>
+						<div id="contmeta_holder" width="600px" />
+						<separator height="3px" />
+						<button id="updatecont_b" label="Update contact details" sclass="k9" onClick="contFunc(self)" />
+					</div>
+					<!--
+					<div sclass="shadowbox" style="background:#555753">
+						<label sclass="subhead1" value="ATTACHMENT / DOCUMENTS" />
+						<separator height="3px" />
+						<hbox>
+							<button id="uploaddoc_btn" label="Upload file" sclass="k9"
+								onClick="showUploadPopup(COLDCALL_PREFIX,glob_sel_acticont)" />
+							<button id="viewdoc_btn" label="View file" sclass="k9" onClick="viewFile()" />
+							<button id="editdoc_btn" label="Update" sclass="k9" onClick="updatefiledesc_popup.open(self)" />
+							<button id="deletedoc_btn" label="Delete" sclass="k9"
+								onClick="deleteFile(documents_holder,COLDCALL_PREFIX,glob_sel_acticont)" />
+						</hbox>
+						<separator height="3px" />
+						<div id="documents_holder" />
+					</div>
+					-->
+				</hbox>
+			</div>
+		</tabpanel>
+
+		<tabpanel>
+			<div>
+				<!--
+					<button id="newacti_b" label="New activity" sclass="k9" onClick="clearAddActiFields();newacti_pop.open(self)" />
+					<button id="delacti_b" label="Delete" sclass="k9" onClick="actiFunc(self)" />
+				-->
+					<grid width="700px">
+						<rows>
+							<row>
+								<hbox>
+									<listbox id="t_priority" mold="select" sclass="k9" />
+									<button id="asstask_b" label="Assign contact to" sclass="k9mo" onClick="taskerFunc(self.getId())" />
+									<listbox id="assignee_lb" mold="select" sclass="k9" />
+								</hbox>
+							</row>
+							<row>
+								<hbox>
+									<textbox id="addaction_tb" width="400px" sclass="k9" />
+									<button id="addaction_b" label="+ action" sclass="k9" onClick="taskerFunc(self.getId())" />
+								</hbox>
+							</row>
+							<row>
+								<div id="actis_holder" />
+							</row>
+						</rows>
+					</grid>
+					<separator height="3px" />
+					<grid width="700px">
+						<rows>
+							<row>
+								<label value="Next action date" sclass="k9mo" />
+								<label id="nextactiondate_lbl" sclass="k9mo" />
+								<label value="Action" sclass="k9mo" />
+								<label id="nextactionstr_lbl" sclass="k9mo" />
+							</row>
+							<row spans="4">
+								<hbox>
+									<textbox id="t_nextaction" width="400px" sclass="k9" />
+									<datebox id="t_nextactiondate" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+									<button id="setnxtactd_b" label="Set next action-date" sclass="k9" onClick="taskerFunc(self.getId())" />
+								</hbox>
+							</row>
+
+						</rows>
+					</grid>
+			</div>
+		</tabpanel>
+
+		<tabpanel style="background:#2e3436" >
+			<button id="savecoldcall_b" sclass="k9" label="Save cold-call data" onClick="contFunc(self)" />
+			<separator height="5px" />
+			<div id="coldcall_formholder" width="800px" />
+		</tabpanel>
+
+		<tabpanel> <!-- quotations -->
+			<div id="quotelist_holder" width="700px" />
+		</tabpanel>
+	</tabpanels>
+</tabbox>
+
+</div>
+
+</div>
+
+<!--
+<div id="checks_holder" width="500px" />
+<button label="save checkbox" onClick="saveCheckedbox(testrows1)" />
+-->
+
+<label id="debugbox" multiline="true" />
+<div id="kasiexport" visible="false" />
+
+<zscript>
+<![CDATA[
+
+void taskerFunc(String itype) // knockoff from internalTasks_v2.zul -- can be used for other mods - remember UI
+{
+	todaydate =  kiboo.todayISODateTimeString();
+	refresh = refreshmeta = false;
+	sqlstm = msgtext = "";
+	unm = useraccessobj.username;
+
+	if(itype.equals("asstask_b"))
+	{
+		kas = assignee_lb.getSelectedItem().getLabel();
+		kt = t_priority.getSelectedItem().getLabel();
+		sqlstm = "insert into rw_int_tasks (datecreated,assigner,assignee,task,linking_code,linking_sub, priority,done,action,action_date,action_who) values " +
+		"('" + todaydate + "','" + unm + "','" + kas + "','New customer followup','SALES_MARKETING','" + JN_linkcode() + "'," +
+		"'" + kt + "',0,'','','');";
+		refresh = true;
+		lbhand.matchListboxItems(assignee_lb, unm);
+	}
+	if(itype.equals("addaction_b"))
+	{
+		tr = taskRecord.get("origid").toString();
+		if(tr.equals("")) return;
+		kk = kiboo.replaceSingleQuotes(addaction_tb.getValue().trim()).replaceAll("~"," ");
+		if(kk.equals("")) return;
+
+		sqlstm = "update rw_int_tasks set action = convert(varchar(max),action) + '" + kk + "~', action_date = convert(varchar(max),action_date) + '" + todaydate + 
+		"~', action_who = convert(varchar(max),action_who) + '" + unm + "~' where origid="  + tr;
+
+		refresh = true;
+		addaction_tb.setValue(""); // clear for next action
+	}
+
+	if(itype.equals("setnxtactd_b"))
+	{
+		tr = taskRecord.get("origid").toString();
+		if(tr.equals("")) return;
+		kk = kiboo.replaceSingleQuotes(t_nextaction.getValue().trim());
+		ndt = kiboo.getDateFromDatebox(t_nextactiondate);
+		sqlstm = "update rw_int_tasks set nextactiondate='" + ndt + "', nextaction='" + kk + "' where origid=" + tr;
+		refresh = true;
+
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) taskRecord = showTaskActions(actis_holder, "SALES_MARKETING", JN_linkcode(), nextactiondate_lbl, nextactionstr_lbl );
+	//if(refreshmeta) showTaskMeta(glob_sel_inttask);
+	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+
+}
+
+luhand.populateListbox_ByLookup(k_designation, "PERSON_DESIGNATION", 2);
+luhand.populateListbox_ByLookup(k_act_type, "ACTIVITIES_TYPE", 2);
+luhand.populateListbox_ByLookup(o_designation, "PERSON_DESIGNATION", 2);
+luhand.populateListbox_ByLookup(o_act_type, "ACTIVITIES_TYPE", 2);
+luhand.populateListbox_ByLookup(listbyclass_lb, "CONTACT_CLASS", 2);
+luhand.populateListbox_ByLookup(t_priority,"TASKS_PRIORITY",2);
+
+contmetaform = dynamicForm(contmeta_holder, "contmetaform_grid", "25");
+coldcallmform = dynamicForm(coldcall_formholder, "coldcallmetaform_grid", "26");
+
+listUsernames(assignee_lb); // internaltaskf_v2.zs
+
+glob_current_user = useraccessobj.username;
+//listActiContacts(1,glob_current_user);
+
+//showChecklistItems( checks_holder , 1, "testgrid1" , "testrows1" );
+/*
+if(useraccessobj.username.equals("mandy") || useraccessobj.username.equals("james")) // 10/03/2014
+{
+	expdump_b.setDisabled(false);
+}
+*/
+if(useraccessobj.accesslevel == 9)
+{
+	//expdump_b.setDisabled(false);
+	adminbutt.setVisible(true);
+}
+
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

@@ -1,0 +1,606 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="rwqmresultimport_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "RWQM Results Import";
+MYVERSION = "v0.1";
+/*
+Title		: River Water Quality Monitoring (ASMA) results-worksheet import to DB
+Dated		: 14/08/2012
+Written by	: Victor Wong
+
+Module to import rwqm (asma river monitoring) results from worksheet.
+
+*/
+import java.util.*;
+import java.text.*;
+import java.io.*;
+import java.sql.*;
+import groovy.sql.*;
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ss.util.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.hssf.usermodel.*;
+import org.zkoss.zul.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+gridhand = new GridHandler();
+samphand = new SampleReg();
+
+public class rwqmstruct
+{
+	public String sampleid;
+	public String customer_samplemarking;
+	public String customer_stationno;
+	public String analysed_date;
+	public String test_parameter;
+	public String final_result;
+	public String result_units;
+}
+
+ARCODE_HARDCODED = "300A/008";
+
+RESULT_SHEET = 1;
+uploadedWorksheet uploadedResults = null;
+HashMap workhash;
+last_load_type = 0;
+
+String glob_selected_sampleid = "";
+
+SAMPLEID_START_ROW = 17;
+SAMPLEID_START_COL = 0;
+CUST_SM_COL = 1;
+CUST_STATION_COL = 2;
+
+TEST_START_ROW = 15;
+TEST_START_COL = 3;
+ANL_DATE_ROW = 14;
+ANL_DATE_COL = 3;
+
+UNITS_START_ROW = 16;
+UNITS_START_COL = 3;
+
+MAX_TEST_COLUMNS = 26;
+
+// Let user upload a worksheet .. show filename
+void uploadworksheet()
+{
+	uploadedResults = new uploadedWorksheet();
+	uploadedResults.getUploadFileData();
+	if(uploadedResults.thefiledata == null) { guihand.showMessageBox("ERR: Invalid worksheet"); return; }
+	uploaded_filename.setValue("Uploaded worksheet : " + uploadedResults.thefilename);
+}
+
+boolean checkRWQM_resultsExist(String isampleid, String icustomersm)
+{
+	retval = false;
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return false;
+	sqlstm = "select origid from elb_rwqm_results where sampleid='" + isampleid + "' and cust_sampmarking='" + icustomersm + "'";
+	kke = sql.firstRow(sqlstm);
+	sql.close();
+	if(kke != null) retval = true;
+	return retval;
+}
+
+public class headerposition
+{
+	public int therow;
+	public int thecolumn;
+	public String myname;
+	
+	public headerposition(int irow, int icol, String iname)
+	{
+		therow = irow;
+		thecolumn = icol;
+		myname = iname;
+	}
+}
+
+Object[] wsheaders =
+{
+	new headerposition(5,16,"foundDateReceived"),
+	new headerposition(7,16,"foundDateReported"),
+	new headerposition(9,16,"foundSamplingDate"),
+};
+
+// import RWQM results worksheet - major HARDCODED to splice worksheet
+void importRWQM_worksheet()
+{
+	org.apache.poi.hssf.usermodel.HSSFRow checkrow;
+	Cell kcell;
+	HashMap foundtests = new HashMap();
+	HashMap foundunits = new HashMap();
+	HashMap foundanalydate = new HashMap();
+	ArrayList sampleresults = new ArrayList();
+	ArrayList sampleids = new ArrayList();
+	boolean replaceresults = false;
+
+	if(uploadedResults == null) return;
+
+	try
+	{
+		ByteArrayInputStream mybytes = new ByteArrayInputStream(uploadedResults.thefiledata);
+		HSSFWorkbook excelWB = new HSSFWorkbook(mybytes);
+		FormulaEvaluator evaluator = excelWB.getCreationHelper().createFormulaEvaluator();
+		numsheets = excelWB.getNumberOfSheets();
+
+		sheet = excelWB.getSheetAt(0);
+		numrows = sheet.getPhysicalNumberOfRows();
+
+		// look for headers stuff
+		for(int i=0; i<wsheaders.length; i++)
+		{
+			headerposition mypo = wsheaders[i];
+			checkrow = sheet.getRow(mypo.therow);
+			kcell = checkrow.getCell(mypo.thecolumn);
+			if(kcell != null)
+			{
+				retv = POI_GetCellContentString(kcell,evaluator,"#").trim();
+				if(retv.equals("")) // if not default column - move left 1 column and try.. haha. hardcoded shit
+				{
+					kcell2 = checkrow.getCell(mypo.thecolumn-1);
+					if(kcell2 != null)
+						retv = POI_GetCellContentString(kcell2,evaluator,"#").trim();
+				}
+				workhash.put(mypo.myname, new String(retv) );
+			}
+		}
+
+		// get tests/analysed-date/units
+		for(i=TEST_START_COL; i < TEST_START_COL+MAX_TEST_COLUMNS; i++)
+		{
+			checkrow = sheet.getRow(TEST_START_ROW);
+			kcell = checkrow.getCell(i);
+			if(kcell != null)
+			{
+				rtst = POI_GetCellContentString(kcell,evaluator,"#").trim();
+				if(!rtst.equals("")) foundtests.put(i,rtst);
+			}
+
+			checkrow = sheet.getRow(ANL_DATE_ROW);
+			kcell = checkrow.getCell(i);
+			if(kcell != null)
+			{
+				rtst = POI_GetCellContentString(kcell,evaluator,"#").trim();
+				if(!rtst.equals("")) foundanalydate.put(i,rtst);
+			}
+			
+			checkrow = sheet.getRow(UNITS_START_ROW);
+			kcell = checkrow.getCell(i);
+			if(kcell != null)
+			{
+				rtst = POI_GetCellContentString(kcell,evaluator,"#").trim().replace("(","").replace(")","");
+				if(!rtst.equals("")) foundunits.put(i,rtst);
+			}
+		}
+		
+		// parse sample-id and stuff in same row
+		for(i=SAMPLEID_START_ROW; i<numrows; i++)
+		{
+			checkrow = sheet.getRow(i);
+			kcell = checkrow.getCell(SAMPLEID_START_COL);
+			if(kcell != null)
+			{
+				smpid = POI_GetCellContentString(kcell,evaluator,"#").trim();
+				try
+				{
+					klm = smpid.substring(0,4);
+					// make sure it's some sample-id
+					if(klm.equals("ALSM") || klm.equals("ALJB") || klm.equals("ALKK") || klm.equals("ALSI"))
+					{
+						// save sample-ids for use later
+						sampleids.add(new String(smpid));
+
+						custsm = "";
+						statn = "";
+					
+						// look for customer-samplemarking and station-no.
+						kcell = checkrow.getCell(CUST_SM_COL);
+						if(kcell != null)
+						{
+							custsm = POI_GetCellContentString(kcell,evaluator,"#").trim();
+						}
+
+						// check if results already in DB - if so, stop processing and return, neednot waste cpu
+						if(!replaceresults)
+						{
+							if(checkRWQM_resultsExist(smpid,custsm))
+							{
+								if (Messagebox.show("Results from this worksheet is already in database. Do you want to replace them?", "Are you sure?", 
+								Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+								// if user want to replace them results -- remove the old ones before inserting
+								replaceresults = true;
+							}
+						}
+
+						kcell = checkrow.getCell(CUST_STATION_COL);
+						if(kcell != null)
+						{
+							statn = POI_GetCellContentString(kcell,evaluator,"#").trim();
+						}
+
+						// go through tests and grab val
+						for(tentry : foundtests.entrySet())
+						{
+							tstcol = tentry.getKey();
+							kcell = checkrow.getCell(tstcol);
+							if(kcell != null)
+							{
+								rwqmstruct mystor = new rwqmstruct(); // new rwqm storage struct for each test->result
+								mystor.sampleid = smpid;
+								mystor.customer_samplemarking = custsm;
+								mystor.customer_stationno = statn;
+
+								gresult = "";
+
+								mystor.analysed_date = (foundanalydate.get(tstcol) == null) ? "" : foundanalydate.get(tstcol);
+								mystor.result_units = (foundunits.get(tstcol) == null) ? "" : foundunits.get(tstcol);
+
+								try
+								{
+									gresult = POI_GetCellContentString(kcell,evaluator,"#.#").trim();
+								}
+								catch (NullPointerException e) { gresult = "ERR"; }
+
+								mystor.test_parameter = tentry.getValue();
+								mystor.final_result = gresult;
+
+								sampleresults.add(mystor);
+							}
+						}
+					}
+				}
+				catch (StringIndexOutOfBoundsException e) {}
+			}
+		}
+	}
+	catch (java.io.IOException e)
+	{
+		guihand.showMessageBox("ERR: Cannot parse worksheet");
+		return;
+	}
+
+	// user want to replace results - remove the old ones
+	removesql = "";
+	if(replaceresults)
+	{
+		aki = "";
+		for(kkb : sampleids)
+		{
+			aki += "'" + kkb + "',";
+		}
+		aki = aki.substring(0,aki.length()-1);
+		removesql += "delete from elb_rwqm_results where sampleid in (" + aki + ");";
+		sqlhand.gpSqlExecuter(removesql);
+	}
+
+	fdatrecv = workhash.get("foundDateReceived");
+	fdatrep = workhash.get("foundDateReported");
+	fsampdat = workhash.get("foundSamplingDate");
+
+	sqlstm = "";
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	for(rwqmstruct kkb : sampleresults)
+	{
+		sqlstm += "insert into elb_rwqm_results (ar_code,date_received,date_reported,sampling_date,cust_sampmarking," +
+		"cust_stationno,sampleid,analysed_date,test_parameter,final_result,result_units,uploaded_date,upload_filename) values (" +
+		"'" + ARCODE_HARDCODED + "','" + fdatrecv + "','" + fdatrep + "','" + fsampdat + "','" + kiboo.replaceSingleQuotes(kkb.customer_samplemarking) + "','" +
+		kiboo.replaceSingleQuotes(kkb.customer_stationno) + "','" + kkb.sampleid + 
+		"','" + kkb.analysed_date + "','" + kiboo.replaceSingleQuotes(kkb.test_parameter) + "','" +
+		kkb.final_result + "','" + kkb.result_units + "','" + todate + "','" + uploadedResults.thefilename + "');\n";
+	}
+
+	//debugbox.setValue(sqlstm);
+
+	try
+	{
+		sqlhand.gpSqlExecuter(sqlstm);
+		showmsg = "";
+
+		// show some status about results import
+		for(kkb : sampleids)
+		{
+			showmsg += kkb + " : results imported into database\n"; 
+		}
+		debugbox.setValue(showmsg);
+	}
+	catch (SQLException e)
+	{
+		guihand.showMessageBox("ERR: Cannot insert results into database. Please change analysed_date format in the worksheet");
+	}
+}
+
+//----------- show imported results funcs -----------
+
+void digTheResults(String iwhat)
+{
+	// get headers - need no get * for results later
+	sqlstm = "select top 1 * from elb_rwqm_results where sampleid='" + iwhat + "'";
+	headrec = sqlhand.gpSqlFirstRow(sqlstm);
+	if(headrec == null)
+	{
+		guihand.showMessageBox("ERR: Cannot load results from database");
+		return;
+	}
+
+	daterecv_lbl.setValue( kiboo.checkNullDate( headrec.get("date_received"),"---" ) );
+	daterep_lbl.setValue( kiboo.checkNullDate( headrec.get("date_reported"),"---" ) );
+	sampdate_lbl.setValue( kiboo.checkNullDate( headrec.get("sampling_date"),"---" ) );
+
+	sampleid_lbl.setValue(headrec.get("sampleid"));
+	cust_sampmarking_lbl.setValue(headrec.get("cust_sampmarking"));
+	cust_stationno_lbl.setValue(headrec.get("cust_stationno"));
+	
+	uploadfilename_lbl.setValue(kiboo.checkNullString(headrec.get("upload_filename")));
+
+	// now dig them results
+	sqlstm = "select analysed_date,test_parameter,final_result,result_units from elb_rwqm_results " +
+	"where sampleid='" + iwhat + "'";
+	resrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(resrecs.size() == 0) return;
+
+	// remove prev
+	if(results_holder.getFellowIfAny("smpresgrid") != null) { kko = results_holder.getFellowIfAny("smpresgrid"); kko.detach(); }
+	resgrid = new Grid();
+	resgrid.setId("smpresgrid");
+	rsrows = new Rows();
+	rsrows.setParent(resgrid);
+	
+	// put some header
+	hdrow = gridhand.gridMakeRow("","background:#3465a4;padding:2px;","",rsrows);
+	gridhand.makeLabelToParent("Test", "color:#ffffff;font-size:9px", hdrow);
+	gridhand.makeLabelToParent("Result", "color:#ffffff;font-size:9px", hdrow);
+	gridhand.makeLabelToParent("Units", "color:#ffffff;font-size:9px", hdrow);
+	gridhand.makeLabelToParent( "Analyzed date", "color:#ffffff;font-size:9px", hdrow);
+
+	for(dpi : resrecs)
+	{
+		krow = gridhand.gridMakeRow("","","",rsrows);
+		gridhand.makeLabelToParent(dpi.get("test_parameter"), "font-size:9px", krow);
+
+		ores = kiboo.floatToString(dpi.get("final_result"),"0.0");
+
+		gridhand.makeLabelToParent(ores, "font-size:9px", krow);
+		gridhand.makeLabelToParent(dpi.get("result_units"), "font-size:9px", krow);
+		gridhand.makeLabelToParent( kiboo.checkNullDate( headrec.get("analysed_date"),"---" ), "font-size:9px", krow);
+	}
+
+	// uses pre-def <rows> id in UI; smpres_rows	
+	resgrid.setParent(results_holder);
+}
+
+class smpidlb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = sampleid_lb.getSelectedItem();
+		glob_selected_sampleid = lbhand.getListcellItemLabel(isel,0);
+		digTheResults(glob_selected_sampleid);
+	}
+}
+
+// itype: 1=by date, 2=by searchtext and date
+void showImportedResults(int itype)
+{
+Object[] smpidlb_headers = 
+{
+	new listboxHeaderWidthObj("SampleID",false,""),
+	new listboxHeaderWidthObj("Folder",true,""),
+	new listboxHeaderWidthObj("SampleID",true,""),
+	new listboxHeaderWidthObj("Smp.Mark",true,""),
+	new listboxHeaderWidthObj("Station",true,""),
+};
+
+	last_load_type = itype;
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+
+	Listbox newlb = lbhand.makeVWListbox_Width(sampleidlb_holder, smpidlb_headers, "sampleid_lb", 30);
+
+	sqlstm = "select distinct sampleid,cust_stationno,cust_sampmarking from elb_rwqm_results where " + 
+	"(date_received between '" + sdate + "' and '" + edate + "' or " +
+	"date_reported between '" + sdate + "' and '" + edate + "' or " + 
+	"sampling_date between '" + sdate + "' and '" + edate + "' or " + 
+	"uploaded_date between '" + sdate + "' and '" + edate + "') ";
+
+	if(itype == 2)
+	{
+		sqlstm += " and (cust_sampmarking like '%" + searchtext + "%' or " + 
+		"cust_stationno like '%" + searchtext + "%' or " +
+		"sampleid like '%" + searchtext + "%')";
+	}
+
+	sqlstm += " group by sampleid,cust_stationno,cust_sampmarking";
+
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) { newlb.detach(); return; }
+	newlb.addEventListener("onSelect", new smpidlb_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		fullsmpid = dpi.get("sampleid");
+		kabom.add(fullsmpid);
+
+		foldno = samphand.extractFolderString_FromSampleID(fullsmpid);
+		smpid = samphand.extractSampleNo(fullsmpid);
+
+		kabom.add(foldno);
+		kabom.add(smpid);
+
+		kabom.add(dpi.get("cust_sampmarking"));
+		kabom.add(dpi.get("cust_stationno"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// util func
+void pinpointSheet()
+{
+	try
+	{
+		ByteArrayInputStream mybytes = new ByteArrayInputStream(uploadedResults.thefiledata);
+		HSSFWorkbook excelWB = new HSSFWorkbook(mybytes);
+		FormulaEvaluator evaluator = excelWB.getCreationHelper().createFormulaEvaluator();
+		numsheets = excelWB.getNumberOfSheets();
+
+		sheet = excelWB.getSheetAt( Integer.parseInt(sheetval.getValue()) );
+		numrows = sheet.getPhysicalNumberOfRows();
+
+		tcol = Integer.parseInt(colval.getValue());
+		trow = Integer.parseInt(rowval.getValue());
+
+		org.apache.poi.hssf.usermodel.HSSFRow checkrow = sheet.getRow(trow);
+		Cell kcell = checkrow.getCell(tcol);
+		kstr = POI_GetCellContentString(kcell,evaluator,"#").trim();
+		cellvalue_found.setValue(kstr);
+	}
+	catch (java.io.IOException e)
+	{
+		guihand.showMessageBox("ERR: Cannot parse worksheet");
+	}
+}
+
+]]>
+</zscript>
+
+<popup id="pinpoint_cell">
+<grid>
+	<rows>
+		<row spans=",3">
+			<label value="Sheet" />
+			<textbox id="sheetval" value="0" />
+		</row>
+		<row>
+			<label value="Column" />
+			<textbox id="colval" value="4" />
+			<label value="Row" />
+			<textbox id="rowval" value="14" />
+		</row>
+		<row spans="2,">
+			<button label="get cell" onClick="pinpointSheet()" />
+			<label value="Value" />
+			<label id="cellvalue_found" />
+		</row>
+	</rows>
+</grid>
+</popup>
+
+<div width="1200px">
+<panel id="rwqmresultimport_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new java.util.Date()" />
+<div id="adminstuff" style="background:#ef2929;padding:2px" visible="false" >
+	<button id="pinpoint_btn" label="Pinpoint cell" style="font-size:9px" onClick="pinpoint_cell.open(self)" />
+</div>
+<hbox>
+<vbox>
+<grid>
+	<rows>
+		<row spans="2">
+			<hbox>
+				<button label="Upload worksheet" style="font-size:9px" onClick="uploadworksheet()" />
+				<button label="Parse/import results" style="font-size:9px" onClick="importRWQM_worksheet()" />
+			</hbox>
+		</row>
+		<row>
+			<label id="uploaded_filename" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<textbox id="debugbox" multiline="true" width="450px" height="200px" />
+</vbox>
+
+<div id="workiarea">
+<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new java.util.Date()" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new java.util.Date()" />
+			<button label="Find by date" style="font-size:9px" onClick="showImportedResults(1)" />
+		</row>
+		<row spans=",3,">
+			<label value="Search text" style="font-size:9px" />
+			<textbox id="searhtxt_tb" width="99%" style="font-size:9px" />
+			<button label="Search" style="font-size:9px" onClick="showImportedResults(2)" />
+		</row>
+	</rows>
+</grid>
+<separator height="2px" />
+
+<hbox>
+	<div id="sampleidlb_holder" width="250px" />
+	
+	<div width="450px" >
+		<grid>
+			<rows>
+				<row style="background:#f57900;padding:2px" >
+					<label value="Date Received" style="font-size:9px" />
+					<label id="daterecv_lbl" style="font-size:9px" />
+					<label value="Date Reported" style="font-size:9px" />
+					<label id="daterep_lbl" style="font-size:9px" />
+					<label value="Sampling Date" style="font-size:9px" />
+					<label id="sampdate_lbl" style="font-size:9px" />
+				</row>
+				<row spans=",5">
+					<label value="From file" style="font-size:9px" />
+					<label id="uploadfilename_lbl" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="SampleID" style="font-size:9px" />
+					<label id="sampleid_lbl" />
+					<label value="Customer marking" style="font-size:9px" />
+					<label id="cust_sampmarking_lbl" style="font-size:9px" />
+					<label value="Station No." style="font-size:9px" />
+					<label id="cust_stationno_lbl" style="font-size:9px" />
+				</row>
+				<row spans="6">
+					<div id="results_holder" />
+				</row>
+				
+			</rows>
+		</grid>
+	</div>
+
+</hbox>
+
+</div>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+workhash = new HashMap();
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

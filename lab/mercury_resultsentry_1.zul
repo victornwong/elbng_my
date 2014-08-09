@@ -1,0 +1,1071 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="icpdataentry_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title		: Result entry for Metals - mercury
+Version		: 1.0
+Written by	: Victor Wong
+Dated		: 03/06/2011
+
+**NOTES**
+
+CSV exported from Winlab32 DataManager:
+Sample ID, Conc (Samp)
+
+*/
+
+import java.util.regex.*;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+glob_mysoftcode = "";
+global_folderno = "";
+global_sampleid = "";
+
+global_selected_folder_origid = "";
+global_selected_samplemarking = "";
+
+// used by populateResultTrails()
+global_selected_sampleid = "";
+global_selected_mysoftcode = "";
+global_selected_testorigid = "";
+
+global_jobtest_origid = "";
+global_folder_origid = "";
+
+String[] icpoes_units = { "mg/kg","mg/100g","mg/L","ug/L" };
+
+DecimalFormat nf = new DecimalFormat("###.###");
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+Object uploaded_csvRaw;
+String[] chopped_csv;
+
+// 09/05/2011 DB funcs: check COADate in jobfolders table - null/1900-01-01 = unreleased folder, else released
+boolean checkCOAReleaseDate()
+{
+	retval = false;
+	frec = getFolderJobRec(global_selected_folder_origid);
+	if(frec == null) return retval;
+
+	coadate = frec.get("coadate");
+	if(coadate != null)
+		coadate = coadate.toString().substring(0,10);
+	else
+		return reval;
+
+	if(!coadate.equals("1900-01-01")) retval = true;
+	return retval;
+}
+
+// 30/9/2010: check folder-status and set global_folderstatus flag
+boolean folderReleased(String ifolderno)
+{
+	retval = true;
+	sql = als_mysoftsql();
+	if(sql == null) return retval;
+	folderno = global_sampleid.substring(0,9);
+	sqlstm = "select labfolderstatus from jobfolders where folderno_str='" + folderno + "'";
+	fols = sql.firstRow(sqlstm);
+	sql.close();
+
+	if(fols != null)
+	{
+		kkb = fols.get("labfolderstatus");
+		if(!kkb.equals(FOLDERRELEASED)) retval = false;
+	}
+	return retval;
+}
+
+// imported data onSelect listener - will be able to grab values and inject into input boxes
+class importeddata_onSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//lbitem = event.getReference();
+		getSampleID_fromListbox();
+		populateResultTrails();	// clear result-trails if newly pressed an imported raw-data
+	}
+}
+
+Object[] importeddata_lb_headers = {
+
+	new listboxHeaderObj("Samp.ID",true),
+	new listboxHeaderObj("Analyte",true),
+	new listboxHeaderObj("Conc(Samp)",true)
+};
+
+// updated 2/9/2010: use 3 columns, Sample ID, Analyte Name, Conc (Samp)
+// showtype: 1=results, 2=blanks, 3=QC
+// insttype: instrument type, diff CSV format(almost the same lor) , 1=ICP-OES,2=FIMS
+void populateUploaded_Results(Div wheretoput, Object[] headers_def, String listboxid, Object onselectFunc, int showtype, int insttype)
+{
+	Listbox newlb = makeVWListbox(wheretoput, headers_def, listboxid, 5);
+
+	String[] strarray = new String[3];
+
+	// row 1 is the field-name, ignore
+	for(i=1; i<chopped_csv.length; i++)
+	{
+		kkb = chopped_csv[i];
+
+		// split each line
+		split5 = kkb.split(",");
+
+		// remove quotes
+		for(j=0; j<split5.length; j++)
+		{
+			ktmp = split5[j];
+			split5[j] = ktmp.replace("\"","");
+		}
+
+		addme = false;
+
+		// making use of sample-ID to determine where to put the uploaded data
+		// BLK-???? = blanks, QC ? = qc data, anything else can consider sample-id
+
+		chkblank = "";
+		if(split5[0].length() > 2) chkblank = split5[0].substring(0,3).toUpperCase();
+		if(chkblank.equals("BLK") && showtype == 2) addme = true;
+
+		chkqc = "";
+		if(split5[0].length() > 1) chkqc = split5[0].substring(0,2).toUpperCase();
+		if(chkqc.equals("QC") && showtype == 3) addme = true;
+		
+		if(showtype == 1)
+			if(!chkblank.equals("BLK") && !chkqc.equals("QC")) addme = true;
+
+		if(addme)
+		{
+			strarray[0] = split5[0];
+			
+			switch(insttype)
+			{
+				case 1:
+				strarray[1] = split5[1];
+				strarray[2] = split5[2];
+				break;
+				
+				case 2:
+				strarray[1] = "Hg";
+				strarray[2] = split5[1];
+				break;
+
+			}
+			
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+	
+	if(newlb.getItemCount() > 5) newlb.setRows(15);
+
+	if(onselectFunc != null)
+		newlb.addEventListener("onSelect", onselectFunc); // attach the onSelect func
+
+} // end of populateUploaded_Results()
+
+class resulttrails_lb_onSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		resultowner = getListcellItemLabel(lbitem,6);
+		res_trails_mod_btn.setDisabled(true);
+		res_trails_rem_btn.setDisabled(true);
+		theusername = useraccessobj.username;
+
+		// if the result trail belongs to this user.. enable the buttons
+		if(resultowner.equals(theusername))
+		{
+			res_trails_mod_btn.setDisabled(false);
+			res_trails_rem_btn.setDisabled(false);
+		}
+
+		// admin can mod any results --
+		if(useraccessobj.accesslevel == 9)
+		{
+			res_trails_mod_btn.setDisabled(false);
+			res_trails_rem_btn.setDisabled(false);
+		}
+	}
+}
+
+// result_trails_div
+void populateResultTrails()
+{
+	Object[] resulttrails_lb_headers = {
+	new listboxHeaderObj("chemresult_origid",false),
+	new listboxHeaderObj("#",true),
+	new listboxHeaderObj("Analyte",true),
+	new listboxHeaderObj("Result",true),
+	new listboxHeaderObj("Rpt",true),
+	new listboxHeaderObj("QC",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Date",true)
+	};
+
+	Listbox newlb = makeVWListbox(result_trails_div, resulttrails_lb_headers, "resulttrails_lb", 8);
+	if(global_selected_sampleid.equals("") || global_selected_mysoftcode.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select origid,originalchemname,final,result_unit,reported,qa_flag,username,analysed_date from elb_Chemistry_Results where SampleCode='" + 
+		global_selected_sampleid +"' and (deleted=0 or deleted is null) and mysoftcode=" + global_selected_mysoftcode;
+
+	resrows = sql.rows(sqlstatem);
+	sql.close();
+
+	if(resrows == null || resrows.size() == 0) return;
+
+	newlb.addEventListener("onSelect", new resulttrails_lb_onSelect_Listener()); // do the onSelect listener
+	numcount = 1;
+
+	for(resrec : resrows)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(resrec.get("origid").toString());
+		kabom.add(numcount.toString());
+		kabom.add(resrec.get("originalchemname"));
+		kabom.add(resrec.get("final") + " " + resrec.get("result_unit"));
+		kabom.add((resrec.get("reported") == 1) ? "YES" : "NO");
+		kabom.add((resrec.get("qa_flag").equals("1")) ? "QC" : "--");
+		kabom.add(resrec.get("username"));
+		kabom.add(resrec.get("analysed_date").toString().substring(0,10));
+		numcount++;
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// onSelect listener to get BLANK value into inputbox
+class blankslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		blnkval = getListcellItemLabel(selitem,2);
+		blank_lbl.setValue(blnkval);
+	}
+}
+
+// Upload CSV - chop and populate listboxes
+// 03/06/2011: added itype, 1=ICP-OES, 2=FIMS
+void uploadMetalsLiquidResults(int itype)
+{
+	uploaded_csvRaw = Fileupload.get(true);
+	if(uploaded_csvRaw == null) return;
+
+	formatstr = uploaded_csvRaw.getFormat();
+
+/*
+	if(!formatstr.equals("csv"))
+	{
+		showMessageBox("Please upload CSV exported from WinLab DataManager");
+		return;
+	}
+*/
+	bytearray = uploaded_csvRaw.getByteData();
+	String mystring = new String(bytearray);
+	chopped_csv = mystring.split("\r\n");
+
+	if(chopped_csv.length == 1) chopped_csv = mystring.split("\n");
+	if(chopped_csv.length == 0) return;
+	
+	alert(chopped_csv.length + " :: " + chopped_csv[0]);
+
+	uploaded_filename_lbl.setValue("Uploaded file: " + uploaded_csvRaw.getName());
+	
+	res_onselectfunc = new importeddata_onSelect_Listener();
+	populateUploaded_Results(uploadedresults_div,importeddata_lb_headers,"imported_lb",res_onselectfunc,1,itype);
+	populateUploaded_Results(uploadedblanks_div,importeddata_lb_headers,"blanks_lb",null,2,itype);
+	//populateUploaded_Results(uploadedqc1_div,importeddata_lb_headers,"qcdata1_lb",null,3);
+
+	// 30/9/2010: add onSelect for blanks_lb .. to update the blank input-box
+	blanks_lb.addEventListener("onSelect", new blankslb_Listener());
+}
+
+// onSelect for populateSampleIDTests()
+class sampleidtests_onSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		global_selected_mysoftcode = getListcellItemLabel(lbitem,1);
+		testdesc = getListcellItemLabel(lbitem,2);
+		result_trails_test_lbl.setValue(testdesc);
+		populateResultTrails();
+	}
+}
+void populateSampleIDTests(String isampleid)
+{
+	Object[] sampleidtests_lb_headers = {
+	new listboxHeaderObj("jobtestparameter_origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test parameters",true)
+	};
+
+	// sampleid_tests_div def in UI
+	Listbox newlb = makeVWListbox(sampleid_tests_div, sampleidtests_lb_headers, "sampleidtests_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem2 = "select jobtestparameters.origid, jobtestparameters.mysoftcode,stockmasterdetails.description," + 
+	"stockmasterdetails.description2 " +
+	"from jobtestparameters left join stockmasterdetails " +
+	"on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+	"where jobtestparameters.jobsamples_id=" + isampleid;
+
+	jbparams = sql.rows(sqlstatem2);
+	sql.close();
+
+	if(jbparams == null || jbparams.size() == 0) return;
+
+	newlb.setRows(14);
+	newlb.addEventListener("onSelect", new sampleidtests_onSelect_Listener()); // do the onSelect listener
+
+	String[] strarray = new String[3];
+
+	for(jbrec : jbparams)
+	{
+		jtp_origid = jbrec.get("origid").toString();
+		mysoftc = jbrec.get("mysoftcode").toString();
+
+		//testdesc = jbrec.get("description") + " (" + jbrec.get("description2") + ")" ;
+		testdesc = jbrec.get("description");
+		testdesc = trimListitemLabel(testdesc,65);
+
+		strarray[0] = jtp_origid;
+		strarray[1] = mysoftc;
+		strarray[2] = testdesc;
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+Object[] jobsamples_lb_headers = {
+	new listboxHeaderObj("jobsamples_origid",false),
+	new listboxHeaderObj("SampleID",true)
+};
+
+void populateFolderSamples(String ifolderno)
+{
+	// Listbox newlb = makeVWListbox(folder_samples_div, jobsamples_lb_headers, "jobsamples_lb", 10); // folder_samples_div def in UI
+
+}
+
+void showFolderDrillerBox_NumOnly(String inum)
+{
+	if(inum.equals("")) return;
+
+	kkb = Integer.parseInt(inum);
+	samprec = getFolderSampleRec(kkb.toString());
+
+	if(samprec != null)
+	{
+		global_jobtest_origid = kkb.toString(); // save a copy of the jobtestparameters origid for others to play
+
+		tempfoldn = samprec.get("sampleid_str");
+		foldn = extractFolderString_FromSampleID(tempfoldn);
+		folderno_str = Integer.parseInt(extractFolderNo(foldn)).toString();
+
+		//therec = getFolderJobRec(folderno_str);
+
+		sql = als_mysoftsql();
+		if(sql == null) return;
+		sqlstm = "select jobfolders.folderno_str,jobfolders.branch,jobfolders.deleted,customer.customer_name from customer " +
+			"left join jobfolders on jobfolders.ar_code = customer.ar_code where jobfolders.origid=" + folderno_str;
+
+		therec = sql.firstRow(sqlstm);
+		sql.close();
+
+		if(therec == null) return;
+
+		// 09/05/2011: save folder origid for later use
+		global_selected_folder_origid = folderno_str;
+
+		folderno_company_lbl.setValue(therec.get("folderno_str") + " :: " + therec.get("customer_name"));
+
+		foldbranch = therec.get("branch");
+		ibranch = useraccessobj.branch;
+
+		if(therec.get("deleted") == 1)
+		{
+			showMessageBox("Sample you're searching is no longer available..");
+			return;
+		}
+
+		// only user with branch equ to folder's or admin can view them data
+		if(foldbranch.equals(ibranch) || useraccessobj.accesslevel == 9)
+		{
+			//populateSamplesTestParameters(sampletests_tree,folderno_str);
+			//showFolderMetadata(folderno_str);
+			//clearFluff();
+
+			global_folder_origid = folderno_str; // save a copy of the folder origid
+			global_sampleid = samprec.get("sampleid_str"); // save a copy so everyone can play
+			global_folderno = therec.get("folderno_str"); // save a copy of the folderno_str from database
+
+			global_selected_sampleid = global_sampleid; // save a copy so populateResultTrails() can play along
+			global_selected_samplemarking = samprec.get("samplemarking");
+		}
+		else
+			showMessageBox("Folder you've entered is from a different branch. Access denied..");
+	 }
+}
+
+void getSampleID_fromListbox()
+{
+	// if nothing selected in results listbox - return le
+	if(imported_lb.getSelectedIndex() == -1) return;
+
+	selitem = imported_lb.getSelectedItem();
+	kkk = selitem.getLabel();
+
+	// chop any other fluff off main sampleid string
+	kkb = kkk.split(" ");
+	chopped_sampleid = kkb[0];
+
+	if(Pattern.matches("^\\d+$",chopped_sampleid) == false) return;
+
+	showFolderDrillerBox_NumOnly(chopped_sampleid);
+
+	sampleid_lbl.setValue("SampleID: " + global_sampleid );
+	result_trails_sampleid_lbl.setValue("SampleID: " + global_sampleid );
+	result_trails_samplemarking_lbl.setValue("SampleMarking: " + trimListitemLabel(global_selected_samplemarking,60));
+
+	if(global_jobtest_origid.equals("")) return;
+
+	populateSampleIDTests(global_jobtest_origid);
+
+	// populateFolderSamples(global_folder_origid);
+	// show selected analyte/raw-data/blanks
+
+	analyte = getListcellItemLabel(selitem,1);
+	rawdata = getListcellItemLabel(selitem,2);
+
+	analyte_lbl.setValue(analyte);
+	rawdata_lbl.setValue(rawdata);
+
+	// ghost-move the listbox selection -- haha
+	matchListboxItemsColumn(blanks_lb, analyte, 1);
+
+	// get blank from blanks-listbox - must play matching against the analyte
+	blkitem = matchListboxReturnListItem(blanks_lb, analyte,1);
+
+	if(blkitem != null)
+	{
+		blkval = getListcellItemLabel(blkitem,2);
+		blank_lbl.setValue(blkval);
+	}
+
+	result_lbl.setValue("---");
+
+	res_trails_mod_btn.setDisabled(false);
+	res_trails_rem_btn.setDisabled(false);
+	capture_result_btn.setDisabled(false);
+
+	if(folderReleased(global_sampleid)) // if folder released, disable some buttons
+	{
+		if(useraccessobj.accesslevel != 9)
+		{
+			res_trails_mod_btn.setDisabled(true);
+			res_trails_rem_btn.setDisabled(true);
+			capture_result_btn.setDisabled(true);
+		}
+	}
+
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+}
+
+void captureResult()
+{
+	resstr = result_lbl.getValue();
+	if(resstr.equals("---"))
+	{
+		showMessageBox("No result - please upload, select raw data and perform computation");
+		return;
+	}
+
+	if(sampleid_tests_div.getFellowIfAny("sampleidtests_lb") == null) return; // don't have anything yet.. return
+
+	sampleid_lbitem = sampleidtests_lb.getSelectedItem();
+
+	if(sampleidtests_lb.getSelectedIndex() == -1)
+	{	
+		showMessageBox("Please select a test parameter before capturing result");
+		return;
+	}
+	//alert("sampleid: " + global_selected_sampleid + " | mysoftc: " + global_selected_mysoftcode);
+
+	global_selected_testorigid = getListcellItemLabel(sampleid_lbitem,0);
+	tanalyte = analyte_lbl.getValue();
+	
+	// 14/9/2010: do a bit of number formatting
+	float_result = Float.parseFloat(result_lbl.getValue());
+	NumberFormat formatter = new DecimalFormat("#.###"); // set it to 3 decimal-place, small numbers
+	tresult = formatter.format(float_result);
+
+	tunits = result_unit_lbl.getSelectedItem().getLabel();
+
+	treported = "1";
+	tqaflag = "0";
+
+	stockrec = getStockMasterDetails(global_selected_mysoftcode);
+	tmethod = stockrec.get("Description2");
+	equipname = "ICP-OES";
+
+	casnum = stockrec.get("NewField7");
+	casnum = (casnum == null) ? "" : casnum;
+
+	// if analyte is empty, use back the old analyte name
+	if(tanalyte.equals("")) tanalyte = stockrec.get("Description");
+
+	// mod: 8/9/2010: added last item as OriginalChemName = tanalyte
+	// resultarray[2] = CAS# now
+	String[] resultarray = new String[16];
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	resultarray[0] = global_folderno;
+	resultarray[1] = global_selected_sampleid;
+	resultarray[2] = casnum;
+	resultarray[3] = tresult;
+	resultarray[4] = tunits;
+	resultarray[5] = tresult; // finalresult using the same as result for now 19/4/2010
+	resultarray[6] = tmethod;
+	resultarray[7] = todaydate;
+
+	resultarray[8] = equipname;
+	resultarray[9] = tqaflag;
+	resultarray[10] = useraccessobj.username;
+	resultarray[11] = "RESULT";
+	resultarray[12] = global_selected_testorigid;
+	resultarray[13] = treported;
+	resultarray[14] = global_selected_mysoftcode;
+	resultarray[15] = tanalyte; 
+
+	insertChemistryResult(resultarray);
+	populateResultTrails();
+}
+
+// 30/9/2010: streamline icp-oes calculation into 1 func- itype: 1=LiquidDirectRun, 2=LiquidDigested, 3=semiSolid
+// liquidDirectRun = (raw-data * dilution factor) - (blank)
+// liquidDigested = (((raw-data * dilution factor) - (blank)) * (markup volume)) / (sample volume)
+// semiSolid = ((raw-data * dilution factor) - (blank * markup volume)) / (sample volume * DWF)
+// { "mg/kg","mg/100g","mg/L","ug/L" }
+void ICPOES_Calculation(int itype)
+{
+	rawval = Float.parseFloat(rawdata_lbl.getValue());
+	blnkval = Float.parseFloat(blank_lbl.getValue());
+	diluval = Float.parseFloat(dilutionfactor_tb.getValue());
+	markup = Float.parseFloat(markup_tb.getValue());
+	samplevol = Float.parseFloat(sampleweight_tb.getValue());
+	dwfval = Float.parseFloat(dwf_tb.getValue());
+	
+	finalresult = 0.0;
+	theunits = 2;
+	
+	switch(itype)
+	{
+		case 1:
+			finalresult = (rawval * diluval) - blnkval;
+			break;
+			
+		case 2:
+			finalresult = (((rawval * diluval) - blnkval) * markup) / samplevol;
+			break;
+			
+		case 3:
+			finalresult = (((rawval * diluval) - blnkval) * markup) / (samplevol * dwfval);
+			theunits = 0;
+			break;
+	}
+
+	result_lbl.setValue(finalresult.toString());
+	result_unit_lbl.setSelectedIndex(theunits); // theunits = index to icpoes_units
+}
+
+// 30/9/2010: do some result conversion
+void doUnitsConversion()
+{
+	whatunit = result_unit_lbl.getSelectedItem().getLabel();
+	tounit = unit_converter_dd.getSelectedItem().getLabel();
+	if(whatunit.equals(tounit)) return; // same.. return lor
+
+	oldval = meval = Float.parseFloat(result_lbl.getValue());
+	converted = false;
+
+	if(whatunit.equals("mg/kg") && tounit.equals("mg/100g"))
+		meval /= 10;
+
+	if(whatunit.equals("mg/L") && tounit.equals("ug/L"))
+		meval *= 1000;
+		
+	if(whatunit.equals("mg/100g") && tounit.equals("mg/kg"))
+		meval *= 10;
+		
+	if(whatunit.equals("ug/L") && tounit.equals("mg/L"))
+		meval /= 1000;
+		
+	if(oldval != meval)
+	{
+		matchListboxItems(result_unit_lbl, tounit); // change the actual result unit, otherwise confusion..
+		result_lbl.setValue(meval.toString()); // put the value back
+	}
+}
+
+void modifyTheResult()
+{
+	// need to add codes here to check if folder already released - thus cannot change any results
+	/* 24/05/2011: removed temporary
+	if(!checkCOAReleaseDate())
+	{
+		showMessageBox("COA already released - cannot modify result");
+		return;
+	}
+	*/
+
+	tryuser = modres_user_tb.getValue();
+	if(tryuser.equals("")) return;
+	if(!tryuser.equals(useraccessobj.username))
+	{
+		showMessageBox("You're not the owner of this result entry");
+		return;
+	}
+
+	String[] resultarray = new String[7];
+
+	resultarray[0] = modres_analyte_tb.getValue();
+	resultarray[1] = modres_result_tb.getValue();
+	resultarray[2] = modres_units_tb.getValue();
+	resultarray[3] = (modres_qa_flag_check.isChecked()) ? "1" : "0";	
+	resultarray[4] = (modres_reported_check.isChecked()) ? "1" : "0";
+	resultarray[5] = getDateFromDatebox(hiddendatebox);
+	resultarray[6] = modres_origid.getValue();
+	updateResultTrail(resultarray);
+
+	// AUDIT
+
+	populateResultTrails(); // refresh result trails
+	modifyResult_popup.close(); // close the popup
+}
+
+// Get result-trail rec and update the popup's inputs
+void ownerModifyResult()
+{
+	if(!check_ListboxExist_SelectItem(result_trails_div, "resulttrails_lb")) return;
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	resrec = getChemResult_Rec(iori);
+
+	if(resrec != null)
+	{
+		modifyResult_popup.open(popupholder);	
+		modres_origid.setValue(iori);
+		modres_analyte_tb.setValue(resrec.get("OriginalChemName"));
+		modres_result_tb.setValue(resrec.get("Final"));
+		modres_units_tb.setValue(resrec.get("Result_Unit"));
+		qaflg = Integer.parseInt(resrec.get("QA_Flag"));
+		repflg = resrec.get("reported");
+		modres_reported_check.setChecked((repflg==1) ? true : false);
+		modres_qa_flag_check.setChecked((qaflg==1) ? true : false);
+		modres_user_tb.setValue(resrec.get("username"));
+	}
+}
+
+// Allow owner to remove result-trail - keep audit-trail when it's done
+void ownerRemoveResult()
+{
+	if(!check_ListboxExist_SelectItem(result_trails_div, "resulttrails_lb")) return;
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	resrec = getChemResult_Rec(iori);
+	remok = false;
+
+	if(resrec != null)
+	{
+		resowner = resrec.get("username");
+
+		// if it's owner of the result-trail, allow removal
+		if(resowner.equals(useraccessobj.username)) remok = true;
+
+		// if it's admin.. allow removal too
+		if(useraccessobj.accesslevel == 9) remok = true;
+
+		// set the delete flag
+		if(remok)
+		{
+			if (Messagebox.show("Remove this result..", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+			sql = als_mysoftsql();
+			if(sql == null) return;
+			sqlst = "update elb_Chemistry_Results set deleted=1 where origid=" + iori;
+			sql.execute(sqlst);
+			sql.close();
+
+			// AUDIT
+
+			populateResultTrails(); // refresh
+
+		}
+		else
+			showMessageBox("Not owner.. cannot remove result trail");
+	}
+}
+
+void doViewDoculinkPopup()
+{
+	if(global_folderno.equals("")) return;
+	documentLinkProp.global_eq_origid = global_folderno;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+	resultworksheet_popup.open(viewdoculinks_btn);
+}
+
+//---- balance weight related funcs ---
+
+class weight_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = balanceitems_lb.getSelectedItem();
+		thew = getListcellItemLabel(selitem,3);
+		sampleweight_tb.setValue(thew);
+	}
+}
+
+// balance_items lister knockoff from balancedata_entry.zul
+// itype: 1=list by sampleid, 2=list by like sampleid
+void showBalanceItems(int itype, String isamplestr)
+{
+Object[] balanceitems_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("InitW",true),
+	new listboxHeaderObj("EndW",true),
+	};
+
+	Listbox newlb = makeVWListbox(balanceitems_holder, balanceitems_lb_headers, "balanceitems_lb", 6);
+	if(isamplestr.equals("")) return;
+
+	sqlstm = "select origid,sampleid,initweight,endweight,notes from balance_items where sampleid='" + isamplestr + "'";
+
+	if(itype == 2)
+		sqlstm = "select origid,sampleid,initweight,endweight,notes from balance_items where sampleid like '%" + isamplestr + "%'";
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	birecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(birecs.size() == 0) return;
+	newlb.setRows(10);
+	//newlb.addEventListener("onSelect", new balanceitems_onselect());
+
+	for(dpi : birecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("sampleid"));
+		kabom.add(nf.format(dpi.get("initweight")));
+		kabom.add(nf.format(dpi.get("endweight")));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"");
+	}
+
+	dc_obj = new weight_DoubleClicker();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// 01/06/2011: pick sample weight from balance_items
+void pickSampleWeight()
+{
+	if(global_selected_sampleid.equals("")) return;
+	sampid = extractSampleNo(global_selected_sampleid);
+	showBalanceItems(1,sampid);
+	pickSampleWeight_popup.open(picksampleweight_btn);
+}
+
+]]>
+</zscript>
+
+<popup id="pickSampleWeight_popup">
+<groupbox mold="3d" width="300px">
+	<div id="balanceitems_holder" />
+	<separator height="2px" />
+	<hbox>
+		<label value="SampleID" style="font-size:9px" />
+		<textbox id="sw_sampleid_input" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="showBalanceItems(2,sw_sampleid_input.getValue())" />
+	</hbox>
+	<separator height="3px" />
+	<label value="(will take the EndW as sample weight)" style="font-size:8px" />
+</groupbox>
+</popup> 
+
+<!-- allow owner of results to modify result -->
+<popup id="modifyResult_popup">
+<groupbox mold="3d" width="300px">
+	<caption label="Modify result" />
+	<textbox id="modres_user_tb" visible="false" />
+	<textbox id="modres_origid" visible="false" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Analyte" style="font-size:9px"/>
+				<textbox id="modres_analyte_tb" width="99%" />
+			</row>
+			<row>
+				<label value="Result" style="font-size:9px"/>
+				<textbox id="modres_result_tb" width="99%" />	
+			</row>
+			<row>
+				<label value="Units" style="font-size:9px"/>
+				<textbox id="modres_units_tb" width="99%"/>
+			</row>
+			<row>
+				<checkbox id="modres_reported_check" label="Reported" style="font-size:9px" />
+				<checkbox id="modres_qa_flag_check" label="Is QC" style="font-size:9px" />		
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="5px" />
+<hbox>
+	<button label="Modify" style="font-size:9px" onClick="modifyTheResult()" />
+	<button label="Close" style="font-size:9px" onClick="modifyResult_popup.close()" />
+</hbox>
+</popup>
+<!-- end of popup -->
+
+<!-- allow owner of results to remove result -->
+<popup id="removeResult_popup">
+<groupbox>
+	<caption label="Remove result" />
+	<hbox>
+		<button label="Remove" />
+		<button label="Close" onClick="removeResult_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<!-- result worksheets management popup -->
+<popup id="resultworksheet_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="resultworksheet_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+
+<!-- end of result worksheets management popup -->
+
+<!-- MAIN starts here -->
+<div width="1200px">
+<panel id="result_metals_liquid_panel" title="Import Results : Metals (ICP Instruments) v1.0" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<groupbox mold="3d" style="padding:3px">
+<hbox>
+	<button label="Upload ICP-OES results"  onClick="uploadMetalsLiquidResults(1)" style="font-size:9px" />
+	<button label="Upload FIMS results" style="font-size:9px" onClick="uploadMetalsLiquidResults(2)" />
+	<separator width="20px" />
+	<label id="uploaded_filename_lbl" style="font-size:9px" />
+	<!--
+	<button label="Get raw data" onClick="getSampleID_fromListbox()" style="font-size:9px" />
+	<button id="viewdoculinks_btn" label="Worksheet manager" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+	-->
+</hbox>
+</groupbox>
+
+<hbox>
+
+<!-- left side -->
+<vbox style="padding:3px">
+<groupbox mold="3d" width="350px">
+	<caption label="Imported values" />
+	<div id="uploadedresults_div" />
+</groupbox>
+<groupbox mold="3d" width="350px">
+	<caption label="Blanks" />
+	<div id="uploadedblanks_div" />
+</groupbox>
+
+<div id="uploadedqc1_div" />
+<div id="uploadedqc2_div" />
+<div id="uploadedqc3_div" />
+</vbox>
+<!-- ENDOF left side -->
+
+<!-- middle -->
+<vbox>
+
+<hbox>
+<groupbox mold="3d" width="400px">
+	<div>
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+				<row spans=",3">
+					<label value="Analyte" style="font-size:9px" />
+					<div style="background:#4466bb">
+						<label id="analyte_lbl" style="color:#ffffff" />
+					</div>
+				</row>
+				<row spans=",3">
+					<label value="Raw data" style="font-size:9px" />
+					<div style="background:#446655">
+						<label id="rawdata_lbl" style="color:#ffffff" />
+					</div>
+				</row>
+				<row spans=",3">
+					<label value="Blank" style="font-size:9px" />
+					<textbox id="blank_lbl" width="150px" />
+				</row>
+
+				<row>
+					<label value="Markup volume (ml)" style="font-size:9px" />
+					<textbox id="markup_tb" value="25" width="40px" />
+					<label value="Dry weight factor" style="font-size:9px" />
+					<textbox id="dwf_tb" value="1" width="40px" />
+				</row>
+				<row>
+					<label value="Sample weight (g)" style="font-size:9px" />
+					<textbox id="sampleweight_tb" value="20" width="40px" />
+					<label value="Dilution factor" style="font-size:9px" />
+					<textbox id="dilutionfactor_tb" value="1" width="40px" />
+				</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<hbox style="padding:2px">
+			<button label="Liquid direct-run" style="font-size:9px" onClick="ICPOES_Calculation(1)"/>
+			<button label="Liquid digested" style="font-size:9px" onClick="ICPOES_Calculation(2)" />
+			<button label="Semi/Solid" style="font-size:9px" onClick="ICPOES_Calculation(3)" />
+			<button id="picksampleweight_btn" label="Pick sample weight" style="font-size:9px" onClick="pickSampleWeight()" />
+		</hbox>
+		<separator height="3px" />
+
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+				<row>
+					<label value="The result" style="font-size:9px" />
+					<hbox>
+						<textbox id="result_lbl" style="background:#666666;color:#ffffff" />
+						<listbox id="result_unit_lbl" style="font-size:9px" mold="select" />
+					</hbox>
+				</row>
+				<row>
+					<label value="Convert to" style="font-size:9px" />
+					<hbox>
+					<listbox id="unit_converter_dd" style="font-size:9px" mold="select" />
+					<button label="Do it" style="font-size:9px" onClick="doUnitsConversion()" />
+					</hbox>
+				</row>
+				<row>
+					<button id="capture_result_btn" label="Capture result" style="font-size:9px" onClick="captureResult()" />
+				</row>
+			</rows>
+		</grid>
+	</div>
+</groupbox>
+<groupbox mold="3d" width="400px">
+<div>
+	<div style="background:#4466bb">
+		<vbox>
+		<label id="folderno_company_lbl" style="font-size:9px;color:#ffffff" />
+		<label id="sampleid_lbl" style="font-size:9px;color:#ffffff"/>
+		</vbox>
+	</div>
+	<div id="sampleid_tests_div" />
+</div>
+</groupbox>
+</hbox>
+
+<groupbox mold="3d">
+<div>
+	<div style="background:#4466bb;padding:2px">
+		<vbox>
+			<label id="result_trails_sampleid_lbl" style="font-size:9px;color:#ffffff"/>
+			<label id="result_trails_samplemarking_lbl" style="font-size:9px;color:#ffffff" />
+			<label id="result_trails_test_lbl" style="font-size:9px;color:#ffffff" />
+		</vbox>
+	</div>
+	<div id="result_trails_div" />
+	<hbox>
+		<button id="res_trails_mod_btn" label="Modify" style="font-size:9px" onClick="ownerModifyResult()" />
+		<button id="res_trails_rem_btn" label="Remove" style="font-size:9px" onClick="ownerRemoveResult()" />
+	</hbox>
+	<label id="popupholder" />
+</div>
+</groupbox>
+
+</vbox>
+
+<!-- ENDOF middle -->
+
+</hbox>
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOC";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+populateDropdownListbox(result_unit_lbl, icpoes_units);
+populateDropdownListbox(unit_converter_dd, icpoes_units);
+
+</zscript>
+</zk>

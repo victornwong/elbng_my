@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customer_searchbox"?>
+<!--
+
+Version				:
+Coding began date	:
+Developers			: Victor
+
+Submodule to search customer by ar_code, customer name and address . will search mysoft.customer table
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// put new box rec-no into hidden textbox
+		irecno = testsdrillbit2.getSelectedItem().getLabel();
+		
+		whathuh.ea_box_id.setValue(irecno);
+		whathuh.showDetails();
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeBoxListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testsdrillbit2");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new MyListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("BoxId");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Type of box");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Status");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeBoxListbox()
+
+// Populate the listbox of all extra box for this customer
+// uses global-var the_arcode
+void populateBoxAvailableBox(Div thediv)
+{
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select * from " + MODULE_DBNAME + " where deleted=0 order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null)
+		return;
+	
+	String[] strarray = new String[3];
+
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = thediv.getFellowIfAny("testsdrillbit2");
+	if(oldlb != null)
+		oldlb.setParent(null);
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeBoxListbox(thediv);
+	
+	for(ilist : tlist)
+	{
+		t_origid = BOXAVAILABLE_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		
+		strarray[1] = ilist.get("typeofbox");
+		
+		istat = ilist.get("status");
+		tostatus = "Unavailable";
+		
+		switch(istat)
+		{
+			case 0 : 	tostatus = "Unavailable";
+						break;
+						
+			case 1 : 	tostatus = "Available";
+						break;
+						
+			case 2 :	tostatus = "Damaged";
+						break;
+		}
+
+		strarray[2] = tostatus;
+
+		insertListItems(newlb,strarray,BOXAVAILABLE_PREFIX);
+	}
+			
+} // end of populateBoxAvailableBox()
+
+void deleteBox_Wrapper()
+{
+	// check access level
+	
+	// run the actual delete func
+}
+
+]]>
+</zscript>
+
+<!-- start of main Div -->
+<div width="100%">
+
+<vbox>
+<div>
+<vbox>
+
+populateBoxAvailableBox(extra_boxavailable_div);
+
+tNewBoxInput = new extraBoxInput(newtypeofbox, box_id, boxstatus);
+	
+whathuh = tNewBoxInput;
+	
+</vbox>
+</div>
+</groupbox>
+
+</vbox>
+</div>
+<!-- end of main Div -->
+
+</zk>
+

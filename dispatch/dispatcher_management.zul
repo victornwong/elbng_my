@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="dispatcher_management_wind"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+
+<zscript>
+<![CDATA[
+/*
+02/04/2012: cleanup and port to byte-compl
+
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+// hardcoded html-post parameter name: ar_code (set in customer_extra_address.zul -> playDocsDeliveryDetails()
+// the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+MODULE_DBNAME = "DispatcherDetails";
+
+Object whathuh;
+
+class extraAddressInput
+{
+	public Textbox ea_address1;
+	public Textbox ea_address2;
+	public Textbox ea_zip;
+	public Textbox ea_city;
+	public Textbox ea_state;
+
+	public Textbox ea_primaryphone;
+	public Textbox ea_primaryfax;
+	public Textbox ea_dispatcher_name;
+	public Textbox ea_email;
+	public Textbox ea_extranotes;
+	public Textbox ea_newaddr_recno;
+	public Textbox ea_outsource_name;
+
+	public extraAddressInput(Textbox iaddress1, Textbox iaddress2, Textbox izip, Textbox icity,
+		Textbox istate, Textbox iprimaryphone, Textbox iprimaryfax, Textbox idispatcher_name, Textbox ioutsource_name,
+		Textbox iemail, Textbox iextranotes, Textbox inewaddr_recno)
+	{
+		ea_address1 = iaddress1;
+		ea_address2 = iaddress2;
+		
+		ea_zip = izip;
+		ea_city = icity;
+		ea_state = istate;
+
+		ea_primaryphone = iprimaryphone;
+		ea_primaryfax = iprimaryfax;
+		
+		ea_dispatcher_name = idispatcher_name;
+		ea_email = iemail;
+		ea_outsource_name = ioutsource_name;
+		
+		ea_extranotes = iextranotes;
+		ea_newaddr_recno = inewaddr_recno;
+	}
+	
+	void clearTextBox()
+	{
+		ea_address1.setValue("");
+		ea_address2.setValue("");
+		
+		ea_zip.setValue("");
+		ea_city.setValue("");
+		ea_state.setValue("");
+
+		ea_primaryphone.setValue("");
+		ea_primaryfax.setValue("");
+		
+		ea_dispatcher_name.setValue("");
+		ea_email.setValue("");
+		ea_outsource_name.setValue("");
+		
+		ea_extranotes.setValue("");
+		
+		ea_newaddr_recno.setValue("");
+		
+		if(dispatchers_lb != null)
+		{
+			dispatchers_lb.clearSelection();
+			updateornewbutton.setLabel("Save dispatcher");
+		}
+	}
+
+	// whatever
+	void showDetails()
+	{
+		therec = getDispatcherRec(ea_newaddr_recno.getValue());
+		if(therec == null)
+		{
+			guihand.showMessage("Sorry, cannot get dispatcher record");
+			return;
+		}
+
+		// put values into inputboxes
+		ea_address1.setValue(therec.get("address_1"));
+		ea_address2.setValue(therec.get("address_2"));
+
+		ea_zip.setValue(therec.get("zip"));
+		ea_city.setValue(therec.get("city"));
+		ea_state.setValue(therec.get("state"));
+
+		ea_primaryphone.setValue(therec.get("primaryphone"));
+		ea_primaryfax.setValue(therec.get("primaryfax"));
+
+		ea_dispatcher_name.setValue(therec.get("dispatcher_name"));
+		ea_email.setValue(therec.get("email"));
+		ea_outsource_name.setValue(therec.get("outsource_name"));
+
+		ea_extranotes.setValue(therec.get("extranotes").toString());
+		updateornewbutton.setLabel("Update dispatcher");
+
+	} // end of showDetails()
+
+	// update/store dispatcher info to mysoft.DispatcherDetails
+	void updateExtraAddress()
+	{
+		idispatcher_name = ea_dispatcher_name.getValue();
+
+		// must have dispatcher_name before saving/updating
+		if(idispatcher_name.equals("")) return;
+
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+
+		iaddress1 = ea_address1.getValue();
+		iaddress2 = ea_address2.getValue();
+
+		izip = ea_zip.getValue();
+		icity = ea_city.getValue();
+		istate = ea_state.getValue();
+
+		iprimaryphone = ea_primaryphone.getValue();
+		iprimaryfax = ea_primaryfax.getValue();
+
+		iemail = ea_email.getValue();
+		ioutsource_name = ea_outsource_name.getValue();
+
+		iextranotes = ea_extranotes.getValue();
+		inewaddr_recno = kiboo.strip_PrefixID(ea_newaddr_recno.getValue());
+
+		// if no origid(newaddr_recno) .. should be a new entry
+
+		if(inewaddr_recno.equals(""))
+		{
+			sqlstatem = "insert into " + MODULE_DBNAME + " (dispatcher_name,address_1,address_2,city,zip,state," + 
+			"primaryphone,primaryfax,email,outsource_name,extranotes) values (" +
+			"'" + idispatcher_name + "'," +
+			"'" + iaddress1 + "'," +
+			"'" + iaddress2 + "'," +
+			"'" + icity + "'," +
+			"'" + izip + "'," +
+			"'" + istate + "'," +
+			"'" + iprimaryphone + "'," +
+			"'" + iprimaryfax + "'," +
+			"'" + iemail + "'," +
+			"'" + ioutsource_name + "'," +
+			"'" + iextranotes + "'" +
+			")" ;
+		}
+		else
+		{
+			sqlstatem = "update " + MODULE_DBNAME + " set " +
+			"dispatcher_name='" + idispatcher_name + "'," +
+			"address_1='" + iaddress1 + "'," +
+			"address_2='" + iaddress2 + "'," +
+			"city='" + icity + "'," +
+			"zip='" + izip + "'," +
+			"state='" + istate + "'," +
+			"primaryphone='" + iprimaryphone + "'," +
+			"primaryfax='" + iprimaryfax + "'," +
+			"email='" + iemail + "'," +
+			"outsource_name='" + ioutsource_name + "'," +
+			"extranotes='" + iextranotes + "' " +
+			"where origid=" + inewaddr_recno;
+		}
+		
+		// ival5 =	f5_recipientname.getValue();
+		// docstat.getSelectedItem().getLabel()
+		// alert(sqlstatem);
+
+		sql.execute(sqlstatem);
+		sql.close();
+		clearTextBox();
+		populateDispatcherDetailsBox(extra_addr_div);
+
+	} // end of updateExtraAddress()
+
+	void deleteExtraAddress()
+	{
+		// additional security check - to be coded.
+		// if nothing selected, don't proceed
+		irecno = kiboo.strip_PrefixID(ea_newaddr_recno.getValue());
+
+		if(irecno.equals("")) return;
+
+		if (Messagebox.show("Delete extra address", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+		{
+			sql = sqlhand.als_mysoftsql();
+			if(sql == null) return;
+			// need to redo this part, instead of deleting straight from table, set isDeleted flag - can have audit-trail later
+			sqlstatem = "delete from " + MODULE_DBNAME + " where origid=" + irecno;
+			sql.execute(sqlstatem);
+			sql.close();
+			clearTextBox();
+			populateDispatcherDetailsBox(extra_addr_div);
+		}
+	}
+
+} // end of class extraAddressInput
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// put new address rec-no into hidden textbox
+		irecno = dispatchers_lb.getSelectedItem().getLabel();
+		whathuh.ea_newaddr_recno.setValue(irecno);
+		whathuh.showDetails();
+	}
+}
+
+// Populate the listbox of all extra addresses for this customer
+// uses global-var the_arcode
+void populateDispatcherDetailsBox(Div thediv)
+{
+Object[] disps_lb_headers = {
+	new listboxHeaderWidthObj("DispId",true,"60px"),
+	new listboxHeaderWidthObj("Dispatcher name",true,""),
+	new listboxHeaderWidthObj("Outsource company",true,""),
+};
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	sqlstatem = "select * from " + MODULE_DBNAME + " order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist.size() == 0) return;
+
+	newlb = lbhand.makeVWListbox_Width(thediv,disps_lb_headers, "dispatchers_lb", 8);
+	newlb.addEventListener("onSelect", new MyListener());
+
+	String[] strarray = new String[3];
+	for(ilist : tlist)
+	{
+		t_origid = DISPATCHER_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		strarray[1] = ilist.get("dispatcher_name");
+		strarray[2] = ilist.get("outsource_name");
+		//lbhand.insertListItems(newlb,strarray,DISPATCHER_PREFIX,"");
+		lbhand.insertListItems(newlb,strarray,DISPATCHER_PREFIX,"");
+	}
+			
+} // end of populateDispatcherDetailsBox()
+
+]]>
+</zscript>
+
+<window id="dispatcher_management_win" title="Dispatcher Management" width="600px" height="550px" position="center" mode="overlapped" border="normal" closable="true">
+<div>
+
+<groupbox mold="3d" width="100%">
+	<caption label="Dispatchers/Outsource" />
+	<div id="extra_addr_div" />
+</groupbox>
+
+<hbox>
+	<!--
+	<button label="Refresh" onClick="populateDispatcherDetailsBox(extra_addr_div)" />
+	-->
+	<button label="Delete" style="font-size:9px" onClick="tNewDispatcherInput.deleteExtraAddress()" />
+</hbox>
+<separator height="10px" />
+
+<groupbox mold="3d" width="100%">
+<grid>
+<rows>
+	<row>
+		<label value="Name" style="font-size:9px" />
+		<textbox id="newdispatcher_name" style="font-size:9px" />
+		<label value="Outsource" style="font-size:9px" />
+		<textbox id="newoutsource_name" style="font-size:9px" />
+	</row>
+	<row spans=",3">
+		<label value="Address 1" style="font-size:9px" />
+		<textbox id="newaddress1" width="99%" style="font-size:9px" />
+	</row>
+	<row spans=",3">
+		<label value="Address 2" style="font-size:9px" />
+		<textbox id="newaddress2" width="99%" style="font-size:9px" />	
+	</row>
+	<row>
+		<label value="City" style="font-size:9px" />
+		<textbox id="newcity" style="font-size:9px" />
+		<label value="Postcode" style="font-size:9px" />
+		<textbox id="newzip" style="font-size:9px" />
+	</row>
+	<row spans=",,2">
+		<label value="State" style="font-size:9px" />
+		<textbox id="newstate" style="font-size:9px" />
+		<textbox id="newcountry" visible="false" style="font-size:9px" />
+	</row>
+	<row>
+		<label value="Telephone" style="font-size:9px" />
+		<textbox id="newprimaryphone" style="font-size:9px" />
+		<label value="Fax" style="font-size:9px" />
+		<textbox id="newprimaryfax" style="font-size:9px" />
+	</row>
+	<row spans=",,2">
+		<label value="Email" style="font-size:9px" />
+		<textbox id="newemail" style="font-size:9px" />
+		<textbox id="newaddr_recno" visible="false" style="font-size:9px" />
+	</row>
+	<row spans=",3">
+		<label value="Extra notes" style="font-size:9px" />
+		<textbox id="newextranotes" multiline="true" style="font-size:9px" width="99%" height="50px" />
+	</row>
+	
+</rows>
+</grid>
+
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+populateDispatcherDetailsBox(extra_addr_div);
+
+tNewDispatcherInput = new extraAddressInput(newaddress1, newaddress2, newzip, newcity, newstate,
+	newprimaryphone, newprimaryfax, newdispatcher_name, newoutsource_name, newemail, newextranotes, newaddr_recno);
+
+whathuh = tNewDispatcherInput;
+
+/*
+tDocumentDetails = new docDetailsInput(recname,consnum,delmethod_dd,dedate,docutype_dd);
+tDocumentDetails.showDetails();
+*/
+
+]]>
+</zscript>
+<separator height="10px" />
+<hbox>
+	<button id="updateornewbutton" label="Add dispatcher" style="font-size:9px" onClick="tNewDispatcherInput.updateExtraAddress()" />
+	<button label="Clear fields" style="font-size:9px" onClick="tNewDispatcherInput.clearTextBox()" />
+	<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+</hbox>
+</div>
+</window>
+</zk>
+

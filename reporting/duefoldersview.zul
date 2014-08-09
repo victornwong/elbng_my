@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="duefolders_view_mod"?>
+
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+/*
+---
+Title				: List out all due-folders from today and -7 days
+Version				: 
+Coding began date	: 29/6/2010
+Developers			: Victor
+---
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+global_selected_folder = "";
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("Company",true),
+	new listboxHeaderObj("#.Smp",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Created",true),
+	new listboxHeaderObj("Due",true),
+	new listboxHeaderObj("COA.PrnDate",true),
+	new listboxHeaderObj("COA.Date",true),
+};
+
+class folderslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		Listbox selectedone = event.getTarget();
+		selitem = selectedone.getSelectedItem();
+		global_selected_folder = getListcellItemLabel(selitem,1);
+
+		//alert(folderno);
+	}
+}
+
+// Show those due folders -- params are self-explainatory
+void populateAccordianPanel(String lb_ident, Div mDiv, Tab itab_label, String idate, String ibranch, String tab_label)
+{
+	Listbox newlb = makeVWListbox(mDiv, folders_lb_headers, lb_ident, 5);
+	itab_label.setLabel(tab_label + " : " + idate);
+
+	branchstr = "and branch='" + ibranch + "'";
+
+	cnm = customer_tb.getValue();
+
+	// if user is admin, chk branch_drd dropdown for branch
+	if(useraccessobj.accesslevel > 8)
+	{
+		admbcn = branch_drd.getSelectedItem().getLabel();
+		if(admbcn.equals("ALL"))
+			branchstr = "";
+		else
+			branchstr = "and branch='" + admbcn + "'";
+	}
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select origid,ar_code,folderno_str,folderstatus,datecreated,duedate,coadate,coaprintdate from " + JOBFOLDERS_TABLE + 
+		" where duedate='" + idate + "' and deleted=0 " + branchstr + " and folderstatus<>'DRAFT' order by origid";
+
+	// search based on customer if it's not empty
+	if(!cnm.equals(""))
+	{
+		xcnm = replaceSingleQuotes(cnm); // play safe
+		sqlstm = "select JobFolders.origid, JobFolders.ar_code, JobFolders.folderno_str, JobFolders.folderstatus, JobFolders.datecreated, " +
+			"JobFolders.duedate, JobFolders.coadate, JobFolders.coaprintdate, Customer.ar_code, Customer.customer_name " +
+			"from JobFolders left join Customer " +
+			"on customer.ar_code = jobfolders.ar_code " +
+			"where duedate='" + idate + "' and deleted=0 " + branchstr + 
+			"and Customer.customer_name like '%" + xcnm + "%' " +
+			"and folderstatus<>'DRAFT' order by JobFolders.origid";
+	}
+
+	jobrecs = sql.rows(sqlstm);
+	sql.close();
+	recsize = jobrecs.size();
+	if(recsize == 0 || jobrecs == null) return;
+
+	recsize = (recsize > 20) ? 20 : recsize;
+	newlb.setRows(recsize);
+
+	newlb.addEventListener("onSelect", new folderslb_Listener());
+
+	for(jrec : jobrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		iorigid = jrec.get("origid");
+		kabom.add(iorigid.toString());
+		folderno = jrec.get("folderno_str");
+		kabom.add(folderno);
+
+		iar_code = jrec.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				csrec = getCashSalesCustomerInfo_Rec(folderno);	// get rec based on folder no
+				if(csrec != null)
+					icompanyname = "CshAct: " + csrec.get("customer_name");
+				else
+					icompanyname = "CshAct: Undefined";
+			}
+			else
+				icompanyname = getCompanyName(iar_code);
+		}
+
+		icompanyname = trimListitemLabel(icompanyname,40);
+		kabom.add(icompanyname);
+		
+		numsamples = getNumberOfSamples_InFolder(iorigid);
+		kabom.add(numsamples.toString());
+		
+		kabom.add(jrec.get("folderstatus"));
+		
+		kabom.add(jrec.get("datecreated").toString().substring(0,10));
+		kabom.add(jrec.get("duedate").toString().substring(0,10));
+
+		coaprintdate = jrec.get("coaprintdate").toString().substring(0,10);
+		if(coaprintdate.equals("1900-01-01"))
+			coaprintdate = "----------";
+
+		kabom.add(coaprintdate);
+
+		coadate = jrec.get("coadate").toString().substring(0,10);
+		if(coadate.equals("1900-01-01"))
+			coadate = "----------";
+
+		kabom.add(coadate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Get startdate and populate all accordian's panels with folders and stuff
+// uses: due_today_tab , due_day1_tab - due_day6_tab
+// startdate
+void populateDueFolders_Accordian()
+{
+	global_selected_folder = ""; // reset this so document-link won't crash
+	todaydate = getDateFromDatebox(startdate);
+	mybranch = useraccessobj.branch;
+	
+	datecalcu = startdate.getValue();
+	
+	Calendar ikabomdate = Calendar.getInstance();
+	ikabomdate.setTime(datecalcu);
+	DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+	
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("todaydues_lb", duetoday_div, due_today_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day1_lb", dueday1_div, due_day1_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day2_lb", dueday2_div, due_day2_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day3_lb", dueday3_div, due_day3_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day4_lb", dueday4_div, due_day4_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day5_lb", dueday5_div, due_day5_tab, toshow, mybranch, dow_str);
+	
+	ikabomdate.add(ikabomdate.DAY_OF_MONTH, 1);
+	toshow = dateFormat.format(ikabomdate.getTime());
+	dow_str = mapWeekDayString(ikabomdate.get(Calendar.DAY_OF_WEEK));
+	populateAccordianPanel("day6_lb", dueday6_div, due_day6_tab, toshow, mybranch, dow_str);
+}
+
+// View documents-link for the folder - global_selected_folder set in the onSelect event-listener for listbox
+void doViewDoculinkPopup()
+{
+	if(global_selected_folder.equals("")) return;
+
+	documentLinkProp.global_eq_origid = global_selected_folder;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+void playFolderDriller(String ifoldno)
+{
+		theparam = "folderno=" + ifoldno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void folderdet_clicker()
+{
+	if(global_selected_folder.equals("")) return;
+	playFolderDriller(global_selected_folder);
+}
+
+Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Result",true),
+};
+
+void populateSample_Tests(int sampleid, Div mDiv, String lb_ident)
+{
+	Listbox newlb = makeVWListbox(mDiv, testparameters_lb_headers, lb_ident, 5);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select JobTestParameters.origid, JobTestParameters.mysoftcode, StockMasterDetails.Description from JobTestParameters " +
+	"left join StockMasterDetails on JobTestParameters.mysoftcode = StockMasterDetails.id " +
+	"where jobsamples_id=" + sampleid.toString();
+	
+	samptests = sql.rows(sqlstm);
+	sql.close();
+	
+	recc = samptests.size();
+	
+	if(recc == 0) return;
+	
+	for(smtest : samptests)
+	{
+		mysoftcode = smtest.get("mysoftcode").toString();
+		// stockrec = getStockMasterDetails(mysoftcode);
+
+		if(stockrec != null)
+		{
+			ArrayList kabom = new ArrayList();
+			jtporigid = smtest.get("origid").toString();
+			kabom.add(jtporigid);
+			kabom.add(mysoftcode);
+			kabom.add(smtest.get("Description"));
+			kabom.add(checkEmptyString(getChemResult_Final(jtporigid)));
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+}
+
+// Load tests assigned to folder - make use of global_selected_folder
+// tests_div
+void viewFolderTests_clicker()
+{
+	if(global_selected_folder.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	foldernum = convertFolderNoToInteger(global_selected_folder);
+
+	// get all samples from folder
+	sqlstm = "select origid,sampleid_str,samplemarking from " + JOBSAMPLES_TABLE + " where deleted=0 and jobfolders_id=" + foldernum.toString();
+	samplerecs = sql.rows(sqlstm);
+	sql.close();
+
+	// create a nice accordion-tabbox thing!!!
+	if(tests_div.getFellowIfAny("tests_tabbox") != null)
+		tests_tabbox.setParent(null); 	// remove any previous tabbox
+
+	Tabbox tabby = new Tabbox();
+	tabby.setId("tests_tabbox");
+	tabby.setParent(tests_div);
+	tabby.setMold("accordion");
+
+	Tabs tabbytabs = new Tabs();
+	tabbytabs.setParent(tabby);
+
+	Tabpanels tabpanels = new Tabpanels();
+	tabpanels.setParent(tabby);
+
+	for(smrec : samplerecs)
+	{
+		smarking = smrec.get("sampleid_str");
+		Tab tabs_tab = new Tab();
+		tabs_tab.setLabel(smarking);
+		tabs_tab.setStyle("font-size:9px");
+		tabs_tab.setParent(tabbytabs);
+
+		Tabpanel tabpanel = new Tabpanel();
+		tabpanel.setParent(tabpanels);
+
+		Div testdiv = new Div();
+		testdiv.setParent(tabpanel);
+
+		populateSample_Tests(smrec.get("origid"), testdiv, smarking);
+	}
+
+	divisionBreakdown_clicker(); // shows breakdown - supposed to be a separate button-clicker. no need
+
+}
+
+Object[] folderbreakdown_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Division",true),
+	new listboxHeaderObj("Section",true),
+	new listboxHeaderObj("#Smp",true),
+	new listboxHeaderObj("#Pend",true),
+};
+
+// Database util func: count the number of samples in a folder with the assigned test
+String countSamples_AssTest(String ifolderno, String imysoftcode)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select count(JobTestParameters.origid) as NumSamp from jobsamples " +
+		"left join jobfolders on jobsamples.jobfolders_id = jobfolders.origid " +
+		"left join jobtestparameters on jobtestparameters.jobsamples_id = jobsamples.origid " +
+		"where jobfolders.origid=" + ifolderno + " and jobtestparameters.mysoftcode=" + imysoftcode +
+		" and jobsamples.deleted=0";
+
+	kkb = sql.firstRow(sqlstm);
+	sql.close();
+
+	retval = "---";
+	if(kkb != null)
+		retval = kkb.get("NumSamp").toString();
+}
+
+// folderdetails_div , global_selected_folder
+void divisionBreakdown_clicker()
+{
+	if(global_selected_folder.equals("")) return;
+
+	foldernum = convertFolderNoToInteger(global_selected_folder).toString();
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select distinct jobtestparameters.mysoftcode, stockmasterdetails.description, stockmasterdetails.stock_cat, stockmasterdetails.groupcode " +
+	"from jobsamples left join jobfolders " +
+	"on jobsamples.jobfolders_id = jobfolders.origid " +
+	"left join jobtestparameters " +
+	"on jobtestparameters.jobsamples_id = jobsamples.origid " +
+	"left join stockmasterdetails " +
+	"on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+	"where jobfolders.origid=" + foldernum;
+	
+	foldbd = sql.rows(sqlstm);
+	sql.close();
+	
+	if(foldbd.size() < 1) return;
+	
+	Listbox newlb = makeVWListbox(folderdetails_div, folderbreakdown_lb_headers, "breakdown_lb", 10);
+	
+	for(mpi : foldbd)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		mysoftcode = mpi.get("mysoftcode").toString();
+		if(mysoftcode != null)
+		{
+			kabom.add(mysoftcode);
+			kabom.add(trimListitemLabel(mpi.get("description"),30));
+			kabom.add(mpi.get("stock_cat"));
+			kabom.add(mpi.get("groupcode"));
+
+			//kabom.add(countSamples_AssTest(foldernum,mysoftcode));
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+}
+
+]]>
+</zscript>
+
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of document management popup -->
+
+<div width="1200px">
+<panel id="duefoldersview_panel" title="Job/Folders Due List" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<button label="X Close panel" style="font-size:9px" onClick="duefoldersview_panel.setParent(null)" />
+<hbox>
+	<vbox>
+		<groupbox mold="3d" width="100%">
+			<caption label="Search parameters" />
+			<vbox>
+				<hbox>
+					<label value="Select date" style="font-size:9px" />
+					<datebox id="startdate" format="yyyy-MM-dd" />
+					<separator width="10px"/>
+					<label value="End date" visible="false" />
+					<datebox id="enddate" format="yyyy-MM-dd" visible="false" />
+
+					<button label="Search/Refresh" style="font-size:9px" onClick="populateDueFolders_Accordian()" />
+
+					<div id="branch_selector" visible="false" >
+						<hbox>
+							<label value="Branch" style="font-size:9px" />
+							<listbox id="branch_drd" mold="select" style="font-size:9px" />
+						</hbox>
+					</div>
+
+					<separator width="20px" />
+					<button id="viewdoculinks_btn" label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+					<button label="View tests" style="font-size:9px" onClick="viewFolderTests_clicker()" />
+					<!-- <button label="breakdown" style="font-size:9px" onClick="divisionBreakdown_clicker()" /> -->
+					<button label="Folder details" style="font-size:9px" onClick="folderdet_clicker()" />
+
+					<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+				</hbox>
+				<hbox>
+					<label value="Customer" style="font-size:9x" />
+					<textbox id="customer_tb" width="200px" style="font-size:9x" />
+				</hbox>
+			</vbox>
+		</groupbox>
+
+		<!-- search results box -->
+		<div width="800px" >
+			<groupbox mold="3d" width="100%">
+				<caption label="Due folders" />
+				<vbox>
+					<tabbox mold="accordion">
+					<tabs>
+						<tab id="due_today_tab" label="Folders due" />
+						<tab id="due_day1_tab" label="Due : " />
+						<tab id="due_day2_tab" label="Due : " />
+						<tab id="due_day3_tab" label="Due : " />
+						<tab id="due_day4_tab" label="Due : " />
+						<tab id="due_day5_tab" label="Due : " />
+						<tab id="due_day6_tab" label="Due : " />
+					</tabs>
+					<tabpanels>
+					<!-- today's due -->
+					<tabpanel>
+						<div id="duetoday_div" />
+					</tabpanel>
+
+					<!-- day 1 -->
+					<tabpanel>
+						<div id="dueday1_div" />
+					</tabpanel>
+
+					<!-- day 2 -->
+					<tabpanel>
+						<div id="dueday2_div" />
+					</tabpanel>
+
+					<!-- day 3 -->
+					<tabpanel>
+						<div id="dueday3_div" />
+					</tabpanel>
+
+					<!-- day 4 -->
+					<tabpanel>
+						<div id="dueday4_div" />
+					</tabpanel>
+
+					<!-- day 5 -->
+					<tabpanel>
+						<div id="dueday5_div" />
+					</tabpanel>
+
+					<!-- day 6 -->
+					<tabpanel>
+						<div id="dueday6_div" />
+					</tabpanel>
+					</tabpanels>
+					</tabbox>
+				</vbox>
+			</groupbox>
+		</div>
+	</vbox>
+
+	<vbox>
+	<groupbox mold="3d">
+		<caption label="Tests breakdown" />
+		<div id="folderdetails_div" />
+	</groupbox>
+
+	<groupbox mold="3d">
+		<caption label="Tests" />
+		<div id="tests_div" />
+	</groupbox>
+	</vbox>
+
+</hbox>
+</panelchildren>
+</panel>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+// Set search startdate and enddate to today's date
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+populateDropdownListbox(branch_drd, dd_branches);
+
+// if user is admin - can see other shits
+if(useraccessobj.accesslevel == 9)
+{
+	branch_selector.setVisible(true);
+}
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+
+</zk>
+

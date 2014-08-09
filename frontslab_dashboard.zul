@@ -1,0 +1,1459 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="front_slab_mod"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobalfuncs.zs" />
+<zscript src="alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal/samplereg_funcs.zs" />
+<zscript src="alsglobal/securityfuncs.zs" />
+<zscript src="alsglobal/doculink_funcs.zs" />
+<zscript src="alsglobal/divisiongroup_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+/*
+Title: Front-slab for e-Labman, sorta like Dashboard
+Written by: Victor Wong
+Date: 6/7/2010
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+ALS_stock_cat = "";
+ALS_group_code = "";
+
+global_selected_folder = "";
+global_selected_sampleid = "";
+global_sjn_folder = "";
+
+Div global_sjn_div = null;
+
+String[] folderstatus_lookup = { "NON-RELEASED", "ALL" };
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// Just show Division listbox in any Div, same codes as populateDivisionColumn but without the onSelect event listener
+// should be general purpose enuf, but needs convertCodeToLongName() in alsglobal/divisiongroup_funcs.zs
+// listbox id = division_related_lb, uses alsdivision_lb_headers
+// division_rel_div
+void showDivisionListbox(Div iwhichdiv)
+{
+	Listbox newlb = makeVWListbox(iwhichdiv, alsdivision_lb_headers, "division_related_lb", 1);
+	newlb.setMold("select");
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist.size() < 1) return;
+
+	String[] strarray = new String[1];
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = tests_description_lb.getSelectedItem().getLabel();
+		idex = testparameters_lb.getSelectedIndex();
+		// refresh folder->samples->tests listbox and select what's been previously selected
+		//startTestParametersSearch(sampleid);
+		testparameters_lb.setSelectedIndex(idex);
+	}
+}
+
+Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstatem = "select id,description,description2 from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' " +
+		"and groupcode='" + igroupcode + "' " +
+		"order by description" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	//Listbox newlb = makeALSTestParametersListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, testparameters_lb_headers, "tests_description_lb", 20);
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+	String[] strarray = new String[3];
+
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+
+		strarray[0] = ilist.get("id").toString();
+		strarray[1] = ilist.get("description");
+		strarray[2] = ilist.get("description2");
+
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		ALS_group_code = section_groupcode_lb.getSelectedItem().getLabel();
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+		//populateTestParametersColumn(testparameters_column,ALS_stock_cat,iwhat);
+	}
+}
+
+Object[] alssection_lb_headers = {
+	new listboxHeaderObj("",true)
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstatem = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	ALS_stock_cat = istock_cat;
+
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	//Listbox newlb = makeALSSectionListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, alssection_lb_headers, "section_groupcode_lb", 20);
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+	String[] strarray = new String[1];
+
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		strarray[0] = ilist.get("groupcode");
+		insertListItems(newlb,strarray,"true");
+	}
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+		// populate section column
+		iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+		populateSectionColumn(section_column,iwhatcode);
+	}
+}
+
+Object[] alsdivision_lb_headers = {
+	new listboxHeaderObj("",true)
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	// Listbox newlb = makeALSDivisionListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, alsdivision_lb_headers, "division_stockcat_lb", 20);
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+
+	String[] strarray = new String[1];
+
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+} // end of populateDivisionColumn()
+
+// Populate tree with sampleID -> tests
+populateSamplesTestParameters(Tree itree, String ifolderno)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	// get all sample IDs for folderno
+	// 4/3/2010: sql statement for admin login - can see even deleted samples
+
+	sqlstatem = "select deleted,sampleid_str,origid,samplemarking from JobSamples where jobfolders_id=" + ifolderno + " and deleted=0 order by sampleid_str asc";
+
+	if(useraccessobj.accesslevel > 8)
+		sqlstatem = "select deleted,sampleid_str,origid,samplemarking from JobSamples where jobfolders_id=" + ifolderno + " order by sampleid_str asc";
+
+	allsampleids = sql.rows(sqlstatem);
+	
+	if(allsampleids != null)
+	{
+		Treechildren tocheck = itree.getTreechildren();
+		if(tocheck != null)	tocheck.setParent(null);
+
+		// create a new treechildren for the tree
+		Treechildren mychildren = new Treechildren();
+		mychildren.setParent(itree);
+
+		// loop through each sample IDs and get tests
+		for(eachsampleid : allsampleids)
+		{
+			sdelstr = (eachsampleid.get("deleted") == 1) ? " [del]" : "";
+
+			sampleidstr = eachsampleid.get("sampleid_str") + sdelstr;
+			sampleidno = eachsampleid.get("origid");
+			samplemark = eachsampleid.get("samplemarking");
+
+			// if sample id str in table ain't set.. set it. old codes didn't update the sample id str properly
+			if(sampleidstr.equals(""))
+			{
+				sampleidstr = param_folderno + padZeros5(sampleidno); // param_folderno is global, def at top
+
+				// 27/2/2010: update sampleid_str field incase of old codes never do it
+				sqls3 = "update JobSamples set sampleid_str='" + sampleidstr + "' where origid=" + sampleidno.toString();
+				sql.execute(sqls3);
+			}
+
+			Treeitem titem = insertTreeLeaf(mychildren, sampleidstr, "font-weight:bold; background:#898989; color:#ffffff");
+
+			// get tests assigned for the sample-id
+
+			sqlstatem2 = "select mysoftcode from JobTestParameters where jobsamples_id=" + sampleidno.toString();
+			teststosampleid = sql.rows(sqlstatem2);
+
+			if(teststosampleid.size() > 0)
+			{
+				Treechildren newone = new Treechildren();
+				newone.setParent(titem);
+
+				// insert sample marking as leaf if available
+				if(!samplemark.equals(""))
+				{
+					smtrimed = trimListitemLabel(samplemark,50);
+					insertTreeLeaf(newone, "SM: " + smtrimed, "font-size:9px; background:#4466bb; color:#ffffff");
+				}
+
+				// loop through all the tests assigned and put them as leafs
+				for(eacht2s : teststosampleid)
+				{
+					mysoftcode = eacht2s.get("mysoftcode");
+					stockrec = getStockMasterDetails(mysoftcode.toString());
+					testdesc = "-Undefined-";
+
+					if(stockrec != null)
+					{
+						testdesc = stockrec.get("Description") + " (" + stockrec.get("Description2") + ")" ;
+						testdesc = trimListitemLabel(testdesc,50);
+					}
+					insertTreeLeaf(newone,testdesc,"font-size:9px");
+				}
+			}
+		}
+	}
+	sql.close();
+} // end of populateSamplesTestParameters()
+
+Object[] testsamplescount_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+	new listboxHeaderObj("#Samp",true),
+};
+
+void searchCountThoseTests_clicker()
+{
+	if(ALS_stock_cat.equals("") || ALS_group_code.equals("")) return;
+	
+	userbranch = useraccessobj.branch;
+	branchstr = "and jobfolders.branch='" + userbranch + "' ";
+	if(userbranch.equals("ALL"))
+	{
+		branchstr = "";
+	}
+	
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+	
+	Listbox newlb = makeVWListbox(testparameters_column,testsamplescount_lb_headers,"testsamplescount_lb", 10);
+	
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+sqlstm = "select count(jobtestparameters.mysoftcode) as TestCounts,stockmasterdetails.description, stockmasterdetails.description2, stockmasterdetails.id " +
+"from jobtestparameters " +
+"left join jobsamples on jobtestparameters.jobsamples_id = jobsamples.origid " +
+"left join jobfolders on jobsamples.jobfolders_id = jobfolders.origid " +
+"left join stockmasterdetails on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+"where stockmasterdetails.stock_cat='" + ALS_stock_cat + "' " +
+"and stockmasterdetails.groupcode='" + ALS_group_code + "' " +
+"and jobsamples.deleted = 0 and jobfolders.deleted = 0 " +
+branchstr + 
+"and jobfolders.datecreated between '" + sdate + "' and '" + edate + "' " +
+"group by jobtestparameters.mysoftcode,stockmasterdetails.description, stockmasterdetails.description2,stockmasterdetails.id " +
+"order by stockmasterdetails.description";
+
+	countrows = sql.rows(sqlstm);
+	sql.close();
+
+	if(countrows.size() < 1) return;
+	newlb.setRows(20);
+
+	for(dpi : countrows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString()); // mysoftcode from stockmasterdetails
+		kabom.add(trimListitemLabel(dpi.get("description"), 30));
+		kabom.add(trimListitemLabel(dpi.get("description2"), 30));
+		kabom.add(dpi.get("TestCounts").toString());
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Unified all folders-search listbox population to this func
+void megaPopulateFoldersListbox(Object ifldrecs, Listbox ilistbox)
+{
+	for(dpi : ifldrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		iorigid = dpi.get("origid");
+		ifolderno = dpi.get("folderno_str");
+
+		kabom.add(ifolderno);
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("duedate").toString().substring(0,10));
+
+		coaprintdate = dpi.get("coaprintdate").toString().substring(0,10);
+		coaprintdate_str = (coaprintdate.equals("1900-01-01")) ? "----------" : coaprintdate;
+		kabom.add(coaprintdate_str);
+
+		coadate = dpi.get("coadate").toString().substring(0,10);
+		coadate_str = (coadate.equals("1900-01-01")) ? "----------" : coadate;
+		kabom.add(coadate_str);
+
+		numsamples = getNumberOfSamples_InFolder(iorigid);
+		kabom.add(numsamples.toString());
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = dpi.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = dpi.get("customer_name");
+
+		// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+		{
+			csrec = getCashSalesCustomerInfo_Rec(ifolderno);	// get rec based on folder no
+			if(csrec != null)
+				icompanyname = "CshAct: " + csrec.get("customer_name");
+			else
+				icompanyname = "CshAct: Undefined";
+		}
+
+		kabom.add(icompanyname);
+		kabom.add(dpi.get("folderstatus"));
+		kabom.add(dpi.get("branch"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(ilistbox,strarray,"false");
+	}
+}
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Prnt.Date",true),
+	new listboxHeaderObj("COA.Date",true),
+	new listboxHeaderObj("Samples",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+class folderjobs_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// use to update JobFolders.jobnotes
+		selitem = event.getReference();
+		fldn = getListcellItemLabel(selitem,0);
+		kkb = convertFolderNoToInteger(fldn).toString();
+		foldrec = getFolderJobRec(kkb);
+
+		if(foldrec != null)
+		{
+			first_jobnotes_tb.setValue(foldrec.get("jobnotes"));
+		}
+	}
+}
+
+void testCounterDrill_clicker()
+{
+	if(testparameters_column.getFellowIfAny("testsamplescount_lb") == null) return;
+	if(testsamplescount_lb.getSelectedIndex() == -1) return;
+
+	Listbox newlb = makeVWListbox(searchfolders_div,folders_lb_headers,"folderjobs_lb", 10);
+
+	mysoftcode = testsamplescount_lb.getSelectedItem().getLabel(); // first-col is the mysoft code
+
+	userbranch = useraccessobj.branch;
+	branchstr = "and jobfolders.branch='" + userbranch + "' ";
+	if(userbranch.equals("ALL"))
+	{
+		branchstr = "";
+	}
+
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+sqlstm = "select distinct jobfolders.folderno_str, customer.customer_name, jobfolders.datecreated, " +
+"jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.coadate, jobfolders.coaprintdate," + 
+"jobfolders.duedate, jobfolders.tat, jobfolders.branch " +
+" from jobtestparameters " +
+"left join jobsamples on jobtestparameters.jobsamples_id = jobsamples.origid " +
+"left join jobfolders on jobsamples.jobfolders_id = jobfolders.origid " +
+"left join customer on jobfolders.ar_code = customer.ar_code " +
+"where jobtestparameters.mysoftcode=" + mysoftcode +
+" and jobsamples.deleted = 0 and jobfolders.deleted = 0 " +
+branchstr +
+"and jobfolders.datecreated between '" + sdate + "' and '" + edate + "'";
+
+	foldrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(foldrecs.size() < 1) return;
+	newlb.setRows(15);
+	semua1.setVisible(true);
+
+	megaPopulateFoldersListbox(foldrecs,newlb);
+	newlb.addEventListener("onSelect", new folderjobs_lb_Listener());
+}
+
+// View folder-details clicker
+// 13/7/2010: mod a bit, added iwhichtab to allow same func for other div/tab
+void localPlayDriller(int iwhichtab)
+{
+	ifolderno = "";
+
+	if(iwhichtab == 1)
+	{
+		if(searchfolders_div.getFellowIfAny("folderjobs_lb") == null) return;
+		if(folderjobs_lb.getSelectedIndex() == -1) return;
+		ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+	}
+
+	if(iwhichtab == 2)
+	{
+		if(div_found_folders_div.getFellowIfAny("div_folderjobs_lb") == null) return;
+		if(div_folderjobs_lb.getSelectedIndex() == -1) return;
+		ifolderno = div_folderjobs_lb.getSelectedItem().getLabel();
+	}
+
+	if(iwhichtab == 3)
+	{
+		
+		if(duefolders_div.getFellowIfAny("due_folderjobs_lb") == null) return;
+		if(due_folderjobs_lb.getSelectedIndex() == -1) return;
+		ifolderno = due_folderjobs_lb.getSelectedItem().getLabel();
+	}
+	
+	if(iwhichtab == 5)
+	{
+		//jobnotes_found_div,jobnotes_lb_headers,"jobnotes_lb"
+		if(jobnotes_found_div.getFellowIfAny("jobnotes_lb") == null) return;
+		if(jobnotes_lb.getSelectedIndex() == -1) return;
+		ifolderno = jobnotes_lb.getSelectedItem().getLabel();
+	}
+
+	if(!ifolderno.equals(""))
+	{
+		theparam = "folderno=" + ifolderno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+	}
+}
+
+Object[] folderbreakdown_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Division",true),
+	new listboxHeaderObj("Section",true),
+	new listboxHeaderObj("#Smp",true),
+	new listboxHeaderObj("#Pend",true),
+};
+
+// codes from duefoldersview.zul->divisionBreakdown_clicker()
+void divisionBreakdown(String foldme)
+{
+	foldernum = convertFolderNoToInteger(foldme).toString();
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select distinct jobtestparameters.mysoftcode, stockmasterdetails.description, stockmasterdetails.stock_cat, stockmasterdetails.groupcode " +
+	"from jobsamples left join jobfolders " +
+	"on jobsamples.jobfolders_id = jobfolders.origid " +
+	"left join jobtestparameters " +
+	"on jobtestparameters.jobsamples_id = jobsamples.origid " +
+	"left join stockmasterdetails " +
+	"on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+	"where jobfolders.origid=" + foldernum;
+	
+	foldbd = sql.rows(sqlstm);
+	sql.close();
+
+	Listbox newlb = makeVWListbox(testbreakdown_div, folderbreakdown_lb_headers, "breakdown_lb", 10);
+
+	if(foldbd.size() < 1) return;
+
+	for(mpi : foldbd)
+	{
+		ArrayList kabom = new ArrayList();
+
+		mysoftcode = mpi.get("mysoftcode");
+		if(mysoftcode != null)
+		{
+			mysc = mysoftcode.toString();
+			kabom.add(mysc);
+			kabom.add(trimListitemLabel(mpi.get("description"),40));
+			kabom.add(mpi.get("stock_cat"));
+			kabom.add(mpi.get("groupcode"));
+
+			//kabom.add(countSamples_AssTest(foldernum,mysoftcode));
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+}
+
+class divFolderjobs_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_folder = getListcellItemLabel(selitem,0);
+		breakdown_lbl.setValue(global_selected_folder);
+		divisionBreakdown(global_selected_folder);
+
+		kkb = convertFolderNoToInteger(global_selected_folder).toString();
+		populateSamplesTestParameters(sampletests_tree,kkb);
+
+		// to show JobFolders.jobnotes
+		foldrec = getFolderJobRec(kkb);
+
+		if(foldrec != null)
+		{
+			second_jobnotes_tb.setValue(foldrec.get("jobnotes"));
+		}
+
+		sampletests_tree.setVisible(true);
+		jobnotes_2_div.setVisible(true);
+	}
+}
+
+// List out folders with test-assigned for selected division - same code base testCounterDrill_clicker()
+// division_rel_div
+void divRelatedSearch_clicker()
+{
+	Listbox newlb = makeVWListbox(div_found_folders_div,folders_lb_headers,"div_folderjobs_lb", 10);
+
+	userbranch = useraccessobj.branch;
+	branchstr = "and jobfolders.branch='" + userbranch + "' ";
+	if(userbranch.equals("ALL")) branchstr = "";
+
+	sdate = getDateFromDatebox(div_startdate);
+    edate = getDateFromDatebox(div_enddate);
+
+	if(division_rel_div.getFellowIfAny("division_related_lb") == null) return;
+	if(division_related_lb.getSelectedIndex() == -1) return;
+
+	iwhat = division_related_lb.getSelectedItem().getLabel();
+	iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+sqlstm = "select distinct jobfolders.folderno_str, customer.customer_name, jobfolders.datecreated, " +
+"jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus," + 
+"jobfolders.duedate, jobfolders.tat, jobfolders.branch, jobfolders.coaprintdate, jobfolders.coadate " +
+" from jobtestparameters " +
+"left join jobsamples on jobtestparameters.jobsamples_id = jobsamples.origid " +
+"left join jobfolders on jobsamples.jobfolders_id = jobfolders.origid " +
+"left join customer on jobfolders.ar_code = customer.ar_code " +
+"left join stockmasterdetails on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+"where stockmasterdetails.stock_cat='" + iwhatcode + "' " +
+" and jobsamples.deleted = 0 and jobfolders.deleted = 0 " +
+branchstr +
+"and jobfolders.datecreated between '" + sdate + "' and '" + edate + "'";
+
+	foldrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(foldrecs.size() < 1) return;
+	newlb.setRows(20);
+	division_breakdown_div.setVisible(true);
+	megaPopulateFoldersListbox(foldrecs,newlb);
+	newlb.addEventListener("onSelect", new divFolderjobs_lb_Listener());
+	divexportexcel_btn.setVisible(true);
+}
+
+// Abit of mod to the original code, added iwhich to select which DIV and Listbox to check
+void doViewDoculinkPopup(int iwhich)
+{
+	lstitem = null;
+
+	if(iwhich == 1)
+	{
+		if(searchfolders_div.getFellowIfAny("folderjobs_lb") == null) return;
+		if(folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = folderjobs_lb.getSelectedItem();
+	}
+
+	if(iwhich == 2)
+	{
+		if(div_found_folders_div.getFellowIfAny("div_folderjobs_lb") == null) return;
+		if(div_folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = div_folderjobs_lb.getSelectedItem();
+	}
+	
+	if(iwhich == 3)
+	{
+		if(duefolders_div.getFellowIfAny("due_folderjobs_lb") == null) return;
+		if(due_folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = due_folderjobs_lb.getSelectedItem();
+	}
+	
+	if(iwhich == 5)
+	{
+		if(jobnotes_found_div.getFellowIfAny("jobnotes_lb") == null) return;
+		if(jobnotes_lb.getSelectedIndex() == -1) return;
+		lstitem = jobnotes_lb.getSelectedItem();
+	}
+
+	foldern = getListcellItemLabel(lstitem,0);
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(hiddendatebox);
+}
+
+class due_folderjobs_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		kfog = getListcellItemLabel(selitem,0);
+		kkb = convertFolderNoToInteger(kfog).toString();
+
+		// to show JobFolders.jobnotes
+		foldrec = getFolderJobRec(kkb);
+
+		if(foldrec != null)
+		{
+			third_jobnotes_tb.setValue(foldrec.get("jobnotes"));
+		}
+
+		jobnotes_3_div.setVisible(true);
+	}
+}
+
+// Just list those folders duedate = due_startdate
+void searchDueFolders_clicker()
+{
+	Listbox newlb = makeVWListbox(duefolders_div,folders_lb_headers,"due_folderjobs_lb", 10);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	userbranch = useraccessobj.branch;
+	branchstr = "and jobfolders.branch='" + userbranch + "' ";
+	if(userbranch.equals("ALL"))
+	{
+		branchstr = "";
+	}
+
+	idate = getDateFromDatebox(due_startdate);
+
+	sqlstm = "select JobFolders.origid, JobFolders.ar_code, JobFolders.folderno_str, JobFolders.folderstatus, JobFolders.datecreated, " +
+	"JobFolders.duedate, JobFolders.coadate, JobFolders.coaprintdate, JobFolders.branch, customer.customer_name from " + JOBFOLDERS_TABLE + 
+	" left join customer on jobfolders.ar_code = customer.ar_code " +
+	" where JobFolders.duedate='" + idate + "' and JobFolders.deleted=0 " + branchstr +
+	"and JobFolders.folderstatus<>'DRAFT' order by JobFolders.origid";
+
+	foldrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(foldrecs.size() < 1) return;
+
+	megaPopulateFoldersListbox(foldrecs,newlb);
+	newlb.addEventListener("onSelect", new due_folderjobs_lb_Listener());
+	newlb.setRows(30);
+}
+
+// Save JobFolders.jobnotes from tabs - each tabs will have different listbox and jobnotes-textbox
+void saveJobNotes(int iwhich, Textbox ijobnotes)
+{
+/*
+	boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+	if(!can_access)
+	{
+	
+		return;
+	}
+*/
+	if(useraccessobj.accesslevel < 3)
+	{
+		showMessageBox("Access level cannot modify job-notes.. sorry");	
+		return;
+	}
+
+	lstitem = null;
+
+	if(iwhich == 1)
+	{
+		if(searchfolders_div.getFellowIfAny("folderjobs_lb") == null) return;
+		if(folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = folderjobs_lb.getSelectedItem();
+	}
+
+	if(iwhich == 2)
+	{
+		if(div_found_folders_div.getFellowIfAny("div_folderjobs_lb") == null) return;
+		if(div_folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = div_folderjobs_lb.getSelectedItem();
+	}
+
+	if(iwhich == 3)
+	{
+		if(duefolders_div.getFellowIfAny("due_folderjobs_lb") == null) return;
+		if(due_folderjobs_lb.getSelectedIndex() == -1) return;
+		lstitem = due_folderjobs_lb.getSelectedItem();
+	}
+
+	if(iwhich == 5)
+	{
+		if(jobnotes_found_div.getFellowIfAny("jobnotes_lb") == null) return;
+		if(jobnotes_lb.getSelectedIndex() == -1) return;
+		lstitem = jobnotes_lb.getSelectedItem();
+	}
+
+	if(lstitem != null)
+	{
+		foldern = getListcellItemLabel(lstitem,0);
+		forigid = convertFolderNoToInteger(foldern).toString();
+
+		jobnotes = replaceSingleQuotes(ijobnotes.getValue());
+
+		if(forigid != 0)
+		{
+			sql = als_mysoftsql();
+			if(sql == null ) return;
+			todaysdate = getDateFromDatebox(hiddendatebox);
+
+			// 19/7/2010: TeckMaan suggested to include a history feature for notes - incase others accidentally delete lines
+			// get old JobFolders.jobnotes
+			sqlstm1 = "select jobnotes from JobFolders where origid=" + forigid;
+			oldj = sql.firstRow(sqlstm1);
+			// insert into JobNotes_History table
+			insertJobNotesHistory_Rec(forigid, oldj.get("jobnotes"), jobnotes, todaysdate,useraccessobj.username); // samplereg_funcs.zs
+		
+			// update JobFolders.jobnotes and JobFolders.lastjobnotesdate
+			sqlstm = "update JobFolders set jobnotes='" + jobnotes + "', lastjobnotesdate='" + todaysdate + "' where origid=" + forigid;
+			sql.execute(sqlstm);
+			sql.close();
+			showMessageBox("Job notes saved..");
+		}
+	}
+}
+
+Object[] samplejobnotes_lb_headers = {
+	new listboxHeaderObj("sampleorigid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Job.Notes",true),
+};
+
+class samplejobnotes_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		kfog = getListcellItemLabel(selitem,0);
+		
+		global_selected_sampleid = getListcellItemLabel(selitem,0); // 1st col is jobsamples.origid
+	}
+}
+
+// to show Per Sample's job-notes -- iorigid = JobFolder.origid
+// samples_jobnote_div
+void showPerSample_JobNotes(String iorigid)
+{
+	Listbox newlb = makeVWListbox(global_sjn_div,samplejobnotes_lb_headers,"samplejobnotes_lb",18);
+	
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select origid,sampleid_str,extranotes from JobSamples where deleted=0 and jobfolders_id=" + iorigid;
+	sampjns = sql.rows(sqlstm);
+	sql.close();
+
+	if(sampjns.size() < 1) return;
+
+	newlb.addEventListener("onSelect", new samplejobnotes_lb_Listener());
+
+	for(dpi : sampjns)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("sampleid_str"));
+		jnotes = trimListitemLabel(dpi.get("extranotes"),49);
+		if(jnotes.equals("")) jnotes = "----------";
+		kabom.add(jnotes);
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	//persample_jn_btn.setVisible(true);
+}
+
+// global_selected_sampleid sjn_caption
+void perSamples_JobNotes_clicker()
+{
+	if(samples_jobnote_div.getFellowIfAny("samplejobnotes_lb") == null) return;
+	if(samplejobnotes_lb.getSelectedIndex() == -1) return;
+
+	selitem = samplejobnotes_lb.getSelectedItem();
+	global_selected_sampleid = samplejobnotes_lb.getSelectedItem().getLabel(); // 1st col is JobSamples.origid
+	samprec = getFolderSampleRec(global_selected_sampleid);
+	if(samprec == null) return;
+	
+	sjn_caption.setLabel("SampleID: " + samprec.get("sampleid_str"));
+	sjn_extranotes.setValue(samprec.get("extranotes"));
+	sjn_samplemarking.setValue(samprec.get("samplemarking"));
+	
+	perSample_Tests_clicker();
+
+	samplejobnotes_popup.open(selitem);
+}
+
+
+Object[] persampletests_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Div",true),
+	new listboxHeaderObj("Section",true),
+};
+
+// let user view per-sample's assigned tests
+//	<div id="vst_tests_div" />
+void perSample_Tests_clicker()
+{
+	if(samples_jobnote_div.getFellowIfAny("samplejobnotes_lb") == null) return;
+	if(samplejobnotes_lb.getSelectedIndex() == -1) return;
+	
+	selitem = samplejobnotes_lb.getSelectedItem();
+	origid = getListcellItemLabel(selitem,0); // 1st col is JobSamples.origid
+	
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select JobTestParameters.mysoftcode,StockMasterDetails.Description,StockMasterDetails.Stock_Cat,StockMasterDetails.GroupCode from " +
+	"JobTestParameters left join StockMasterDetails on JobTestParameters.mysoftcode=StockMasterDetails.id " +
+	"left join JobSamples on JobTestParameters.jobsamples_id=JobSamples.origid " +
+	"where JobSamples.deleted=0 and JobTestParameters.jobsamples_id=" + origid +
+	" order by StockMasterDetails.Description";
+	testrows = sql.rows(sqlstm);
+	sql.close();
+
+	rowcc = testrows.size();
+
+	if(rowcc < 1) return;
+	Listbox newlb = makeVWListbox(vst_tests_div,persampletests_lb_headers,"persampletests_lb",rowcc);
+	if(rowcc > 5) newlb.setRows(8);
+
+	for(dpi : testrows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("mysoftcode").toString());
+		kabom.add(trimListitemLabel(dpi.get("Description"),35));
+		kabom.add(dpi.get("Stock_Cat"));
+		kabom.add(dpi.get("GroupCode"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+	//viewsample_tests_popup.open(selitem);
+}
+
+// popup save sample jobnotes clicker
+void sjn_savenotes_clicker()
+{
+	if(global_selected_sampleid.equals("")) return;
+	sampjn = replaceSingleQuotes(sjn_extranotes.getValue());
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "update JobSamples set extranotes='" + sampjn + "' where origid=" + global_selected_sampleid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showPerSample_JobNotes(global_sjn_folder); // refresh lor
+	samplejobnotes_popup.close();
+}
+
+Object[] jobnotes_lb_headers = {
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Job.Notes",true),
+	new listboxHeaderObj("Last.Update",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true),
+};
+
+class jobnotes_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		kfog = getListcellItemLabel(selitem,0);
+		global_sjn_folder = convertFolderNoToInteger(kfog).toString();
+
+		// to show JobFolders.jobnotes
+		foldrec = getFolderJobRec(global_sjn_folder);
+
+		if(foldrec != null)
+		{
+			fifth_jobnotes_tb.setValue(foldrec.get("jobnotes"));
+		}
+
+		jobnotes_5_div.setVisible(true);
+		
+		// show samples job-notes too
+		showPerSample_JobNotes(global_sjn_folder);
+		jobnotes_5_samples_div.setVisible(true);
+	}
+}
+
+
+// Show all JobFolders.jobnotes if any and labfolderstatus <> RELEASED
+// labfolderstatus=RELEASED will be set in update_realcoa_date.zul
+void showJobNotesFound()
+{
+	Listbox newlb = makeVWListbox(jobnotes_found_div,jobnotes_lb_headers,"jobnotes_lb", 20);
+	jobnotesfound_div.setVisible(true);
+	
+	fldst = folderstat_ddb.getSelectedItem().getLabel(); // get drop-down folder.status selection
+	foldstat_where = "and JobFolders.labfolderstatus <> '" + FOLDERRELEASED + "' ";
+
+	if(fldst.equals("ALL")) foldstat_where = "";
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstm = "select JobFolders.origid, JobFolders.folderno_str, JobFolders.ar_code, JobFolders.jobnotes, JobFolders.lastjobnotesdate, " +
+	"JobFolders.branch, JobFolders.folderstatus, customer.customer_name " +
+	"from JobFolders left join customer on JobFolders.ar_code = customer.ar_code " +
+	"where JobFolders.deleted=0 and JobFolders.jobnotes <> '' and JobFolders.lastjobnotesdate <> '1900-01-01 00:00:00.000' " +
+	foldstat_where +
+	"order by JobFolders.origid desc";
+
+	jnrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(jnrecs.size() < 1) return;
+	
+	newlb.addEventListener("onSelect", new jobnotes_lb_Listener());
+	
+	for(dpi : jnrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		ifolderno = dpi.get("folderno_str");
+		
+		//kabom.add(dpi.get("origid").toString());
+		kabom.add(ifolderno);
+		
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = dpi.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = dpi.get("customer_name");
+
+		// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+		{
+			csrec = getCashSalesCustomerInfo_Rec(ifolderno);	// get rec based on folder no
+			if(csrec != null)
+				icompanyname = "CshAct: " + csrec.get("customer_name");
+			else
+				icompanyname = "CshAct: Undefined";
+		}
+
+		kabom.add(icompanyname);
+		
+		jnotes = trimListitemLabel(dpi.get("jobnotes"),50);
+		kabom.add(jnotes);
+
+		lastjobnotesdate = dpi.get("lastjobnotesdate").toString().substring(0,10);
+		ljndate_str = (lastjobnotesdate.equals("1900-01-01")) ? "----------" : lastjobnotesdate;
+		kabom.add(ljndate_str);
+
+		kabom.add(dpi.get("folderstatus"));
+		kabom.add(dpi.get("branch"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+Object[] jobnoteshistory_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Prev.Notes",true),
+	new listboxHeaderObj("Chg.By",true),
+	new listboxHeaderObj("Chg.Date",true),
+};
+
+// This will show historical job-notes - to make sure every changes to the job notes are recorded
+// noteshistory_btn jobnotes_lb_div global_sjn_folder
+void jobNotesHistory_clicker()
+{
+	if(global_sjn_folder.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select origid,oldjobnotes,change_date,user_changed from JobNotes_History where jobfolders_id=" + global_sjn_folder;
+	histrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(histrecs.size() < 1)
+	{
+		showMessageBox("Sorry.. no job-notes history found");
+		return;
+	}
+
+	Listbox newlb = makeVWListbox(historyjobnotes_lb_div,jobnoteshistory_lb_headers,"jobnoteshistory_lb", 5);
+
+	for(dpi : histrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+
+		jnotes = trimListitemLabel(dpi.get("oldjobnotes"),50);
+		kabom.add(jnotes);
+		
+		kabom.add(dpi.get("user_changed"));
+		kabom.add(dpi.get("change_date").toString().substring(0,10));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+	jobnotes_history_popup.open(noteshistory_btn);
+}
+
+// To view the prev job-notes.. cannot run away.
+// prev_jn_btn
+void jobnoteshistory_viewprev_clicker()
+{
+	if(historyjobnotes_lb_div.getFellowIfAny("jobnoteshistory_lb") == null) return;
+	if(jobnoteshistory_lb.getSelectedIndex() == -1) return;
+
+	pjn_origid = jobnoteshistory_lb.getSelectedItem().getLabel(); // 1st col is JobNotes_History.origid
+	pjnrec = getJobNotesHistory_Rec(pjn_origid);
+	if(pjnrec == null) return;
+	prevjn_tb.setValue(pjnrec.get("oldjobnotes"));
+	viewprev_jn_popup.open(prev_jn_btn);
+}
+
+// 26/10/2010: export checklist on test-parameter to Excel
+//searchfolders_div,folders_lb_headers,"folderjobs_lb"
+void exportCheckList_Excel()
+{
+	exportListboxExcel_HideColumn(searchfolders_div,"folderjobs_lb","testCheckList.xls", folders_lb_headers,"Test_ChkList",whateverlistexport_holder,70,false);
+}
+
+void exportDivisionRelated_Excel()
+{
+	exportListboxExcel_HideColumn(div_found_folders_div,"div_folderjobs_lb","divisionChecklist.xls", folders_lb_headers,"ChkList",whateverlistexport_holder,70,false);
+}
+
+]]>
+</zscript>
+
+<popup id="viewsample_tests_popup">
+<groupbox width="400px">
+	<!-- <div id="vst_tests_div" /> -->
+</groupbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" style="font-size:9px" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+
+<popup id="samplejobnotes_popup">
+<groupbox>
+	<caption id="sjn_caption" />
+	<div style="padding:3px">
+	<hbox>
+		<label value="Samp.JobNotes" style="font-size:9px" />
+		<textbox id="sjn_extranotes" multiline="true" width="250px" height="50px" style="font-size:9px" />
+	</hbox>
+	
+	<hbox>
+		<label value="Samp.Marking" style="font-size:9px" />
+		<separator width="3px" />
+		<textbox id="sjn_samplemarking" multiline="true" width="250px" height="50px" style="font-size:9px" disabled="true" />
+	</hbox>
+	<div id="vst_tests_div" width="400px" />
+	</div>
+</groupbox>
+<separator height="5px" />
+<hbox>
+	<button label="Save notes" style="font-size:9px" onClick="sjn_savenotes_clicker()" />
+	<button label="Close" onClick="samplejobnotes_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+<!-- end of sample job-notes popup -->
+
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of document management popup -->
+
+<div width="1200px">
+<panel id="frontslabpanel" title="FrontSlab" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<tabbox height="640px">
+	<tabs>
+		<tab label="Job Notes"/>
+		<tab id="tab1" label="Checklist" />
+		<tab id="tab2" label="Division related" />
+		<tab id="tab3" label="Folders due"/>
+	</tabs>
+	<tabpanels>
+
+	<!-- Job Notes panel -->
+		<tabpanel>
+
+		<hbox>
+			<label style="font-size:9px" value="Folder.Status" />
+			<listbox id="folderstat_ddb" mold="select" style="font-size:9px" />
+			<separator width="10px" />
+			<button label="Lookup" style="font-size:9px" onClick="showJobNotesFound()" />
+
+			<separator width="20px" />
+			<button label="Folder details" style="font-size:9px" onClick="localPlayDriller(5)" />
+			<button label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup(5)" />
+		</hbox>
+
+		<div id="jobnotesfound_div" style="padding:3px" visible="false">
+			<div style="background:#669977;padding:3px">
+				<label value="Found Job Notes" style="color:#ffffff;font-weight:bold" />
+			</div>
+			<div id="jobnotes_found_div" />
+		</div>
+
+		<hbox>
+			<div id="jobnotes_5_div" width="420px" visible="false">
+				<vbox>
+					<div style="background:#669977;padding:3px">
+						<label value="Job Notes" style="color:#ffffff;font-weight:bold" />
+					</div>
+					<textbox id="fifth_jobnotes_tb" multiline="true" width="400px" height="100px" style="font-size:9px" />
+					<hbox>
+						<button label="Save notes" style="font-size:9px" onClick="saveJobNotes(5,fifth_jobnotes_tb)" />
+						<button id="noteshistory_btn" label="Notes history" style="font-size:9px" onClick="jobNotesHistory_clicker()" />
+					</hbox>
+				</vbox>
+			</div>
+
+			<div id="jobnotes_5_samples_div" visible="false">
+				<vbox>
+					<div style="background:#556699;padding:3px">
+						<label value="Samples Job Notes" style="color:#ffffff;font-weight:bold" />
+					</div>
+					<div id="samples_jobnote_div" />
+					<hbox>
+						<button id="persample_jn_btn" label="per-Sample job-notes" style="font-size:9px" onClick="perSamples_JobNotes_clicker()" />
+						<!-- <button id="persample_tests_btn" label="per-Sample tests" style="font-size:9px" onClick="perSample_Tests_clicker()" /> -->
+					</hbox>
+				</vbox>
+			</div>
+		</hbox>
+		
+		<zscript>
+			populateDropdownListbox(folderstat_ddb,folderstatus_lookup);
+		</zscript>
+		</tabpanel>
+
+<!-- Check List panel -->
+		<tabpanel fulfill="tab1.onSelect">
+			<div style="padding:3px" >
+			
+			<hbox>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" />
+				<button label="Search" style="font-size:9px" onClick="searchCountThoseTests_clicker()" />
+				<separator width="20px" />
+				<button label="Drill-in" style="font-size:9px" onClick="testCounterDrill_clicker()" />
+
+			</hbox>
+			<separator height="2px" />
+			
+		<!-- test parameters from mysoft -->
+			<borderlayout id="mysoft_testparams" height="235px">
+			
+				<west title="Division" size="150px" flex="true" splittable="true" collapsible="true">
+					<div id="division_column" />
+				</west>
+	
+				<center>
+					<borderlayout height="235px" width="100%">
+						<west title="Section" size="150px" flex="true" splittable="true" collapsible="true">
+							<div id="section_column" />
+						</west>
+	
+						<center>
+							<borderlayout height="235px" width="100%">
+								<west title="Test parameters" size="100%" flex="true" splittable="true" collapsible="true">
+									<div id="testparameters_column" />
+								</west>
+							</borderlayout>
+						</center>
+			
+					</borderlayout>
+				</center>
+			</borderlayout>
+			<!-- end of test parameters from mysoft -->
+
+			<div id="semua1" visible="false">
+			<div style="background:#779988;padding:3px">
+				<hbox>
+				<label style="color:#ffffff" value="Found folders..." />
+				<separator width="10px" />
+				<button label="Folder details" style="font-size:9px" onClick="localPlayDriller(1)" />
+				<button id="viewdoculinks_btn" label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup(1)" />
+				<button label="Export checklist to Excel" style="font-size:9px" onClick="exportCheckList_Excel()" />
+				</hbox>
+			</div>
+
+			<div id="searchfolders_div" />
+			
+			<div style="background:#669977;padding:3px">
+				<label value="Job Notes" style="color:#ffffff;font-weight:bold" />
+			</div>
+
+			<hbox>
+				<textbox id="first_jobnotes_tb" multiline="true" width="400px" height="90px" style="font-size:9px" />
+				<button label="Save notes" style="font-size:9px" onClick="saveJobNotes(1,first_jobnotes_tb)" />
+			</hbox>
+			</div>
+		
+			</div>
+			<zscript>
+				setTodayDatebox(startdate);
+				setTodayDatebox(enddate);
+				populateDivisionColumn(division_column);
+			</zscript>
+
+		</tabpanel>
+<!-- Division Related panel -->
+		<tabpanel fulfill="tab2.onSelect">
+		<div style="padding:3px">
+			<hbox>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="div_startdate" format="yyyy-MM-dd" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="div_enddate" format="yyyy-MM-dd" />
+				<div id="division_rel_div" />
+				<button label="Search" style="font-size:9px" onClick="divRelatedSearch_clicker()" />
+				<separator width="10px" />
+				<button label="Folder details" style="font-size:9px" onClick="localPlayDriller(2)" />
+				<button label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup(2)" />
+			</hbox>
+			<separator height="3px" />
+			<button id="divexportexcel_btn" label="Export to Excel" style="font-size:9px" onClick="exportDivisionRelated_Excel()" visible="false" />
+			<separator height="3px" />
+			<div id="div_found_folders_div" />
+			<separator height="5px" />
+
+			<div id="division_breakdown_div" visible="false">
+				<div style="background:#668877;padding:3px">
+					<label id="breakdown_lbl" style="color:#ffffff" />
+				</div>
+
+				<hbox>
+					<vbox>
+						<div id="testbreakdown_div" width="400px" />
+
+						<div id="jobnotes_2_div" visible="false">
+							<div style="background:#669977;padding:3px">
+								<label value="Job Notes" style="color:#ffffff;font-weight:bold" />
+							</div>
+							<textbox id="second_jobnotes_tb" multiline="true" width="400px" height="70px" style="font-size:9px" />
+							<button label="Save notes" style="font-size:9px" onClick="saveJobNotes(2,second_jobnotes_tb)" />
+						</div>
+
+					</vbox>
+
+					<tree id="sampletests_tree" zclass="z-dottree" rows="15" width="100%" visible="false" >
+						<treecols>
+							<treecol label="SampleID/Sample Marking/Tests" />
+						</treecols>
+					</tree>
+				</hbox>
+			</div>
+
+			<zscript>
+				setTodayDatebox(div_startdate);
+				setTodayDatebox(div_enddate);
+				showDivisionListbox(division_rel_div);
+			</zscript>
+		</div>
+		</tabpanel>
+<!-- Folders Due panel -->
+		<tabpanel fulfill="tab3.onSelect">
+		<div style="padding:3px">
+			<hbox>
+				<label value="Due date" style="font-size:9px" />
+				<datebox id="due_startdate" format="yyyy-MM-dd" />
+
+				<button label="Search" style="font-size:9px" onClick="searchDueFolders_clicker()" />
+
+				<div id="branch_selector" visible="false" >
+					<hbox>
+						<label value="Branch" style="font-size:9px" />
+						<listbox id="branch_drd" mold="select" style="font-size:9px" />
+					</hbox>
+				</div>
+
+				<separator width="20px" />
+				<button label="Folder details" style="font-size:9px" onClick="localPlayDriller(3)" />
+				<button label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup(3)" />
+			</hbox>
+			<separator height="5px" />
+			<div id="duefolders_div" />
+
+			<separator height="3px" />
+
+			<div id="jobnotes_3_div" width="420px" visible="false">
+				<vbox>
+				<div style="background:#669977;padding:3px">
+					<label value="Job Notes" style="color:#ffffff;font-weight:bold" />
+				</div>
+				<textbox id="third_jobnotes_tb" multiline="true" width="400px" height="100px" style="font-size:9px" />
+				<button label="Save notes" style="font-size:9px" onClick="saveJobNotes(3,third_jobnotes_tb)" />
+				</vbox>
+			</div>
+
+		</div>
+		<zscript>
+			setTodayDatebox(due_startdate);
+			//populateDropdownListbox(branch_drd, dd_branches);
+		</zscript>
+
+		</tabpanel>
+
+	</tabpanels>
+</tabbox>
+
+<div id="whateverlistexport_holder" />
+
+<zscript>
+<![CDATA[
+
+// Set search today's date
+setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+global_sjn_div = samples_jobnote_div;
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>
+

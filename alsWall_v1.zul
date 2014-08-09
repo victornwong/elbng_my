@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="alswall_mod"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "The Wall / Lab Comments";
+MYVERSION = "v0.1";
+MYPANEL = "alswall_panel";
+/*
+Title		: The wall for 'em dudes to post stuff
+Written by	: Victor Wong
+Dated		: 12/01/2013
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+gridhand = new GridHandler();
+
+void showWall(int ihowmany)
+{
+	sqlstm = "select top " + ihowmany.toString() + " * from elb_thewall order by origid desc";
+	therecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(therecs.size() == 0) { return; }
+
+	if(thewall_holder.getFellowIfAny("thewall_grid") != null) thewall_grid.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("thewall_grid");
+	
+	kcolumns = new Columns();
+	kcolumns.setParent(thegrid);
+	kcol1 = new Column();
+	kcol1.setWidth("120px");
+	kcol1.setParent(kcolumns);
+
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+	
+	for(dpi : therecs)
+	{
+		post_row = gridhand.gridMakeRow("","","",gridrows);
+		
+		vbox1 = new Vbox();
+		username = new Label();
+		postnum = new Label();
+		username.setStyle("font-size:9px");
+		postnum.setParent(vbox1);
+		username.setParent(vbox1);
+		vbox1.setParent(post_row);
+		postnum.setValue("Post #" + dpi.get("origid").toString());
+		username.setValue(dpi.get("username") + " [ " + dpi.get("datecreated").toString().substring(0,10) + " ]");
+
+		tpost = new Label();
+		tpost.setMultiline(true);
+		tpost.setValue(dpi.get("posting"));
+		tpost.setParent(post_row);
+
+		//gridhand.makeLabelToParent(dpi.get("posting"),"",post_row);
+	}
+
+	if(therecs.size() > 1) thewall_holder.setHeight("400px");
+	if(therecs.size() > 5) thewall_holder.setHeight("600px");
+
+	thegrid.setParent(thewall_holder);
+}
+
+void doFunc(Component iwhat)
+{
+	itype = iwhat.getId();
+	todate = kiboo.todayISODateString();
+	sqlstm = "";
+	refresh = false;
+	
+	if(itype.equals("post_btn"))
+	{
+		tpost = kiboo.replaceSingleQuotes(posting_tb.getValue());
+		if(tpost.equals("")) return;
+		sqlstm = "insert into elb_thewall (username,datecreated,posting) values " +
+		"('" + useraccessobj.username + "','" + todate + "','" + tpost + "')";
+
+		refresh = true;
+	}
+
+/*	
+	if(itype.equals("upimage_btn"))
+	{
+		Object uploaded_data;
+		uploaded_file = Fileupload.get(true);
+		uploaded_data = uploaded_file.getByteData();
+		postimage.setContent(uploaded_data);
+	}
+*/
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) showWall(10);
+}
+
+class lc_dclick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		foldno = lbhand.getListcellItemLabel(isel,2);
+
+		theparam = "folderno=" + foldno;
+		workfn = "samplereg/folderjobs_driller.zul";
+		uniqwindowid = kiboo.makeRandomId("ldx");
+		guihand.globalActivateWindow(mainPlayground,"miscwindows",workfn, uniqwindowid, theparam, useraccessobj);
+
+	}
+}
+
+// show lab-comments
+void showLC(int howmany)
+{
+Object[] lc_headers =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("Folder",true,"60px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("User",true,"50px"),
+	new listboxHeaderWidthObj("Comments",true,""),
+};
+	Listbox newlb = lbhand.makeVWListbox_Width(lc_holder, lc_headers, "labcomments_lb", 5);
+
+	sqlstm = "select top " + howmany.toString() + " lc.folderno_str,lc.origid,lc.datecreated,lc.username,lc.thecomment," +
+	"(select cust.customer_name from jobfolders jf left join customer cust on jf.ar_code = cust.ar_code where jf.folderno_str = lc.folderno_str) as customer " +
+	"from elb_labcomments lc " + 
+	"order by lc.origid desc";
+	lcrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(lcrecs.size() == 0) return;
+	newlb.setRows(25);
+	for(dpi : lcrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(kiboo.checkNullString(dpi.get("customer")));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("thecomment"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	dc_obj = new lc_dclick();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+void submitLC()
+{
+	tfoldn = kiboo.replaceSingleQuotes(lc_folderno_str.getValue()).trim();
+	tcomm =  kiboo.replaceSingleQuotes(lc_thecomment.getValue()).trim();
+	if(tcomm.equals("") || tfoldn.equals("")) return;
+	todate = kiboo.todayISODateString();
+
+	sqlstm = "insert into elb_labcomments (folderno_str,username,datecreated,thecomment) values " +
+	"('" + tfoldn + "','" + useraccessobj.username + "','" + todate + "','" + tcomm + "')";
+	
+	sqlhand.gpSqlExecuter(sqlstm);
+	showLC(200); // refresh
+}
+
+WALLWIDTH = "600px";
+LCWIDTH = "560px";
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true" >
+<panelchildren>
+
+<separator height="5px" />
+
+<hbox>
+
+<vbox>
+
+<vbox>
+<label style="font-size:14px;font-weight:bold;">THE WALL</label>
+<div id="thewall_holder" width="${WALLWIDTH}" style="border:0px solid gray;overflow:auto;padding:2px;" />
+</vbox>
+
+<div id="postinput_gb" width="${WALLWIDTH}" visible="false"
+style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+	<grid>
+		<columns>
+			<column width="100px" />
+			<column />
+		</columns>
+		<rows>
+			<row spans="2">
+			<hbox>
+			<label style="font-size:9px">
+			(Only specific persons can post on the wall.. if you're seeing this, you're one)
+			</label>
+			<button label="Reload wall" style="font-size:9px" onClick="showWall(10)" />
+			</hbox>
+			</row>
+			<row>
+				<label multiline="true" style="font-size:9px">
+Your posting
+(lab announcements,
+company news, memos
+and so on)
+				</label>
+				<textbox id="posting_tb" style="font-size:9px" multiline="true" width="99%" height="70px" />
+			</row>
+			<row spans="2">
+				<hbox>
+				<!--
+					<label value="Upload picture" />
+					<fileupload onUpload="postimage.setContent(event.media);postimage.setVisible(true);" />
+				-->
+					<button id="post_btn" label="Post.." onClick="doFunc(self)" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<image id="postimage" width="400px" visible="false" />
+			</row>
+		</rows>
+	</grid>
+</div>
+</vbox>
+
+<div width="${LCWIDTH}" style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+	<div style="background:#4d4d4d;padding:2px">
+	<label value="Internal Lab Comments (LC)" style="color:#eeeeee" />
+	</div>
+	<separator height="3px" />
+	<div id="lc_holder" />
+	<separator height="3px" />
+	<grid id="lcgrid">
+		<rows>
+			<row>
+				<label value="Folder" style="font-size:9px" />
+				<textbox id="lc_folderno_str" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Comment" style="font-size:9px" />
+				<textbox id="lc_thecomment" multiline="true" width="99%" height="50px" style="font-size:9px" />
+			</row>
+			<row spans="2">
+				<hbox>
+					<button label="Submit lab comment" style="font-size:9px" onClick="submitLC()" />
+					<label style="font-size:9px">
+					(SUBMIT ONLY something that make sense to a job-folder)
+					</label>
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+
+</div>
+
+</hbox>
+
+<separator height="5px" />
+
+<zscript>
+<![CDATA[
+
+showWall(10);
+showLC(200);
+
+if(sechand.allowedUser(useraccessobj.username,"WHO_POST_WALL")) postinput_gb.setVisible(true);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

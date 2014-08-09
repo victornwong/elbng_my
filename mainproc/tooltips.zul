@@ -1,0 +1,22 @@
+<!-- some tooltips -->
+<popup id="uniqcode">
+Code must be unique
+</popup>
+
+<popup id="codenochange">
+Incident code cannot be changed
+</popup>
+
+<popup id="descripto">
+Please enter something meaningful
+</popup>
+
+<popup id="tipexpired">
+If item is expired, it won't be usable in the system
+</popup>
+
+<popup id="tipintvalue">
+To be used later if required
+</popup>
+
+<!-- end of tooltips -->

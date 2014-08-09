@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="IF1_section2_page"?>
+
+<!--
+
+IF1 form section 2
+Developed by : Victor Wong
+
+-->
+
+<zk>
+
+<zscript src="mirisglobal.zs" />
+<zscript src="mirisDb_API.zs" />
+<!-- include LookupTree class -->
+<zscript src="lookuptree.zs" />
+
+<popup id="cf_patient_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Patient Contributory Factors" />
+<tree id="if1_sect2_cfpatienttree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfpatient_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_patient_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfpatient_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfpatienttree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfpatient_dp.setValue(disptext);
+		if1_sect2_cfpatient.setValue("[" + doname + "]");
+		cf_patient_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfpatient_lu_tree = new LookupTree(cfpatient_childrens,"PATIENTFACTORS",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfpatienttree.addEventListener("onSelect", new cfpatient_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_tooltip">
+Click to select contributory factor
+</popup>
+
+<popup id="cf_tasktech_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Task and Technical Contributory Factors" />
+<tree id="if1_sect2_cftasktechtree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cftasktech_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_tasktech_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cftasktech_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cftasktechtree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cftasktech_dp.setValue(disptext);
+		if1_sect2_cftasktech.setValue("[" + doname + "]");
+		cf_tasktech_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cftasktech_lu_tree = new LookupTree(cftasktech_childrens,"TASKTECHFACT",false);
+
+// set eventlistener for the tree.
+if1_sect2_cftasktechtree.addEventListener("onSelect", new cftasktech_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_indstaff_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Invidual Staff Contributory Factors" />
+<tree id="if1_sect2_cfindstafftree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfindstaff_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_indstaff_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfindstaff_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfindstafftree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfindstaff_dp.setValue(disptext);
+		if1_sect2_cfindstaff.setValue("[" + doname + "]");
+		cf_indstaff_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfindstaff_lu_tree = new LookupTree(cfindstaff_childrens,"STAFFFACTORS",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfindstafftree.addEventListener("onSelect", new cfindstaff_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_team_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Team Contributory Factors" />
+<tree id="if1_sect2_cfteamtree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfteam_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_team_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfteam_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfteamtree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfteam_dp.setValue(disptext);
+		if1_sect2_cfteam.setValue("[" + doname + "]");
+		cf_team_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfteam_lu_tree = new LookupTree(cfteam_childrens,"TEAMFACTORS",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfteamtree.addEventListener("onSelect", new cfteam_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_workcare_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Work and Care Environment Contributory Factors" />
+<tree id="if1_sect2_cfworkcaretree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfworkcare_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_workcare_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfworkcare_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfworkcaretree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfworkcare_dp.setValue(disptext);
+		if1_sect2_cfworkcare.setValue("[" + doname + "]");
+		cf_workcare_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfworkcare_lu_tree = new LookupTree(cfworkcare_childrens,"WORKCAREENV",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfworkcaretree.addEventListener("onSelect", new cfworkcare_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_manorg_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="Management and Organisational Contributory Factors" />
+<tree id="if1_sect2_cfmanorgtree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfmanorg_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_manorg_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfmanorg_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfmanorgtree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfmanorg_dp.setValue(disptext);
+		if1_sect2_cfmanorg.setValue("[" + doname + "]");
+		cf_manorg_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfmanorg_lu_tree = new LookupTree(cfmanorg_childrens,"MANORGFACTORS",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfmanorgtree.addEventListener("onSelect", new cfmanorg_event());
+
+</zscript>
+</popup>
+
+<popup id="cf_external_popup" width="500px" >
+<groupbox mold="3d">
+    <caption label="External Contributory Factors" />
+<tree id="if1_sect2_cfexternaltree" rows="20">
+	<treecols>
+		<treecol label="CODE" width="200px" />
+		<treecol label="Description" />
+	</treecols>
+	<treechildren id="cfexternal_childrens" />
+</tree>
+</groupbox>
+
+<zscript fulfill="cf_external_popup.onOpen">
+
+// onSelect event for tree. uses hardcoded controls for now. need to change this later
+class cfexternal_event implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		doname = if1_sect2_cfexternaltree.getSelectedItem().getLabel();
+		disptext = returnDisptext(doname);
+		if1_sect2_cfexternal_dp.setValue(disptext);
+		if1_sect2_cfexternal.setValue("[" + doname + "]");
+		cf_external_popup.close();
+	}
+}
+
+// LookupTree in lookuptree.zs
+LookupTree cfexternal_lu_tree = new LookupTree(cfexternal_childrens,"EXTERNALFACTORS",false);
+
+// set eventlistener for the tree.
+if1_sect2_cfexternaltree.addEventListener("onSelect", new cfexternal_event());
+
+</zscript>
+</popup>
+
+<tabbox mold="accordion">
+ <tabs>
+  <tab label="E. Patient impact/outcome" />
+  <tab label="F. Contributing factors" />
+  <tab label="G. Further action proposed to reduce risk" />
+  <tab label="H. Classification of WHO" />
+  <tab label="I. Organisational impact/outcome" />
+  </tabs>
+ 
+ <tabpanels>
+ 
+  <!-- patient impact/outcome -->
+  <tabpanel>
+   <grid>
+		<columns width="100px,">
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row>
+			 <label value="Actual impact/outcome" />
+			 
+			 <hbox>
+				<checkbox id="l1" label="None" />
+				<checkbox id="l2" label="Minor" />
+				<checkbox id="l3" label="Moderate" />
+				<checkbox id="l4" label="Major" />
+				<checkbox id="l5" label="Death" />
+			 </hbox>
+			</row>
+			
+			<row>
+			 <label value="Duration of impact" />
+			 
+			 <radiogroup>
+			   <radio label="Temporary" />
+			   <radio label="Permanent" />
+			   <radio label="N/A" />
+			   <radio label="Unsure" />
+			 </radiogroup>
+			 
+			</row>
+			
+		</rows>
+			
+	</grid>
+	
+  </tabpanel>
+ 
+ <!-- contributing factors -->
+  <tabpanel>
+  <vbox>
+  
+  Select codes from list after contributory factor analysis
+  
+  <separator width="30px" />
+  
+    <grid width="710px">
+		<columns width="200px,500px">
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row>
+			 <label value="Patient" />
+
+            <div>
+			<label id="if1_sect2_cfpatient" value="[NONE]" />
+			<label id="if1_sect2_cfpatient_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_patient_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+			<row>
+			 <label value="Task and technology" />
+
+            <div>
+			<label id="if1_sect2_cftasktech" value="[NONE]" />
+			<label id="if1_sect2_cftasktech_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_tasktech_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+			<row>
+			 <label value="Individual staff" />
+			<div>
+			<label id="if1_sect2_cfindstaff" value="[NONE]" />
+			<label id="if1_sect2_cfindstaff_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_indstaff_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+			<row>
+			 <label value="Team" />
+			 <div>
+			<label id="if1_sect2_cfteam" value="[NONE]" />
+			<label id="if1_sect2_cfteam_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_team_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+			<row>
+			 <label value="Work and care environment" />
+
+            <div>
+			<label id="if1_sect2_cfworkcare" value="[NONE]" />
+			<label id="if1_sect2_cfworkcare_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_workcare_popup" tooltip="cf_tooltip"/>
+            </div>
+
+  			</row>
+			
+			<row>
+			 <label value="Management and organisational" />
+            <div>
+			<label id="if1_sect2_cfmanorg" value="[NONE]" />
+			<label id="if1_sect2_cfmanorg_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_manorg_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+			<row>
+			 <label value="External" />
+            <div>
+			<label id="if1_sect2_cfexternal" value="[NONE]" />
+			<label id="if1_sect2_cfexternal_dp" value="[]" />
+			<image src="/mirisimg/doc.png" popup="cf_external_popup" tooltip="cf_tooltip"/>
+            </div>
+  			</row>
+			
+		</rows>
+			
+	</grid>
+	
+   </vbox>
+  </tabpanel>
+
+ <!-- Further action proposed to reduce risk -->  
+  <tabpanel>
+	<grid>
+		<columns>
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row>
+			 <label value=" 1. " />
+			 
+			 <hbox>
+				Description
+				<textbox />
+				
+				Person responsible
+				<textbox />
+				
+				Date action completed
+				<datebox />
+			</hbox>
+			 
+			</row>
+			
+			<row>
+			 <label value=" 2. " />
+			 
+			 <hbox>
+				Description
+				<textbox />
+				
+				Person responsible
+				<textbox />
+				
+				Date action completed
+				<datebox />
+			 
+			 </hbox>
+			 
+			 </row>
+			 
+			 <row>
+			 <label value=" 3. " />
+			 
+			 <hbox>
+				Description
+				<textbox />
+				
+				Person responsible
+				<textbox />
+				
+				Date action completed
+				<datebox />
+			 
+			 </hbox>
+			 </row>
+			 
+			 <row>
+			 <label value=" 4. " />
+			 
+			 <hbox>
+				Description
+				<textbox />
+				
+				Person responsible
+				<textbox />
+				
+				Date action completed
+				<datebox />
+			 
+			 </hbox>
+			 </row>
+			 
+			 <row>
+			 <label value=" 5. " />
+			 <hbox>
+				Description
+				<textbox />
+				Person responsible
+				<textbox />
+				Date action completed
+				<datebox />
+			 </hbox>
+			 </row>
+			 		 
+		</rows>
+			 
+	</grid>
+   
+  </tabpanel>
+  
+  <!-- classification of WHO -->
+  <tabpanel>
+  
+  'Phase of Care' and Patient Safety 'Event Type' (refer to guidance)
+  
+  <separator width="40px" />
+  
+  <grid>
+		<columns>
+			<column label=""/>
+			<column label=""/>
+		</columns>
+		
+		<rows style="padding:10px">
+			<row>
+			 <label value="Phase of care" />
+			 
+			 <hbox>
+				<checkbox id="poc1" label="Access" />
+				<checkbox id="poc2" label="Admission" />
+				<checkbox id="poc3" label="Investigation/Procedures" />
+				<checkbox id="poc4" label="Treatment" />
+				<checkbox id="poc5" label="Discharge" />
+				<checkbox id="poc6" label="Referral" />
+				<checkbox id="poc7" label="Other" />
+			 </hbox>
+			 
+			</row>
+			
+			<row>
+				<label value="Event type" />
+				
+				<vbox>
+				<hbox>
+					<vbox>
+						<checkbox id="evtype1" label="Clinical" />
+						<checkbox id="evtype2" label="Medication" />
+						<checkbox id="evtype3" label="Patient accident" />
+					</vbox>
+					
+					<separator width="92px" />
+					
+					<vbox>
+						<checkbox id="evtype4" label="Documentation/communication" />
+						<checkbox id="evtype5" label="Medical equipment or device" />
+						<checkbox id="evtype6" label="Infrastructure" />
+					</vbox>
+				 </hbox>
+				 
+				 <hbox>
+					<vbox>
+						<checkbox id="evtype7" label="Healthcare associated infection" />
+						<checkbox id="evtype8" label="Patient behaviour" />
+						<checkbox id="evtype9" label="Resources" />
+					</vbox>
+				 
+					<vbox>
+						<checkbox id="evtype10" label="Abscondence/Missing patient/Left against medical advice" />
+						<checkbox id="evtype11" label="Patient abuse" />
+						<checkbox id="evtype12" label="Other" />
+				 
+					</vbox>
+				</hbox>
+								
+				</vbox>
+			
+			</row>
+			
+			
+		</rows>
+	</grid>
+
+  </tabpanel>
+  
+  <!-- Organisational impact/outcome -->
+  <tabpanel>
+    Learning points and general comments
+  <separator width="20px" />
+  
+  <fckeditor id="inciddesc" customConfigurationsPath="fckconfig.js" toolbarSet="Basic"
+		height="300px" />
+  </tabpanel>
+  
+ </tabpanels>
+
+</tabbox>
+
+</zk>

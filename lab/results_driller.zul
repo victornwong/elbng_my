@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="resultsdriller_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title		: chemical results driller
+Version		: 1.0
+Developers	: Victor Wong
+
+**NOTES**
+
+03/10/2011: start development
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_folderno = Executions.getCurrent().getParameter("folderno");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+]]>
+</zscript>
+
+<window id="resultsdriller_win" width="900px" height="560px" title="Results Trails" position="center" mode="overlapped" border="normal" closable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+
+</div>
+</window>
+</zk>

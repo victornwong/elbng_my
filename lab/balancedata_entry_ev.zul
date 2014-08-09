@@ -1,0 +1,516 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="balanceentryev_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+			: THIS VERSION IS FOR EV DIVISION FOR THOSE TSS/VS/VSS THINGS
+Core		: Balance data entry - weight to be used in other modules as well
+Dated		: 15/05/2011
+Written by	: Victor Wong
+
+**NOTES**
+
+23/06/2011: add sheet_type for EV division .. would allow simple calculations for TSS/VS/VSS and so on
+
+<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+
+*/
+
+import java.io.*; 
+import java.util.Date;
+import java.text.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+String[] sheetTypeList = { "TSS","VS","VSS","OGSOIL","OGWATER","MINERALOIL","MOISTURETOM","AIRSAMPLES" };
+
+selected_balancelist_status = "";
+selected_balancelist_origid = "";
+selected_balanceitem_origid = "";
+
+last_showbalancelist_type = 1;
+
+DecimalFormat nf = new DecimalFormat("###.###");
+
+// DB func: get rec from balance_list table
+Object getBalanceList_Rec(String iorigid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return null;
+	sqlstm = "select * from balance_list where origid=" + iorigid;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+Object getBalanceItem_Rec(String iorigid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return null;
+	sqlstm = "select * from balance_items where origid=" + iorigid;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+Object[] balanceitems_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("InitW",true),
+	new listboxHeaderObj("EndW",true),
+	};
+
+class balanceitems_onselect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_balanceitem_origid = getListcellItemLabel(selitem,0);
+		birec = getBalanceItem_Rec(selected_balanceitem_origid);
+		if(birec != null)
+		{
+			bi_sampleid.setValue(birec.get("sampleid"));
+			bi_initweight.setValue(nf.format(birec.get("initweight")));
+			bi_endweight.setValue(nf.format(birec.get("endweight")));
+			bi_notes.setValue(birec.get("notes"));
+		}
+
+		// check if balance-sheet already commited - disable init-weight textbox if committed
+
+		binewupdate_btn.setLabel("Update");
+	}
+}
+
+void showBalanceItems(String parentid)
+{
+    Listbox newlb = makeVWListbox(balanceitems_holder, balanceitems_lb_headers, "balanceitems_lb", 6);
+
+	sqlstm = "select origid,sampleid,initweight,endweight,notes from balance_items where parentid=" + parentid;
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	birecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(birecs.size() == 0) return;
+	newlb.setRows(10);
+
+	newlb.addEventListener("onSelect", new balanceitems_onselect());
+
+	for(dpi : birecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("sampleid"));
+		kabom.add(nf.format(dpi.get("initweight")));
+		kabom.add(nf.format(dpi.get("endweight")));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+	}
+}
+
+Object[] balancelist_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Title",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Type",true),
+	new listboxHeaderObj("Verified",true),
+	new listboxHeaderObj("V.Date",true),
+	new listboxHeaderObj("Status",true),
+	};
+
+class balancelb_onselect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_balancelist_origid = getListcellItemLabel(selitem,0);
+
+		brec = getBalanceList_Rec(selected_balancelist_origid);
+		if(brec != null)
+		{
+			bl_title.setValue(brec.get("title"));
+			bl_notes.setValue(brec.get("notes"));
+			balanceitems_caption.setLabel("Weights: " + brec.get("title"));
+		}
+
+		newupdate_btn.setLabel("Update");
+		showBalanceItems(selected_balancelist_origid);
+
+		// if balance-sheet is committed, disable some stuff
+		selected_balancelist_status = brec.get("status"); // store as global for later use
+		disablestuff = false;
+
+		if(selected_balancelist_status.equals("COMMITTED")) disablestuff = true;
+
+		bi_sampleid.setDisabled(disablestuff);
+		bi_initweight.setDisabled(disablestuff);
+		bidelete_btn.setDisabled(disablestuff);
+
+		clearBalanceItem_boxes();	
+		balanceitems_gb.setVisible(true);
+	}
+}
+
+// itype: 1 = load balance-sheets by date, 2 = load by sampleid
+void showBalanceList(int itype)
+{
+	last_showbalancelist_type = itype;
+
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+    sampleidstr = replaceSingleQuotes(sampleid_str.getValue());
+
+    Listbox newlb = makeVWListbox(balancelist_holder, balancelist_lb_headers, "balancelist_lb", 6);
+
+    sqlstm = "select top 200 * from balance_list where " + 
+    "datecreated between '" + sdate + "' and '" + edate + "' order by datecreated desc";
+
+    if(itype == 2)
+    	sqlstm = "select top 200 balance_list.origid,balance_list.datecreated,balance_list.title,balance_list.username," +
+    	"balance_list.verifiedby,balance_list.dateverified,balance_list.status,balance_list.sheet_type from balance_list " +
+    	"left join balance_items on balance_list.origid = balance_items.parentid " +
+    	"where balance_items.sampleid like '%" + sampleidstr + "%' " +
+    	"group by balance_list.origid,balance_list.datecreated,balance_list.title,balance_list.username," +
+    	"balance_list.verifiedby,balance_list.dateverified,balance_list.status " +
+    	"order by balance_list.datecreated desc";
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	brecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(brecs.size() == 0) return;
+
+	newlb.addEventListener("onSelect", new balancelb_onselect());
+
+	for(dpi : brecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("title"));
+		kabom.add(dpi.get("username"));
+
+		sheettype = (dpi.get("sheet_type") == null) ? "---" : dpi.get("sheet_type");
+		kabom.add(sheettype);
+
+		vby = (dpi.get("verifiedby") == null) ? "---" : dpi.get("verifiedby");
+		kabom.add(vby);
+
+		vdate = (dpi.get("dateverified") == null) ? "---" : dpi.get("dateverified").toString().substring(0,10);
+		kabom.add(vdate);
+
+		kabom.add(dpi.get("status"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+	}
+}
+
+void clearBalanceList_boxes()
+{
+	// reset global
+	selected_balancelist_origid = "";
+	selected_balanceitem_origid = "";
+
+	bl_title.setValue("");
+	bl_notes.setValue("");
+
+	newupdate_btn.setLabel("New");
+	balanceitems_gb.setVisible(false);
+}
+
+void newupdate_BalanceList()
+{
+	title = replaceSingleQuotes(bl_title.getValue());
+	notes = replaceSingleQuotes(bl_notes.getValue());
+	todate = getDateFromDatebox(hiddendatebox);
+	sheettype = bl_sheet_type.getSelectedItem().getLabel();
+
+	if(title.equals(""))
+	{
+		showMessageBox("Balance list title is required..");
+		return;
+	}
+
+	sqlstm = "insert into balance_list (title,username,datecreated,status,notes,sheet_type) values " +
+	"('" + title + "','" + useraccessobj.username + "','" + todate + "','NEW','" + notes + "','" + sheettype + "')";
+
+	if(!selected_balancelist_origid.equals(""))
+		sqlstm = "update balance_list set title='" + title + "',notes='" + notes + "',sheet_type='" + sheettype + "' where origid=" + selected_balancelist_origid;
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	showBalanceList(last_showbalancelist_type); // refresh
+}
+
+void clearBalanceItem_boxes()
+{
+	// reset global
+	selected_balanceitem_origid = "";
+
+	bi_sampleid.setValue("");
+	bi_initweight.setValue("");
+	bi_endweight.setValue("");
+	bi_notes.setValue("");
+
+	binewupdate_btn.setLabel("New");
+}
+
+void balanceItem_NewUpdate()
+{
+	if(selected_balancelist_origid.equals("")) return;
+
+	wiw = replaceSingleQuotes(bi_initweight.getValue());
+	wew = replaceSingleQuotes(bi_endweight.getValue());
+
+	// make sure valid numbers for sql to work
+	if(wiw.equals("")) wiw = "0";
+	if(wew.equals("")) wew = "0";
+
+	sampleid = replaceSingleQuotes(bi_sampleid.getValue());
+	iw = Float.parseFloat(wiw).toString();
+	ew = Float.parseFloat(wew).toString();
+	notes = replaceSingleQuotes(bi_notes.getValue());
+
+	sqlstm = "insert into balance_items (sampleid,parentid,initweight,endweight,notes) values " +
+	"('" + sampleid + "'," + selected_balancelist_origid + "," + iw + "," + ew + ",'" + notes + "')";
+
+	if(!selected_balanceitem_origid.equals(""))
+	{
+		sqlstm = "update balance_items set sampleid='" + sampleid + "', initweight=" + iw + ",endweight=" + ew + 
+		",notes='" + notes + "' where origid=" + selected_balanceitem_origid;
+	}
+	else
+	{
+		if(selected_balancelist_status.equals("COMMITTED"))
+		{
+			showMessageBox("Balance sheet is already committed, cannot insert new item..");
+			return;
+		}
+
+		if(sampleid.equals(""))
+		{
+			showMessageBox("Must enter sampleID");
+			return;
+		}
+	}
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showBalanceItems(selected_balancelist_origid); // refresh
+}
+
+void deleteBalanceItem()
+{
+	if(selected_balancelist_origid.equals("")) return;
+	if(selected_balanceitem_origid.equals("")) return;
+	
+	// Before delete balance-item, check if balance-sheet already committed - if yes, cannot delete item
+
+	if (Messagebox.show("Remove this weight..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+
+	sqlstm = "delete from balance_items where origid=" + selected_balanceitem_origid;
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showBalanceItems(selected_balancelist_origid); // refresh
+}
+
+// Set balance_list.status field - this will lock-in the initial-weight
+// itype: 1=commit, 2=uncommit
+void commitBalanceSheet(int itype)
+{
+	if(selected_balancelist_origid.equals("")) return;
+	
+	comitstr = (itype == 1) ? "COMMITTED" : "NEW";
+	
+	sqlstm = "update balance_list set status='" + comitstr + "' where origid=" + selected_balancelist_origid;
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sql.execute(sqlstm);
+	sql.close();
+	showBalanceList(last_showbalancelist_type); // refresh
+
+	// clear the balance-items boxes
+	selected_balancelist_origid = ""; // reset global
+	balanceitems_gb.setVisible(false);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="balancedataentry_panel" title="Balance - Weight Data Entry v1.1 (EV DIVISION)" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<hbox>
+<groupbox mold="3d" style="padding:2px" width="550px">
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<hbox>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			</hbox>
+			<hbox>
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			</hbox>
+			<button label="Load by date" style="font-size:9px" onClick="showBalanceList(1)" />
+		</row>
+		<row>
+			<label value="SampleID" style="font-size:9px" />
+			<textbox id="sampleid_str" style="font-size:9px" width="99%" />
+			<button label="Load by sampleID" style="font-size:9px" onClick="showBalanceList(2)" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<div id="balancelist_holder" />
+<separator height="5px" />
+
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Title" style="font-size:9px" />
+			<textbox id="bl_title" width="98%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Sheet type" style="font-size:9px" visible="false" />
+			<listbox id="bl_sheet_type" mold="select" style="font-size:9px" visible="false" />
+		</row>
+		<row>
+			<label value="Notes" style="font-size:9px" />
+			<textbox id="bl_notes" width="98%" height="50px" multiline="true" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+<button label="Clear" style="font-size:9px" onClick="clearBalanceList_boxes()" />
+<button id="newupdate_btn" label="New" style="font-size:9px" onClick="newupdate_BalanceList()" />
+</hbox>
+</groupbox>
+
+<groupbox id="balanceitems_gb" mold="3d" width="500px" visible="false">
+	<caption id="balanceitems_caption" label="Weights" />
+
+	<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row spans=",3">
+			<label value="SampleID" style="font-size:9px" />
+			<hbox>
+				<textbox id="bi_sampleid" width="99%" style="font-size:9px" />
+				<button label="Clear" style="font-size:9px" onClick="clearBalanceItem_boxes()" />
+				<button id="binewupdate_btn" label="New" style="font-size:9px" onClick="balanceItem_NewUpdate()" />
+				<button id="bidelete_btn" label="Delete" style="font-size:9px" onClick="deleteBalanceItem()" />
+			</hbox>
+		</row>
+		<row>
+			<label value="Initial weight" style="font-size:9px" />
+			<hbox>
+				<textbox id="bi_initweight" style="font-size:9px" />
+				gm
+			</hbox>
+			<label value="End weight" style="font-size:9px" />
+			<hbox>
+				<textbox id="bi_endweight" style="font-size:9px" />
+				gm
+			</hbox>
+		</row>
+		<row spans=",3">
+			<label value="Notes" style="font-size:9px" />
+			<textbox id="bi_notes" width="99%" style="font-size:9px" />
+		</row>
+	</rows>
+	</grid>
+
+	<separator height="3px" />
+	<div id="balanceitems_holder" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Commit weight sheet" style="font-size:9px" onClick="commitBalanceSheet(1)" />
+
+		<div id="supervisor_box" style="background:#aa1111;padding:3px" visible="false">
+			<hbox>
+				<label value="Supervisor access" style="font-size:9px;font-weight:bold;color:#ffffff" />
+				<separator width="5px" />
+				<button label="Uncommit weight sheet" style="font-size:9px" onClick="commitBalanceSheet(2)" />
+			</hbox>
+		</div>
+	</hbox>
+</groupbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+populateDropdownListbox(bl_sheet_type,sheetTypeList);
+
+if(useraccessobj.accesslevel >= 4) supervisor_box.setVisible(true);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

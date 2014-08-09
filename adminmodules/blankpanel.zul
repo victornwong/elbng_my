@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="checklist_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "SOMETHING";
+MYVERSION = "v0.1";
+MYPANEL = "somepan";
+/*
+Title		:
+Written by	: Victor Wong
+Revisions:
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<zscript>
+<![CDATA[
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

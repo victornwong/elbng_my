@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="units_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+selected_units = "";
+global_searchstring = "";
+
+// Hardcoded section for this module - other modules might inject data into different fields
+void showUnitsDetails(String iunit_code, iunit_desc, iunit_type)
+{
+	unit_code.setValue(iunit_code);
+	unit_desc.setValue(iunit_desc);
+	unit_type.setValue(iunit_type);
+}
+
+// onSelect event for showUnitsMegalist()
+class casmegalistLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_units = getListcellItemLabel(selitem,0);
+		unitcode = getListcellItemLabel(selitem,1);
+		unitdesc = getListcellItemLabel(selitem,2);
+		unittype = getListcellItemLabel(selitem,3);
+
+		showUnitsDetails(unitcode,unitdesc,unittype);
+	}
+}
+
+void showUnitsMegalist(String isearch, Div iwhich)
+{
+	Object[] unitsmegalist_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Units",true),
+	new listboxHeaderObj("Description",true),
+	new listboxHeaderObj("Type",true),
+	};
+
+	if(isearch.equals("")) return;
+
+	Listbox newlb = makeVWListbox(iwhich, unitsmegalist_lb_headers, "unitsmegalist_lb", 5);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select top 100 * from elb_units where unit_code like '%" + isearch + 
+	"%' or unit_desc like '%" + isearch + "%' or unit_type like '%" + isearch + "%' order by unit_desc";
+	unitsrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(unitsrecs.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new casmegalistLB_Listener());
+
+	for(dpi : unitsrecs)
+	{
+		ArrayList scmk = new ArrayList();
+
+		scmk.add(dpi.get("origid").toString());
+		scmk.add(dpi.get("unit_code"));
+		scmk.add(dpi.get("unit_desc"));
+		scmk.add(dpi.get("unit_type"));
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void searchUnits_clicker(Textbox thebox, Div theholder)
+{
+	global_searchstring = replaceSingleQuotes(thebox.getValue());
+	if(global_searchstring.equals("")) return;
+	showUnitsMegalist(global_searchstring, theholder);
+}
+
+void clearInputBoxes()
+{
+	unit_code.setValue("");
+	unit_desc.setValue("");
+	unit_type.setValue("");
+	selected_units = "";
+}
+
+void updateUnits_clicker()
+{
+	if(selected_units.equals("")) return;
+
+	iunit_code = replaceSingleQuotes(unit_code.getValue());
+	iunit_desc = replaceSingleQuotes(unit_desc.getValue());
+	iunit_type = replaceSingleQuotes(unit_type.getValue());
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update elb_units set unit_code='" + iunit_code + "',unit_desc='" + iunit_desc + "',unit_type='" + iunit_type + "' where origid=" + selected_units;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showUnitsMegalist(global_searchstring, unitsmegalist_holder); // refresh
+	clearInputBoxes();
+}
+
+]]>
+</zscript>
+
+<window id="units_win" width="750px" height="510px" title="Measuring Units" position="center" mode="overlapped" border="normal" closable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<groupbox mold="3d">
+	<caption label="Search units" />
+	<hbox>
+		<label value="Units" style="font-size:9px" />
+		<separator width="5px" />
+		<textbox id="main_searchstr" width="150px" style="font-size:9px" />
+		<button label="Search" style="font-size:9px" onClick="searchUnits_clicker(main_searchstr,unitsmegalist_holder)" />
+		<separator width="5px" />
+		<label value="(search max. 100 units per click)" style="font-size:9px" />
+	</hbox>
+</groupbox>
+
+<groupbox mold="3d">
+	<caption label="Units Mega-list" />
+	<div id="unitsmegalist_holder" />
+</groupbox>
+
+<groupbox mold="3d">
+	<caption label="Workspace" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Units" style="font-size:9px" />
+				<textbox id="unit_code" width="200px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Description" style="font-size:9px" />
+				<textbox id="unit_desc" width="400px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Type" style="font-size:9px" />
+				<hbox>
+					<textbox id="unit_type" width="200px" style="font-size:9px" />
+					<button label="Update" style="font-size:9px" onClick="updateUnits_clicker()" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</div>
+</window>
+</zk>

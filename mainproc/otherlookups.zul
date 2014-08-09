@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="otherLookupsSetupPage"?>
+
+<zk>
+
+<zscript src="mirisglobal.zs" />
+<zscript src="mirisDb_API.zs" />
+<zscript src="lookuptree.zs" />
+
+<!-- main portion -->
+<hbox>
+	<groupbox mold="3d" width="200px">
+	<caption label="Select a lookup" />
+		<listbox id="incid_catlist" onSelect="showLookupTree(incid_catlist,incidtypetree); crud_buttons.setVisible(true)" />
+		<zscript>
+		populateCategory(incid_catlist,"OTHERLOOKUPS");
+		</zscript>			
+	</groupbox>
+
+    <vbox>
+	<groupbox mold="3d" width="100%">
+		<caption label="Lookups" />
+		<tree id="incidtypetree" rows="20" context="contextPopup">
+			<treecols>
+				<treecol label="CODE" width="200px" />
+				<treecol label="Description" />
+			</treecols>
+		</tree>	
+	</groupbox>
+    
+    <div id="crud_buttons">
+    <hbox>
+        <button label="Insert" popup="insertPopup" />
+        <button label="Update" popup="updatePopup" />
+        <button label="Delete" popup="deletePopup" />
+    </hbox>
+    </div>
+
+    </vbox>
+</hbox>
+<!-- end of main portion -->
+
+<!-- some tooltips -->
+<popup id="uniqcode">
+Code must be unique
+</popup>
+
+<popup id="codenochange">
+Incident code cannot be changed
+</popup>
+
+<popup id="descripto">
+Please enter something meaningful
+</popup>
+
+<popup id="tipexpired">
+If item is expired, it won't be usable in the system
+</popup>
+
+<popup id="tipintvalue">
+To be used later if required
+</popup>
+
+<!-- end of tooltips -->
+
+<popup id="updatePopup" width="530px" onOpen="popUpdateBox(incidtypetree,modinputs)">
+<groupbox mold="3d" width="100%">
+	<caption label="MODIFY" />
+
+<grid>
+ <columns>
+  <column label="Field" />
+  <column label="Entry" />
+ </columns>
+ 
+ <rows>
+ <!-- for update, the incident type code cannot be changed -->
+	<row>
+	 <label value="Code"  tooltip="codenochange" />
+	 <textbox id="incd_name" disabled="true" />
+	</row>
+	
+	<row>
+	 <label value="Description"  tooltip="descripto"/>
+	 <textbox id="incd_disptext" multiline="true" rows="3" cols="60" />
+	</row>
+
+	<row>
+	 <label value="Expired" tooltip="tipexpired" />
+	 <checkbox id="incd_expired" label="Yes/No" />
+	</row>
+	
+	<row>
+	 <label value="NumVal" tooltip="tipintvalue" />
+	 <intbox id="incd_intvalue" constraint="no negative"/>
+	</row>
+
+ </rows>
+
+</grid>
+
+<zscript>
+lookupInputs modinputs = new lookupInputs(incd_name,incd_disptext,
+	incd_expired,incd_intvalue,incid_catlist,incidtypetree);
+</zscript>
+
+</groupbox>
+
+<separator />
+<hbox>
+<button id="update" label="Update" onClick="updateItem(updatePopup,incidtypetree,modinputs)" />
+<button id="cancelupdate" label="Cancel" onClick="updatePopup.close()" />
+</hbox>
+</popup>
+
+<!-- popup to delete incident type -->
+<popup id="deletePopup" width="200px">
+<groupbox mold="3d" width="170px">
+	<caption label="DELETE" />
+
+<vbox>
+	<label value="Are you sure?" />
+	<separator />
+	<hbox>
+		<button id="delyes" label="Yes" onClick="deleteItem(deletePopup,incidtypetree)" />
+		<button id="delno" label="No" onClick="deletePopup.close()" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+<!-- insert new incident type -->
+<popup id="insertPopup" width="530px">
+<groupbox mold="3d" width="100%">
+	<caption label="INSERT" />
+
+<grid>
+ <columns>
+  <column label="Field" />
+  <column label="Entry" />
+ </columns>
+ 
+ <rows>
+	<row>
+	 <label value="Code" tooltip="uniqcode" />
+	 <textbox id="ins_incd_name" />
+	</row>
+	
+	<row>
+	 <label value="Description" tooltip="descripto" />
+	 <textbox id="ins_incd_disptext" multiline="true" rows="3" cols="60" />
+	</row>
+
+	<row>
+	 <label value="Expired" tooltip="tipexpired"/>
+	 <checkbox id="ins_incd_expired" label="Yes/No" />
+	</row>
+	
+	<row>
+	 <label value="NumVal" tooltip="tipintvalue" />
+	 <intbox id="ins_incd_intvalue" constraint="no negative"/>
+	</row>
+ </rows>
+
+</grid>
+
+<zscript>
+lookupInputs insinputs = new lookupInputs(ins_incd_name,ins_incd_disptext,
+	ins_incd_expired,ins_incd_intvalue,incid_catlist,incidtypetree);
+
+crud_buttons.setVisible(false);
+
+</zscript>
+
+</groupbox>
+
+<separator />
+<hbox>
+<button id="insert" label="Insert" onClick="insertItem(insertPopup, incidtypetree, insinputs)" />
+<button id="insertcancel" label="Cancel" onClick="insertPopup.close()" />
+</hbox>
+</popup>
+
+<!-- use this one to update/insert/delete lookup table -->
+<menupopup id="contextPopup">
+<menuitem label="Update" popup="updatePopup" />
+<menuitem label="Insert" popup="insertPopup" />
+<menuitem label="Delete" popup="deletePopup" />
+</menupopup>
+
+</zk>

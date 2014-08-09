@@ -1,0 +1,859 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="releasefolders2_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v2.0";
+/*
+Title		: Release folders by supervisor or manager
+Written by	: Victor Wong
+
+Revisions:
+
+04/04/2012: optimize and port to byte-compl
+05/12/2011: need user PIN to gen COA
+04/10/2011: total recode - simpler interface
+
+*/
+
+import java.util.*;
+
+/*
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+
+// check/store user's stockcat and groupcode
+// for users with '0' stockcat and groupcode - lab manager
+global_user_stockcat = (useraccessobj.stockcat.equals("0")) ? "ALL" : useraccessobj.stockcat;
+global_user_groupcode = (useraccessobj.groupcode.equals("0")) ? "ALL" : useraccessobj.groupcode;
+
+// for admin
+/*
+if(useraccessobj.accesslevel == 9)
+{
+	global_user_stockcat = "ALL";
+	global_user_groupcode = "ALL";
+}
+*/
+
+public class jtpObject
+{
+	public String jsorigid;
+	public String jtporigid;
+	public String mysoftcode;
+	public String testname;
+	public String method_name;
+	public String casnumber;
+	public Combobox result;
+	public Combobox units;
+}
+
+public class jtpCanRelease
+{
+	public String jtporigid;
+	public boolean withresults;
+	public String datestring;
+}
+
+public class releasedObj
+{
+	public String jtporigid;
+	public boolean released;
+}
+
+ArrayList mainCanReleaseId;
+ArrayList mainReleasedCount;
+
+last_foldersearch_type = 0;
+selected_folderorigid = "";
+selected_folderno = "";
+global_labfolderstatus = "";
+
+// show what this user can release - ALL can release all results
+void showUserReleaseAuthorized()
+{
+	user_stockcat_lbl.setValue(global_user_stockcat);
+	user_groupcode_lbl.setValue(global_user_groupcode);
+}
+
+void showFolderMetadata(String ifolderno)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select jf.origid,jf.datecreated,jf.duedate,jf.folderno_str,jf.ar_code,jf.folderstatus,jf.labfolderstatus," +
+	"jf.sign1, jf.sign2, " +
+	"customer.customer_name,cashsales_customerinfo.customer_name as cs_customer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo on cashsales_customerinfo.folderno_str = jf.folderno_str " +
+	"where jf.folderno_str='" + ifolderno + "'";
+	jrc = sql.firstRow(sqlstm);
+
+	sqlstm2 = "select count(origid) as samplecount from jobsamples where deleted=0 and jobfolders_id=" + selected_folderorigid;
+	smpc = sql.firstRow(sqlstm2);
+
+	sql.close();
+
+	if(jrc != null)
+	{
+		folderno_lbl.setValue(jrc.get("folderno_str"));
+		customername_lbl.setValue(jrc.get("customer_name"));
+		datecreated_lbl.setValue(jrc.get("datecreated").toString().substring(0,10));
+		duedate_lbl.setValue(jrc.get("duedate").toString().substring(0,10));
+
+		folderstatus_lbl.setValue(jrc.get("folderstatus"));
+		labfolderstatus_lbl.setValue(jrc.get("labfolderstatus"));
+
+		global_labfolderstatus = jrc.get("labfolderstatus");
+		//gencoa_btn.setDisabled(true); // always set disabled
+
+		if(global_labfolderstatus.equals("RELEASED"))
+		{
+			labfolderstatus_div.setStyle("padding:2px;background:#11ff00");
+			// enable gen-COA button if RELEASED
+			//gencoa_btn.setDisabled(false);
+		}
+		else
+			labfolderstatus_div.setStyle("padding:2px;background:#ff1100");
+			
+		samplecount_lbl.setValue("Samples: " + smpc.get("samplecount").toString());
+
+		showDocumentsList(ifolderno);
+		showJobNotes(jrc.get("origid").toString());
+		
+		// 09/01/2012: show assigned signators
+		if(jrc.get("sign1") != null) lbhand.matchListboxItems(signator1_lb,jrc.get("sign1")); else signator1_lb.setSelectedIndex(0);
+		if(jrc.get("sign2") != null) lbhand.matchListboxItems(signator2_lb,jrc.get("sign2")); else signator2_lb.setSelectedIndex(0);
+
+		foldermetadata_gb.setVisible(true);
+	}
+}
+
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("arcode",false),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Lab",true),
+	new listboxHeaderObj("Brnch",true),
+	new listboxHeaderObj("Share",true),
+	};
+
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_folderorigid = lbhand.getListcellItemLabel(selitem,0);
+		selected_folderno = lbhand.getListcellItemLabel(selitem,2);
+
+		showFolderResults(selected_folderorigid);
+		showFolderMetadata(selected_folderno);
+	}
+}
+
+// itype: 1=by date, 2=by customer-name and selected date, 3=by folder, 4=by sampleid
+void listFolders(int itype)
+{
+	// reset vars
+	selected_folderorigid = "";
+	selected_folderno = "";
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(customer_tb.getValue());
+	foldnum = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+	last_foldersearch_type = itype;
+	
+	if(itype==3 && foldnum.equals("")) return;
+	if(itype==4 && sampid.equals("")) return;
+	
+	// header query
+	sqlstm = 
+	"select top 200 jf.origid, jf.datecreated, jf.folderno_str, jf.duedate, jf.branch,jf.ar_code, jf.share_sample, jf.labfolderstatus, " +
+	"customer.customer_name, csci.customer_name as cashcustomer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + "'";
+			break;
+			
+		case 2:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + "' and customer.customer_name like '%" + searchtext + "%'";
+			break;
+			
+		case 3:
+			sqlstm += "where jf.folderno_str like '%" + foldnum + "%'";
+			break;
+			
+		case 4:
+			sqlstm += "where js.origid=" + sampid;
+			break;
+	}
+
+	// footer query	
+	sqlstm += " and js.deleted=0 and jf.deleted=0 and jf.folderstatus='COMMITED' " + 
+	"group by jf.origid, jf.datecreated, jf.folderno_str, jf.duedate, jf.branch,jf.ar_code, jf.share_sample, jf.labfolderstatus, " +
+	"customer.customer_name, csci.customer_name order by jf.origid";
+
+	Listbox newlb = lbhand.makeVWListbox(folders_holder, folders_lb_headers, "folderjobs_lb", 5);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+    therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(20);
+	
+	newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("duedate").toString().substring(0,10));
+		
+		iar_code = dpi.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = dpi.get("customer_name");
+
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+		{
+			csnam = dpi.get("cashcustomer");
+			if(csnam != null) icompanyname = csnam;
+		}
+		
+		if(icompanyname == null) icompanyname = "Undefined";
+
+		kabom.add(icompanyname);
+		kabom.add(dpi.get("labfolderstatus"));
+
+		kabom.add(dpi.get("branch"));
+		kabom.add(dpi.get("share_sample"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,JOBFOLDERS_PREFIX,"");
+	}
+
+	newlb.invalidate();
+}
+
+void showFolderResults(String ifoldernum)
+{
+	if(testparams_holder.getFellowIfAny("samplesgrid") != null) samplesgrid.setParent(null);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.origid=" + ifoldernum + " and jf.deleted = 0 and js.deleted = 0";
+
+	// grab samples + marking
+	therows = sql.rows(sqlstm);
+
+	if(therows.size() == 0) {sql.close(); return;}
+	
+	//showFolderMetadata(foldernum);
+	release_btn.setDisabled(false); // reset release-button so user can press it - set in checkReleasedResultsUpdateStatus()
+
+	// create the grid
+	thegrid = new Grid();
+	thegrid.setId("samplesgrid");
+	gridrows = new Rows();
+	gridrows.setParent(thegrid);
+
+	testgrid_count = 1;
+
+	mainCanReleaseId = new ArrayList();
+	mainReleasedCount = new ArrayList();
+
+	// get distinct test(mysoftcode) assigned and description, to speed-up through hashtable
+	sqlstm4 = "select distinct jtp.mysoftcode, smd.description " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where jf.origid=" + ifoldernum;
+
+	testdesclist = sql.rows(sqlstm4);
+	Hashtable testdescriptions = new Hashtable();
+
+	if(testdesclist.size() > 0)
+	{
+		for(tpi : testdesclist)
+		{
+			testdescriptions.put(tpi.get("mysoftcode").toString(),kiboo.checkNullString(tpi.get("description")));
+		}
+	}
+	
+	for(dpi : therows)
+	{
+		sampleid_row = gridhand.gridMakeRow("","background-color:#333333","",gridrows);
+/*
+		gridhand.makeLabelToParent(testgrid_count.toString() + ". SampleID","color:#ffffff",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("sampleid_str"),"color:#ffffff;font-weight:bold",sampleid_row);
+	*/	
+		gridhand.makeLabelToParent(testgrid_count.toString() + ".","color:#ffffff",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("js_origid").toString(),"color:#ffffff;font-weight:bold",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("sampleid_str"),"color:#ffffff;font-weight:bold",sampleid_row);
+
+		samplemarking_row = gridhand.gridMakeRow("","",",2",gridrows);
+
+		gridhand.makeLabelToParent("Sample marking","",samplemarking_row);
+		gridhand.makeLabelToParent(dpi.get("samplemarking"),"",samplemarking_row);
+
+		// show tests for sample-id
+		testsrow = gridhand.gridMakeRow("","","3",gridrows);
+
+		testsgrid = new Grid();
+		testsgrid.setId("testgrid" + testgrid_count.toString()); // set ID for later usage
+		testsgrid.setParent(testsrow);
+
+		/*sqlstm2 = "select jtp.origid as jtp_origid, jtp.mysoftcode, " + 
+			"jtp.releasedby, jtp.releaseddate, " +
+			"smd.description, smd.description2, smd.stock_cat, smd.groupcode, newfield7 " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where js.origid=" + dpi.get("js_origid").toString();
+			*/
+			
+		sqlstm2 = "select jtp.origid as jtp_origid, jtp.mysoftcode, " + 
+			"jtp.releasedby, jtp.releaseddate, " +
+			"smd.stock_cat, smd.groupcode " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where js.origid=" + dpi.get("js_origid").toString();
+
+		testrecs = sql.rows(sqlstm2);
+		
+		if(testrecs.size() != 0)
+		{
+			testgridrows = gridhand.gridMakeRows("","",testsgrid);
+			headrow = gridhand.gridMakeRow("","background:#999999","",testgridrows);
+
+			gridhand.makeLabelToParent("Tests - results entry","",headrow);
+			gridhand.makeLabelToParent("DivSec","",headrow);
+			gridhand.makeLabelToParent("Rel.By","",headrow);
+			gridhand.makeLabelToParent("Rel.Date","",headrow);
+			gridhand.makeLabelToParent("Result","",headrow);
+			gridhand.makeLabelToParent("Units","",headrow);
+			gridhand.makeLabelToParent("Enter by","",headrow);
+			gridhand.makeLabelToParent("Dated","",headrow);
+
+			/*
+			oldentry = new Label();
+			oldentry.setValue("Previous results by");
+			oldentry.setParent(headrow);
+			*/
+
+			for(kpi : testrecs)
+			{
+				if(kpi.get("mysoftcode") != 0)
+				{
+					tprow = gridhand.gridMakeRow("","","",testgridrows);
+
+					//gridhand.makeLabelToParent(kpi.get("description"),"",tprow);
+					gridhand.makeLabelToParent(testdescriptions.get(kpi.get("mysoftcode").toString()),"",tprow); // use Hashtable - to speedup
+
+					catgroup = new Label();
+					tstockcat = (kpi.get("stock_cat") == null) ? "NO_CAT" : kpi.get("stock_cat");
+					tgroupcode = (kpi.get("groupcode") == null) ? "NO_GRP" : kpi.get("groupcode");
+					tstr = tstockcat + ":" + tgroupcode;
+					catgroup.setValue(tstr);
+
+					canreleaseflag = false;
+
+					// if user can release this groupcode(section), colorize it
+					// 10/01/2012: only groupcode, no contraint on stock_cat yet
+					sediv = new Div();
+					thstyle = "font-size:9px";
+				
+					//if(global_user_groupcode.equals(tgroupcode) || global_user_groupcode.equals("ALL"))
+					if(kiboo.checkExistinString(global_user_stockcat,",", tstockcat))
+					{
+						if(kiboo.checkExistinString(global_user_groupcode,",", tgroupcode))
+						{
+							// save jtp.origid to be used to release the results
+							icanrelease = new jtpCanRelease();
+							icanrelease.jtporigid = kpi.get("jtp_origid").toString();
+							icanrelease.withresults = false;
+							canreleaseflag = true;
+
+							thstyle += ";font-weight:bold";
+							sediv.setStyle("background:#ff2222;padding:2px"); // set it red - no results, cannot release this one
+							tprow.setStyle("background:#ff2222");
+						}
+					}
+
+					catgroup.setStyle(thstyle);
+					catgroup.setParent(sediv);
+					sediv.setParent(tprow);
+
+					irelby = (kpi.get("releasedby") == null) ? "" : kpi.get("releasedby");
+					ireldate = (kpi.get("releaseddate") == null) ? "" : kpi.get("releaseddate").toString().substring(0,10);
+				
+					// do the released counter
+					irelcount = new releasedObj();
+					irelcount.jtporigid = kpi.get("jtp_origid").toString();
+
+					irelcount.released = false;
+					if(!irelby.equals("") && !ireldate.equals("")) irelcount.released = true;
+
+					mainReleasedCount.add(irelcount);
+
+					gridhand.makeLabelToParent(irelby,"",tprow);
+					gridhand.makeLabelToParent(ireldate,"",tprow);
+
+					// get last result-entered/units if any
+					sqlstm3 = "select top 1 result_unit,final,username,analysed_date from elb_chemistry_results " +
+					"where jobtestparameter_id=" + kpi.get("jtp_origid").toString() + " and mysoftcode=" + kpi.get("mysoftcode").toString() + 
+					"order by origid desc";
+
+					prevrec = sql.firstRow(sqlstm3);
+
+					if(prevrec != null)
+					{
+						oldres = (prevrec.get("final") == null) ? "" : prevrec.get("final");
+						oldunit = (prevrec.get("result_unit") == null) ? "" : prevrec.get("result_unit");
+
+						gridhand.makeLabelToParent(oldres,"",tprow);
+						gridhand.makeLabelToParent(oldunit,"",tprow);
+						gridhand.makeLabelToParent(prevrec.get("username"),"",tprow);
+						gridhand.makeLabelToParent(prevrec.get("analysed_date").toString().substring(0,10),"",tprow);
+					
+						// make sure there's a result entered before release
+						if(canreleaseflag && !oldres.equals(""))
+						{
+							icanrelease.withresults = true;
+
+							icanrelease.datestring = "";
+							if(irelby.equals(useraccessobj.username)) // result released by the same user, save release-date
+								icanrelease.datestring = ireldate; // to be used when user want to clear their own releases
+
+							mainCanReleaseId.add(icanrelease);
+							sediv.setStyle("background:#00ff22;padding:2px");
+							tprow.setStyle("background:#00ff22");
+						}
+					}
+					else // no previous results, blank cells
+					{
+						gridhand.grid_makeBlankColumn(tprow,4);
+					}
+				}
+			}
+		}
+
+		testgrid_count++;
+		selected_folderno = dpi.get("folderno_str");
+	}
+
+	sql.close();
+	thegrid.setParent(testparams_holder);
+}
+
+// check number of test-parameters to released status - if match, set jobfolders.labfolderstatus and jobfolders.releaseddate
+// able to send out notification
+// 05/12/2011: enable gen-COA button if RELEASED
+void checkReleasedResultsUpdateStatus()
+{
+	if(selected_folderorigid.equals("")) return;
+	if(mainReleasedCount.size() == 0) return;
+
+	relcount = 0;
+
+	for(dpi : mainReleasedCount)
+	{
+		if(dpi.released) relcount++;
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	labstat = "WIP";
+	reldate = ",releaseddate=null";
+
+	// if released = num parameters - set jobfolders.labstatus
+	if(relcount == mainReleasedCount.size())
+	{
+		labstat = "RELEASED";
+		reldate = ",releaseddate='" + todaydate + "'";
+		// disable release button once folder-released
+		release_btn.setDisabled(true);
+		//gencoa_btn.setDisabled(false); // 05/12/2011: enable gen-COA butt
+
+		// NOTES: send out notification if required later
+	}
+
+	sqlstm = "update jobfolders set labfolderstatus='" + labstat + "' " + reldate + " where origid=" + selected_folderorigid;
+	sql.execute(sqlstm);
+	sql.close();
+	showFolderMetadata(selected_folderno); // refresh
+	
+	//alert(relcount.toString() + " results released out of " + mainReleasedCount.size() + " parameters");
+}
+
+void releaseResults()
+{
+	if(selected_folderno.equals("")) return;
+	if(mainCanReleaseId.size() == 0) return;
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	kst = "(";
+	for(dpi : mainCanReleaseId)
+	{
+		if(dpi.withresults) kst += dpi.jtporigid + ",";
+	}
+
+	kst = kst.substring(0,kst.length()-1) + ")";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update jobtestparameters set releasedby='" + useraccessobj.username + "', releaseddate='" + todaydate + "' " +
+	"where origid in " + kst;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showFolderResults(selected_folderorigid); // refresh
+
+	// do check on all results release, set jobfolders.labstatus to released - update metadata display
+	checkReleasedResultsUpdateStatus();
+}
+
+// Users can clear what they've released earlier - meant to re-enter results or whatever
+void clearRelease()
+{
+	if(selected_folderno.equals("")) return;
+	if(mainCanReleaseId.size() == 0) return;
+	
+	kst = "(";
+	kcount = 0;
+	for(dpi : mainCanReleaseId)
+	{
+		if(!dpi.datestring.equals(""))
+		{
+			kst += dpi.jtporigid + ",";
+			kcount++;
+		}
+	}
+
+	kst = kst.substring(0,kst.length()-1) + ")";
+
+	if(kcount == 0) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update jobtestparameters set releasedby=null, releaseddate=null where origid in " + kst;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showFolderResults(selected_folderorigid); // refresh
+
+	// do check on all results release, set jobfolders.labstatus to released - update metadata display
+	checkReleasedResultsUpdateStatus();
+}
+
+// admin func - clear all releases data
+void clearAllReleases()
+{
+	if(selected_folderno.equals("")) return;
+	if(mainCanReleaseId.size() == 0) return;
+	
+	kst = "(";
+	for(dpi : mainCanReleaseId)
+	{
+		kst += dpi.jtporigid + ",";
+	}
+	kst = kst.substring(0,kst.length()-1) + ")";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update jobtestparameters set releasedby=null, releaseddate=null where origid in " + kst;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showFolderResults(selected_folderorigid); // refresh
+
+	checkReleasedResultsUpdateStatus();
+}
+
+// 09/01/2012: assign signators to the folder
+void assignSignators()
+{
+	if(selected_folderorigid.equals("")) return;
+
+	sd1 = signator1_lb.getSelectedItem().getLabel();
+	sd2 = signator2_lb.getSelectedItem().getLabel();
+
+	if(sd1.equals("NONE") && sd2.equals("NONE")) return; // return if both signators not selected
+	if(sd1.equals(sd2)) { guihand.showMessageBox("Cannot assign same signator for both"); return; }
+
+	// if sd1 = none but selected sd2, make sd1=sd2 then none sd2
+	if(sd1.equals("NONE") && !sd2.equals("NONE")) { sd1 = sd2; sd2 = "NONE"; }
+
+/*
+	if(sd1.equals("NONE") && !sd2.equals("NONE")) sd1 = sd2; // if selected sign2 and sign1 none, set sign1 as sign2
+*/
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// update assigned signators and also clear sign-date-stamp - block where user change signator but signed by different person
+	// have to re-sign then
+	sqlstm = "update jobfolders set sign1=" + ((sd1.equals("NONE")) ? "null" : "'" + sd1 + "'") +
+	",sign2=" + ((sd2.equals("NONE")) ? "null" : "'" + sd2 + "'") + ", sign1_date=null, sign2_date=null " +
+	" where origid=" + selected_folderorigid;
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	guihand.showMessageBox("Signator(s) assigned..");
+}
+
+]]>
+</zscript>
+
+<!-- Linking documents popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- ENDOF Linking documents popup -->
+
+<!-- Job notes related popup -->
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" style="font-size:9px" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+<!-- end of Job notes related popup -->
+
+<div width="1200px">
+<panel id="releasefolders2_panel" title="Release Folders Results ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<!-- <button label="X Close panel" style="font-size:9px" onClick="assign_tests_panel.setParent(null)" /> -->
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="listFolders(1)" />
+		</row>
+		<row spans=",3,">
+			<label value="Customer" style="font-size:9px" />
+			<textbox id="customer_tb" width="99%" style="font-size:9px" />
+			<button label="Search" style="font-size:9px" onClick="listFolders(2)" />
+		</row>
+	</rows>
+</grid>
+
+<grid>
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px"  /> <!-- value="ALJB33007" -->
+			<button label="by folder" style="font-size:9px" onClick="listFolders(3)" />
+		</row>
+		<row>
+			<label value="Sample-ID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="by sample-id" style="font-size:9px" onClick="listFolders(4)" />
+		</row>
+	</rows>
+</grid>
+
+<grid>
+	<rows>
+		<row spans="3,2">
+			<button id="release_btn" label="RELEASE RESULTS YOU'RE AUTHORIZED TO" onClick="releaseResults()" />
+			<button id="unrelease_btn" label="CLEAR WHAT YOU HAVE RELEASED" onClick="clearRelease()" />
+		</row>
+		<row>
+			<label value="Your division" style="font-size:9px" />
+			<label id="user_stockcat_lbl" style="font-size:9px" />
+			<label value="Section" style="font-size:9px" />
+			<label id="user_groupcode_lbl" style="font-size:9px" />
+		</row>
+		<row spans="4">
+			<div style="background:#ff1111;padding:2px" id="adminstuff" visible="false">
+				<button label="Clear green releases" style="font-size:9px" onClick="clearAllReleases()" />
+			</div>
+		</row>
+	</rows>
+</grid>
+</hbox>
+
+<separator height="2px" />
+<hbox>
+	<vbox>
+		<label value="(Max. 200 folders per search)" style="font-size:8px" />
+		<div id="folders_holder" width="600px" />
+
+		<div id="foldermetadata_gb" visible="false">
+			<!--
+			<button id="gencoa_btn" label="Generate COA for RELEASED folder" disabled="true" />
+			<separator height="2px" />
+			-->
+			<grid>
+				<rows>
+					<row spans=",2,">
+						<label value="Folder" style="font-size:9px" />
+						<div style="background:#333333;padding:2px">
+						<label id="folderno_lbl" style="color:#ffffff" />
+						</div>
+						<label id="samplecount_lbl" style="font-size:9px" />
+					</row>
+					<row spans=",3">
+						<label value="Customer" style="font-size:9px" />
+						<div style="background:#333333;padding:2px">
+						<label id="customername_lbl" style="color:#ffffff" />
+						</div>
+					</row>
+					<row>
+						<label value="Dated" style="font-size:9px" />
+						<label id="datecreated_lbl" style="font-size:9px" />
+						<label value="Due date" style="font-size:9px" />
+						<label id="duedate_lbl" style="font-size:9px" />
+					</row>
+					<row>
+						<label value="Status" style="font-size:9px" />
+						<label id="folderstatus_lbl" style="font-size:9px" />
+						<label value="Lab status" style="font-size:9px" />
+						<div id="labfolderstatus_div">
+							<label id="labfolderstatus_lbl" style="font-weight:bold" />
+						</div>
+					</row>
+				</rows>
+			</grid>
+
+			<separator height="3px" />
+
+<!-- documents box -->
+<div id="doculist_holder" width="600px" />
+<separator height="3px" />
+<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+
+<separator height="3px" />
+
+<div id="jobnotes_found_div" />
+<separator height="3px" />
+<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+		<label value="Job notes" style="font-size:9px" />
+		<textbox id="jobnotes_tb" style="font-size:9px" multiline="true" width="98%" height="70px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+<button label="Save notes" style="font-size:9px" onClick="saveUpdateJobNotes()" />
+<button id="noteshistory_btn" label="Notes history" style="font-size:9px" onClick="jobNotesHistory_clicker()" />
+</hbox>
+
+		</div>
+	</vbox>
+
+	<vbox>
+	<label value="(GREEN: can release, RED: no results, cannot release)" style="font-size:8px" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Signator 1" style="font-size:9px" />
+				<listbox id="signator1_lb" mold="select" style="font-size:9px" />
+				<label value="Signator 2" style="font-size:9px" />
+				<listbox id="signator2_lb" mold="select" style="font-size:9px" />
+				<button label="Assign signator(s)" style="font-size:9px" onClick="assignSignators()" />
+			</row>
+		</rows>
+	</grid>
+	<div id="testparams_holder" height="600px" style="border:0px;overflow:auto;padding:2px;" />
+	</vbox>
+</hbox>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+kiboo.setTodayDatebox(hiddendatebox);
+
+//lbhand.populateDropdownListbox(signator1_lb,signators);
+//lbhand.populateDropdownListbox(signator2_lb,signators);
+luhand.populateListbox_ByLookup(signator1_lb,"dd_signators",2);
+luhand.populateListbox_ByLookup(signator2_lb,"dd_signators",2);
+
+showUserReleaseAuthorized();
+
+if(useraccessobj.accesslevel == 9) adminstuff.setVisible(true);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="asmamwqmextractor_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title		: ASMA MWQM results extractor to Excel
+Written by	: Victor Wong
+
+Allow users to extract results entered into Excel which will comply to the ASMA results uploading template
+
+Revisions:
+01/11/2011: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+public class folderListObject
+{
+	public String origid;
+	public String folderno_str;
+	public String date_created;
+}
+
+HILITE_BACKGROUND = "background:#A1F76F";
+BAR_HILITE = "background:#9FF5A5";
+
+last_load_type = 0;
+
+selected_folderid = "";
+selected_folderno = "";
+selected_datecreated = "";
+global_selected_arcode = "";
+
+ArrayList mainEntryList;
+ArrayList mainFolderList;
+
+Object prevSelectedFolder = null;
+
+String[] mwqmheaders = {
+"SampID","ASMA-ID","ASMA-Stat",
+"BOD","COD","TSS","NH3-N","TDS",
+"NO3-N","Cl","PO4-P","As","Hg",
+"Cd","Cr","Pb","Zn","Ca",
+"Fe","K","Mg","Na","O&G",
+"MBAS","E.Coli","Coliform",
+};
+
+String[] mwqmunits = {
+"Unit","","",
+"(mg/l)","(mg/l)","(mg/l)","(mg/l)","(mg/l)",
+"(mg/l)","(mg/l)","(mg/l)","(mg/l)","(mg/l)",
+"(mg/l)","(mg/l)","(mg/l)","(mg/l)","(mg/l)",
+"(mg/l)","(mg/l)","(mg/l)","(mg/l)","(mg/l)",
+"(mg/l)","cfu/100ml","cfu/100ml",
+};
+
+// as per mysoftcode for each col. in worksheet
+int[] mwqm_mysoftcodes = {
+75,76,136,151,135,
+154,143,1777,315,418,
+339,340,344,356,676,
+343,349,345,352,78,
+82,104,106
+};
+
+Object findRecByTestcode(Object therecs, int imysoftcode)
+{
+	for(dpi : therecs)
+	{
+		if(dpi.get("mysoftcode") == imysoftcode) return dpi;
+	}
+
+	return null;
+}
+
+// Super-hardcoded things here --
+void loadMWQMResults()
+{
+	if(selected_folderid.equals("")) return;
+	//selected_folderid = "33759";
+
+	// remove previous grid
+	if(foldertests_holder.getFellowIfAny("mwqmresults_lb") != null) mwqmresults_lb.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("mwqmresults_lb");
+	gridrows = gridMakeRows("","",thegrid);
+
+	String[] someheaders = { "Project","ALS REF","Date Received","Date Reported", "Sampling Date", };
+	for(i=0;i<someheaders.length;i++)
+	{
+		titrow = gridMakeRow("","background:#aaaaaa",",25",gridrows);
+		makeLabelToParent(someheaders[i],"",titrow);
+		whattoshow = "";
+		switch(i)
+		{
+			case 0:
+				whattoshow = "River Cleaning Project"; break;
+			case 1:
+				whattoshow = selected_folderno; break;
+			case 2:
+				whattoshow = selected_datecreated; break;
+		}
+		makeLabelToParent(whattoshow,"",titrow);
+	}
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlstm = "select js.origid,js.sampleid_str,js.samplemarking,js.asma_id,js.asma_station " +
+	"from jobsamples js where js.deleted=0 and js.jobfolders_id=" + selected_folderid;
+
+	smprecs = sql.rows(sqlstm);
+	if(smprecs.size() == 0) { sql.close(); return; }
+
+	getanaldate = false;
+
+	for(spi : smprecs)
+	{
+		if(!getanaldate) // 1 time analyzed date row
+		{
+			// number of samples row
+			titrow = gridMakeRow("","background:#aaaaaa",",25",gridrows);
+			makeLabelToParent("No of Samples","",titrow);
+			makeLabelToParent(smprecs.size().toString(),"",titrow);
+
+			analdate_row = gridMakeRow("","background:#aaaaaa","",gridrows);
+			sqlstm = "select analysed_date,mysoftcode from elb_chemistry_results where samplecode='" + spi.get("origid").toString() + "'";
+			adrecs = sql.rows(sqlstm);
+
+			makeLabelToParent("Analyze date","",analdate_row);
+
+			// make 2 blank c<separator height="2px" />ol. to position analyzed date
+			grid_makeBlankColumn(analdate_row,2);
+
+			if(adrecs.size() != 0)
+			{
+				// go according to mwqm_mysoftcodes col.
+				for(k=0; k<mwqm_mysoftcodes.length; k++)
+				{
+					foundi = findRecByTestcode(adrecs,mwqm_mysoftcodes[k]);
+					if(foundi != null)
+						makeLabelToParent(foundi.get("analysed_date").toString().substring(0,10),"",analdate_row);
+					else
+						makeLabelToParent("","",analdate_row);
+				}
+			}
+			else
+				grid_makeBlankColumn(analdate_row,23);
+
+			headrow = gridMakeRow("","background:#aaaaaa","",gridrows);
+			for(i=0;i<mwqmheaders.length;i++)
+			{
+				makeLabelToParent(mwqmheaders[i],"",headrow);
+			}
+				
+			// show all pre-def units for analytes
+			unitsrow = gridMakeRow("","background:#aaaaaa","",gridrows);
+			for(i=0;i<mwqmunits.length;i++)
+			{
+				makeLabelToParent(mwqmunits[i],"",unitsrow);
+			}
+
+			getanaldate = true;
+		}
+
+		samp_row = gridMakeRow("","","",gridrows);
+
+		makeLabelToParent(spi.get("sampleid_str"),"",samp_row);
+		makeLabelToParent(checkNullString_RetWat(spi.get("asma_id"),"---"),"",samp_row);
+		makeLabelToParent(checkNullString_RetWat(spi.get("asma_station"),"---"),"",samp_row);
+
+		// grab results from elb_chemistry_results
+		sqlstm = "select result,mysoftcode from elb_chemistry_results where samplecode='" + spi.get("origid").toString() + "' order by origid desc";
+		resrecs = sql.rows(sqlstm);
+		if(resrecs.size() !=0 )
+		{
+			// go according to mwqm_mysoftcodes col.
+			for(k=0; k<mwqm_mysoftcodes.length; k++)
+			{
+				foundi = findRecByTestcode(resrecs,mwqm_mysoftcodes[k]);
+				if(foundi != null)
+					makeLabelToParent(foundi.get("result"),"",samp_row);
+				else
+					makeLabelToParent("","",samp_row);
+			}
+		}
+		else
+			grid_makeBlankColumn(samp_row,23);
+	}
+
+	sql.close();
+
+	thegrid.setParent(foldertests_holder);
+	foldertests_holder.setVisible(true);
+}
+
+class foldersOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//selitem = event.getReference();
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow) prevSelectedFolder.setStyle(null);
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder = selrow;
+		selrow.setStyle(BAR_HILITE);
+
+		selid = selrow.getId();
+		selid = selid.substring(2,selid.length());
+
+		for(dpi : mainFolderList)
+		{
+			if(dpi.origid.equals(selid))
+			{
+				selected_folderid = dpi.origid;
+				selected_datecreated = dpi.date_created;
+				selected_folderno = dpi.folderno_str;
+
+				//pickuphilite_btn.setDisabled(false); // always start with button enable
+
+				showDocumentsList(selected_folderno);
+				//showFolderMetadata(selected_folderno); // here will disable button if folder is release
+				//showTestAssigned(selected_folderid);
+
+				//dataarea.setVisible(true);
+
+				break;
+			}
+		}
+
+	}
+}
+
+// knockoff from checlist_v1.zul
+// itype: 1=by date and customer search text, 2=by test-name and date, 3=by shared-samples, 4=by PKD, 5=by section/groupcode
+void loadFolders(int itype)
+{
+	last_load_type = itype;
+
+	// remove previous grid
+	if(folders_holder.getFellowIfAny("folders_lb") != null) folders_lb.setParent(null);
+
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+
+	sqlstm = "select jf.origid, jf.folderno_str, jf.datecreated, jf.duedate, jf.tagfolder, jf.mwqm_export from jobfolders jf " +
+	"where jf.datecreated between '" + sdate + "' and '" + edate + "' and jf.ar_code='300A/008' and jf.folderstatus='" + FOLDERCOMMITED + "' " +
+	"order by jf.datecreated";
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	therecs = sql.rows(sqlstm);
+	sql.close();
+	if(therecs.size() == 0) return;
+
+	mainFolderList = new ArrayList();
+
+	thegrid = new Grid();
+	thegrid.setId("folders_lb");
+
+	gridrows = gridMakeRows("","",thegrid);
+
+	headrow = gridMakeRow("","background:#FA9D64","",gridrows);
+	makeLabelToParent("Folder","",headrow);
+	makeLabelToParent("R.Date","",headrow);
+	makeLabelToParent("D.Date","",headrow);
+	makeLabelToParent("Tag.Folder","",headrow);
+	makeLabelToParent("Extract","",headrow);
+
+	for(dpi : therecs)
+	{
+		// Store folder metadata
+		ifolder = new folderListObject();
+		ifolder.origid = dpi.get("origid").toString();
+		ifolder.folderno_str = dpi.get("folderno_str");
+		ifolder.date_created = dpi.get("datecreated").toString().substring(0,10);
+		mainFolderList.add(ifolder);
+
+		theid = "FR" + ifolder.origid;
+		folder_row = gridMakeRow(theid,"","",gridrows);
+		folder_row.addEventListener("onClick", new foldersOnSelect());
+
+		makeLabelToParent(dpi.get("folderno_str"),"",folder_row);
+		makeLabelToParent(dpi.get("datecreated").toString().substring(0,10),"",folder_row);
+		makeLabelToParent(dpi.get("duedate").toString().substring(0,10),"",folder_row);
+		makeLabelToParent(checkNullString_RetWat(dpi.get("tagfolder"),"---"),"",folder_row);
+
+		mwqmext = (dpi.get("mwqm_export") != null) ? ((dpi.get("mwqm_export") == 1) ? "-Y-" : "---") : "---";
+		makeLabelToParent(mwqmext,"",folder_row);
+	}
+	thegrid.setParent(folders_holder);
+	workarea.setVisible(true);
+}
+
+]]>
+</zscript>
+
+<!-- Linking documents popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- ENDOF Linking documents popup -->
+
+<div width="1200px">
+<panel id="asmamwqmextract_panel" title="ASMA MWQM Results Extractor v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<div width="600px">
+<grid width="350px" >
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="loadFolders(1)" />
+		</row>
+		<row spans="5">
+			<label style="font-size:8px">
+(Max. 200 folders per load)
+			</label>
+		</row>
+	</rows>
+</grid>
+</div>
+</hbox>
+<separator height="2px" />
+<button label="Load MWQM results" style="font-size:9px" onClick="loadMWQMResults()" />
+<separator height="2px" />
+<div id="workarea" visible="false">
+<hbox>
+	<vbox>
+
+		<div id="folders_holder" width="350px" height="300px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+		<separator height="3px" />
+		<!-- documents box -->
+		<div id="doculist_holder" width="350px" />
+		<separator height="3px" />
+		<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+	</vbox>
+	
+	<div id="foldertests_holder" width="800px" height="350px" style="border:0px;overflow:auto;padding:2px;" visible="false" />
+</hbox>
+</div>
+
+<separator height="2px" />
+
+
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

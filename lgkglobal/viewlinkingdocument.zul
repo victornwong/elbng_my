@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="viewlinking_document_win"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: View documents saved in database
+Written by: Victor Wong
+*/
+
+import org.zkoss.util.media.AMedia;
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+docid = Executions.getCurrent().getParameter("docid");
+
+void viewTheDocument(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+
+	krec = lgk_getLinkingDocumentRec(docid);
+	if(krec == null) return;
+
+	kfilename = krec.get("file_name");
+	ktype = krec.get("file_type");
+	kexten = krec.get("file_extension");
+	kblob = krec.get("file_data");
+	kbarray = kblob.getBytes(1,(int)kblob.length());
+
+	AMedia am_doc = new AMedia(kfilename, kexten, ktype, kbarray);
+	newiframe.setContent(am_doc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="viewlinking_document_box" width="800px" height="630px" title="View document" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />	
+<separator height="3px" />
+
+<div id="viewdoc_div" />
+
+<label id="noaccess" style="font-size:18px" />
+
+<zscript>
+viewTheDocument(viewdoc_div);
+</zscript>
+</window>
+</zk>

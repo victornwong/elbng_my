@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="bugger_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Admin bugger";
+MYVERSION = "v0.1";
+/*
+Title		: bugger for admin - test out stuff
+Written by	: Victor Wong
+
+Revisions:
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+
+import java.awt.Color;
+import java.io.FileOutputStream;
+/*
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+*/
+
+import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.Image;
+import com.itextpdf.text.pdf.*;
+import com.itextpdf.text.*;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+import java.awt.*;
+import java.awt.image.*;
+import java.awt.geom.*;
+
+void srnStamper()
+{
+/* for initial positioning work
+	pgh = Float.parseFloat(pgh_tb.getValue());
+	xpos = Float.parseFloat(xpos_tb.getValue());
+	ypos = pgh - Float.parseFloat(ypos_tb.getValue());
+	thetext = text_tb.getValue();
+*/
+
+	testfn = session.getWebApp().getRealPath("alsimg/SRA_TEMPLATE_v1.pdf");
+	pixfn = session.getWebApp().getRealPath("alsimg/alstechnichem_logo_smaller.jpg");
+	outfn = session.getWebApp().getRealPath("tmp/juggled.pdf");
+	/*
+	for(int i=1; i<= pdfReader.getNumberOfPages(); i++)
+	{
+		PdfContentByte content = pdfStamper.getUnderContent(i);
+		image.setAbsolutePosition(100f, 700f);
+		content.addImage(image);
+	}
+	*/
+	
+	sqlstm = "select jf.ar_code, jf.folderno_str, cust.customer_name, cust.telephone_no, cust.fax_no," +
+		"jf.datecreated,jf.attention,jf.temperature, jf.deliverymode, jf.customerpo, jf.customercoc," +
+		"jf.allgoodorder, jf.paperworknot, jf.paperworksamplesnot, jf.samplesdamaged, jf.extranotes, " +
+		"(select count(origid) from jobsamples js where js.jobfolders_id=jf.origid) as samplecount " +
+		"from jobfolders jf left join customer cust on cust.ar_code = jf.ar_code where " +
+		"jf.deleted=0 and jf.folderstatus='COMMITED' and jf.origid=57712";
+
+	jfr = sqlhand.gpSqlFirstRow(sqlstm);
+	if(jfr == null) return;
+
+	PdfReader pdfReader = new PdfReader(testfn);
+	PdfStamper pdfStamper = new PdfStamper(pdfReader,new FileOutputStream(outfn));
+	BaseFont bf_helv = BaseFont.createFont(BaseFont.HELVETICA, "Cp1252", false);
+	PdfContentByte cb = pdfStamper.getUnderContent(1);
+
+/*
+	Image image = Image.getInstance(pixfn);
+	image.setAbsolutePosition(50f, 750f);
+	cb.addImage(image);
+*/
+	pageheight = 820; // take pageheight-ypos
+
+	cb.beginText();
+
+	cb.setFontAndSize(bf_helv,12);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customer_name")), 128, 580, 0);
+	cb.setFontAndSize(bf_helv,10);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("folderno_str")), 385, 622, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, jfr.get("datecreated").toString().substring(0,10), 385, 602, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("attention")), 128, 602, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("telephone_no")), 128, 557, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("fax_no")), 385, 557, 0);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, jfr.get("samplecount").toString(), 320, 492, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("temperature")), 320, 476, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("deliverymode")), 320, 459, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customerpo")), 320, 440, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("customercoc")), 320, 440, 0);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("allgoodorder") == 1) ? "X" : "",85, 388, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("paperworknot") == 1) ? "X" : "",85, 376, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("paperworksamplesnot") == 1) ? "X" : "",85, 364, 0);
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, (jfr.get("samplesdamaged") == 1) ? "X" : "",85, 352, 0);
+
+	cb.showTextAligned(PdfContentByte.ALIGN_LEFT, kiboo.checkNullString(jfr.get("extranotes")), 128, 310, 0);
+
+	//cb.showTextAligned(PdfContentByte.ALIGN_LEFT, thetext, xpos, ypos, 0); // for doing positioning
+
+	cb.endText();
+
+	// now draw a line below the headline
+	/*
+	cb.setLineWidth(1f); 
+	cb.moveTo(0, 755);
+	cb.lineTo(595, 755);
+	cb.stroke();
+	*/
+
+	pdfStamper.close();
+	alert("whope..");
+}
+
+void runMe(Object iwhich)
+{
+	itype = iwhich.getId();
+
+	if(itype.equals("run_emailsra"))
+	{
+		param = "fn=" + folder_tb.getValue();
+		guihand.globalActivateWindow(mainPlayground,"workbox","samplereg/autoEmailSRA_v1.zul",
+			kiboo.makeRandomId("esa"), param, useraccessobj);
+	}
+	
+	if(itype.equals("showselmonth"))
+	{
+		ksel = lbhand.getListcellItemLabel(trylb1.getSelectedItem(),1);
+		alert("month selected: " + ksel);
+	}
+}
+
+
+]]>
+</zscript>
+
+<style>
+
+.myrotated
+{  
+-webkit-transform: rotate(45deg);
+-moz-transform: rotate(45deg);
+-o-transform: rotate(45deg);
+writing-mode: lr-tb;
+}
+
+.rotate2
+{
+-webkit-transform: rotate(360deg); 
+-moz-transform: rotate(360deg); 
+-o-transform: rotate(360deg);
+-ms-transform: rotate(360deg);
+}
+
+.r90 {
+-webkit-transform: rotate(100deg);
+-moz-transform: rotate(100deg);
+-o-transform: rotate(90deg);
+-ms-transform: rotate(90deg);
+transform: rotate(100deg);
+width: 1em;
+line-height: 1ex; 
+}
+
+.rnew
+{
+background-color: #001640;
+color: white;
+height:50px;
+padding-bottom: 10px;
+writing-mode: tb-rl;
+-webkit-transform: rotate(90deg);
+-moz-transform: rotate(90deg);
+width: -moz-fit-content;
+width: fit-content;
+font-size:20px;
+}
+
+.container
+{
+	/* this will give container dimension, because floated child nodes don't give any */
+	/* if your child nodes are inline-blocked, then you don't have to set it */
+	overflow: auto;
+}
+
+.container .head
+{
+	/* float your elements or inline-block them to display side by side */
+	float: left;
+	/* these are height and width dimensions of your header */
+	height: 10em;
+	width: 1.5em;
+	/* set to hidden so when there's too much vertical text it will be clipped. */
+	overflow: hidden;
+	/* these are not relevant and are here to better see the elements */
+	background: #2e3436;
+	margin-right: 1px;
+		-moz-box-shadow: 4px 5px 7px #000000;
+-webkit-box-shadow: 4px 5px 7px #000000;
+box-shadow: 4px 5px 7px #000000;
+
+}
+
+.container .head .vert
+{
+	/* line height should be equal to header width so text will be middle aligned */
+	line-height: 1.5em;
+	/* setting background may yield better results in IE text clear type rendering */
+	color: #eeeeee;
+	display: block;
+	/* this will prevent it from wrapping too much text */
+	white-space: nowrap;
+	/* so it stays off the edge */
+	padding-left: 3px;
+	/* IE specific rotation code */
+	writing-mode: tb-rl;
+	filter: flipv fliph;
+	/* CSS3 specific totation code */
+	/* translate should have the same negative dimension as head height */
+	transform: rotate(270deg) translate(-10em,0);
+	transform-origin: 0 0;
+	-moz-transform: rotate(270deg) translate(-10em,0);
+	-moz-transform-origin: 0 0;
+	-webkit-transform: rotate(270deg) translate(-10em,0);
+	-webkit-transform-origin: 0 0;
+	text-shadow:3px 3px 3px #666666;
+
+}
+
+.ctn { 	height:30px; margin:5px; }
+
+.little-caption
+{
+	float:left;
+	font-size:12px;
+	-webkit-transform: rotate(-90deg);
+	-moz-transform: rotate(-90deg);
+	filter: progid:DXImageTransform.Microsoft.BasicImage(rotation=3);
+	width:150px;
+	height:100px;
+	background:#333;
+	color:#eeeeee;
+}
+ 
+.big-toe { float:left; font-size:30px; width:200px; background:#75507b; color:#eeeeee; margin-left:auto; margin-right:auto; }
+
+</style>
+
+<?component name="tipcolor" macroURI="/macros/macrocomp1.zul"?>
+
+<div width="1200px">
+<panel id="checklist_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<!-- <textbox multiline="true" height="100px" width="50%" /> -->
+
+<div>
+	<label value="X" />
+	<textbox id="xpos_tb" value="100" />
+	<label value="Y" />
+	<textbox id="ypos_tb" value="100" />
+	<label value="PgHeight" />
+	<textbox id="pgh_tb" value="820" />
+	<label value="Text" />
+	<textbox id="text_tb" value="TESTING TEXT" />
+	<button label="Stamp it.." style="text-shadow:5px 5px 5px #000000;" onClick="srnStamper()" />
+</div>
+
+<div>
+	<label value="folder" /><textbox id="folder_tb" value="55712" />
+	<button id="run_emailsra" label="run email sra window" onClick="runMe(self)" />
+</div>
+
+<div style="background:#f57900;
+-moz-box-shadow: 4px 5px 7px #000000;
+-webkit-box-shadow: 4px 5px 7px #000000;
+box-shadow: 4px 5px 7px #000000;padding:5px;margin:10px
+" width="500px">
+
+	<listbox id="trylb1" mold="select" style="font-size:9px" />
+	<button id="showselmonth" label="show selected month" onClick="runMe(self)" />
+	<div id="custcatholder" />
+</div>
+
+<separator height="10px" />
+
+<div style="background:#888a85;padding:5px" >
+<hbox> 
+<div class="container">
+    <div class="head" style="background:#204a87;">
+        <div class="vert" style="background:#204a87;">E N V I R O N M E N T A L</div>
+    </div>
+   	<div class="head">
+		<div class="vert">Microbiology</div>
+	</div>
+
+</div>
+
+<div class="container">
+    <div class="head" style="background:#f57900;">
+        <div class="vert" style="background:#f57900;">F O O D</div>
+    </div>
+	<div class="head">
+		<div class="vert">Microbiology</div>
+	</div>
+</div>
+</hbox>
+</div>
+
+<separator height="10px" />
+
+<tipcolor bstyle="background:#556677;" bwidth="200px" bheight="20px" blockish="background:#4e9a06;"
+ words="Some macro testing thing" />
+
+<!--
+<hbox style="float:left;">
+    <label sclass="big-toe">
+		Hello some other things you might want to put here
+    </label>
+    <label sclass="little-caption">
+		world world world again and again time after time
+	</label>
+	<label sclass="big-toe">
+	Big toe again going on here
+	</label>
+</hbox>
+-->
+
+<zscript>
+<![CDATA[
+
+luhand.populateListBox_ValueSelection(trylb1,"MONTHS_SELECTION",2,1);
+luhand.populateDynamic_Mysoft(5, custcatholder,"trylb2","font-size:9px");
+
+/*
+int x = 10, y = 10;
+
+void draw(int x1, int y1, int x2, int y2) {
+BufferedImage bi = new BufferedImage(400, 300, BufferedImage.TYPE_INT_RGB);
+Graphics2D g2d = bi.createGraphics();
+Line2D line = new Line2D.Double(x1, y1, x2, y2);
+g2d.setColor(Color.blue);
+g2d.setStroke(new BasicStroke(3));
+g2d.draw(line);
+img.setContent(bi);
+}
+draw(x, y, x += 10, y += 10);
+*/
+
+
+/*
+<style>
+.z-panel-header
+{
+	color:#eeeeee;
+	background:#204a87;
+}
+
+.z-menupopup-cnt .z-menuitem-over .z-menuitem-cl,
+.z-menupopup-cnt .z-menuitem-over .z-menuitem-cr,
+.z-menupopup-cnt .z-menuitem-over .z-menuitem-cm,
+.z-menupopup-cnt .z-menu-over .z-menu-cl,
+.z-menupopup-cnt .z-menu-over .z-menu-cr,
+.z-menupopup-cnt .z-menu-over .z-menu-cm {
+background:#204a87;
+}
+
+}
+
+</style>
+*/
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

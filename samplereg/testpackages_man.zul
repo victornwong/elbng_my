@@ -1,0 +1,1022 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="testpackages_man"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "3.1";
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/testpackage_funcs.zs" />
+
+Title		: Test packages manager - able to speed up test-commiting task
+Developer	: Victor Wong
+
+**NOTES**
+05/07/2010: added ar_code to test-package - gonna extend this thing to include LOR and such
+27/03/2012: update to use byte-codes
+04/05/2012: add testpackages.itestuse flag - to be used in i-Test portal
+
+*/
+/*
+import java.util.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.text.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+tphand = new TestPackageFuncs();
+
+TestsPanel testspanel;
+
+DecimalFormat nf = new DecimalFormat("####.00");
+String selected_package_id = "";
+testpackage_listitem = null;
+tpi_selected_item = null;
+last_listpackage_type = 1;
+selected_testpackage_origid = "";
+ALS_stock_cat = "";
+
+void hideTestParametersBox()
+{
+	mysoft_testparams.setVisible(false);	
+}
+
+void showTestParametersBox()
+{
+	mysoft_testparams.setVisible(true);
+}
+
+boolean testItem_InTestPackage(Listbox ilb, String imyc)
+{
+	retval = false;
+
+	for(i=0; i<ilb.getItemCount(); i++)
+	{
+		// children -> item 1 = hidden mysoft code
+		lbim = ilb.getItemAtIndex(i).getChildren().get(1).getLabel();
+
+		if(lbim.equals(imyc))
+		{
+			retval = true;
+			break;
+		}
+	}
+	return retval;
+}
+
+void showBoxes(boolean iwhat)
+{
+	testspanel_holder.setVisible(iwhat);
+	packageitems_holder.setVisible(iwhat);
+}
+
+// onSelect event for makeALSTestParametersListbox()
+// 13/9/2010: change to double-click listener instead
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		if(packageitems_div.getFellowIfAny("testpackage_items_lb") == null) return;
+		if(tpi_selected_item == null) return;
+
+		// get mysoft stockmaster details id from hidden listbox column
+		selitem = tests_description_lb.getSelectedItem(); // event.getReference();
+
+		jmysoftc = lbhand.getListcellItemLabel(selitem,0);
+		uprice = lbhand.getListcellItemLabel(selitem,4);
+		lor = lbhand.getListcellItemLabel(selitem,5);
+		bill = lbhand.getListcellItemLabel(selitem,6);
+		units = lbhand.getListcellItemLabel(selitem,7);
+
+		// check if mysoft code already in the package
+		if(testItem_InTestPackage(testpackage_items_lb, jmysoftc))
+		{
+			guihand.showMessageBox("Test parameter is in this test package");
+			return;
+		}
+
+		testdesc = lbhand.getListcellItemLabel(selitem,2);
+		testmethod = lbhand.getListcellItemLabel(selitem,3);
+
+		// now update test-package items listbox with new mysoft code and redraw the item
+		pkitem_origid = lbhand.getListcellItemLabel(tpi_selected_item,0);
+		//alert(pkitem_origid + "::" + jmysoftc + "::" + lor + "::" + bill + "::" + units + "::" + uprice);
+		//return;
+
+		tphand.updateTestPackage_ItemRec(pkitem_origid,jmysoftc,lor,bill,units,uprice);
+
+		// redraw item by taking label from testparameters lb
+		/*
+		lbhand.setListcellItemLabel(tpi_selected_item,3,testdesc);
+		lbhand.setListcellItemLabel(tpi_selected_item,4,testmethod);
+		lbhand.setListcellItemLabel(tpi_selected_item,6,lor);
+		lbhand.setListcellItemLabel(tpi_selected_item,7,bill);
+		lbhand.setListcellItemLabel(tpi_selected_item,8,units);
+		*/
+		populateTestPackageItems(packageitems_div, selected_package_id); // refresh
+	}
+}
+
+// TODO: other modules having this same funcs.. can byte-compiled later
+// Auto select those test-parameters boxes
+void autoAssignTestBox(String iwhich)
+{
+	istockrec = samphand.getStockMasterDetails(iwhich);
+
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+
+	testspanel.populateSectionColumn(istockcat);
+	testspanel.populateTestParametersColumn(istockcat,igroupcode);
+
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+
+	lbhand.matchListboxItems(division_stockcat_lb, divisionln);
+	lbhand.matchListboxItems(section_groupcode_lb, igroupcode);
+
+	tscode = istockrec.get("ID").toString();
+	lbhand.matchListboxItems(tests_description_lb,tscode);
+}
+
+// onSelect listener for populateTestPackageItems()
+class TPItems_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		tpi_selected_item = event.getReference();
+		jmysoftc = lbhand.getListcellItemLabel(tpi_selected_item,1);
+
+		// 03/08/2011: temporary remove for faster user interaction
+		//if(!jmysoftc.equals("0") && !jmysoftc.equals(""))
+		//	autoAssignTestBox(jmysoftc);
+	}
+}
+
+void populateTestPackageItems(Div idiv, String tp_origid)
+{
+	Object[] testpackageItems_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("##",true),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+	new listboxHeaderObj("Price",true),
+	new listboxHeaderObj("LOR",true),
+	new listboxHeaderObj("Bill",true),
+	new listboxHeaderObj("Units",true),
+	};
+
+	Listbox newlb = lbhand.makeVWListbox(idiv, testpackageItems_lb_headers, "testpackage_items_lb", 5);
+
+	tpi_selected_item = null; // some resets
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	//sqlstatem = "select * from TestPackage_Items where deleted=0 and testpackage_id=" + tp_origid + " order by sorter";
+	sqlstatem = "select testpackage_items.origid, testpackage_items.mysoftcode, testpackage_items.testpackage_id, " +
+	"testpackage_items.sorter, testpackage_items.lor, testpackage_items.bill, testpackage_items.units, testpackage_items.unitprice, " + 
+	"stockmasterdetails.description, stockmasterdetails.description2 " +
+	"from testpackage_items " +
+	"left join stockmasterdetails on testpackage_items.mysoftcode=stockmasterdetails.id " +
+	"where testpackage_items.testpackage_id=" + tp_origid +
+	"order by testpackage_items.sorter";
+
+	tp_recs = sql.rows(sqlstatem);
+
+	if(tp_recs.size() == 0)
+	{
+		sql.close();
+		return;
+	}
+
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", new TPItems_Listener());
+	newlb.setMultiple(true);
+
+	sort_count = 1;
+
+	for(tpi : tp_recs)
+	{
+		ArrayList kabom = new ArrayList();
+		testorigid = tpi.get("origid").toString();
+		kabom.add(testorigid);
+		pmysoftc = tpi.get("mysoftcode");
+		kabom.add(pmysoftc.toString());
+
+		// 13/9/2010: put in sorter col, check against sorter in table, if = 1, update local sorter number into table
+		tblsorter = tpi.get("sorter");
+
+		if(sort_count != tblsorter)
+		{
+			tblsorter = sort_count;
+			sqlstm = "update testpackage_items set sorter=" + tblsorter.toString() + " where origid=" + testorigid;
+			sql.execute(sqlstm);
+		}
+
+		kabom.add(tblsorter.toString());
+
+		desc1 = kiboo.checkNullString_RetWat(tpi.get("description"),"---");
+		desc2 = kiboo.checkNullString_RetWat(tpi.get("description2"),"---");
+
+		desc1 = lbhand.trimListitemLabel(desc1,35);
+		desc2 = lbhand.trimListitemLabel(desc2,33);
+
+		kabom.add(desc1);
+		kabom.add(desc2);
+
+		// 03/08/2011: add unitprice col.
+		uprice = tpi.get("unitprice");
+		if(uprice == null) uprice = 0;
+		kabom.add(nf.format(uprice));
+
+		lor = tpi.get("lor");
+		lor = (lor.equals("")) ? "---" : lor;
+		bill = tpi.get("bill");
+		bill = (bill.equals("")) ? "---" : bill;
+
+		kabom.add(lor);
+		kabom.add(bill);
+		kabom.add(tpi.get("units"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+
+		sort_count++;
+	}
+
+	sql.close();
+}
+
+// Returns the package owner as def in listbox->item.. general purpose func for all to use
+String getPackageOwner()
+{
+	selitem = testpackages_lb.getSelectedItem();
+	return lbhand.getListcellItemLabel(selitem,4);
+}
+
+class TestPackages_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		testpackage_listitem = event.getReference();
+		selected_package_id = lbhand.getListcellItemLabel(testpackage_listitem,0);
+
+		// show package-name in textbox - package_name_tb hardcoded in UI
+		packname = lbhand.getListcellItemLabel(testpackage_listitem,1);
+		package_name_tb.setValue(packname);
+
+		// show the test-package items listbox - packageitems_div def in UI
+		populateTestPackageItems(packageitems_div, selected_package_id);
+
+		// show package name in package_name_lbl - def in UI
+		package_name_lbl.setValue("Package name: " + packname);
+		//pack_otherinfo_lbl
+
+		showBoxes(true);
+	}
+}
+
+// 05/07/2010: modded to use ArrayList()
+// 02/08/2011: added itype for finer selection , 1=by user created package, 2=by customer name / ar_code
+void populateTestPackages(Div idiv, int itype)
+{
+	Object[] testpackages_lb_headers = {
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Package.Name",true),
+	new listboxHeaderObj("For.Customer",true),
+	new listboxHeaderObj("LastUpdate",true),
+	new listboxHeaderObj("Owner",true),
+	new listboxHeaderObj("iTest",true),
+	};
+	
+	last_listpackage_type = itype;
+
+	Listbox newlb = lbhand.makeVWListbox(idiv, testpackages_lb_headers, "testpackages_lb", 8);
+
+	bycustname = kiboo.replaceSingleQuotes(bycustomer_tb.getValue());
+	usercrt = byusers_dd.getSelectedItem().getLabel();
+
+	if(!bycustname.equals(""))
+		bycustname = "%" + bycustname + "%";
+	else
+		bycustname = "%";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select top 200 testpackages.origid, testpackages.package_name, testpackages.lastupdate, " +
+	"testpackages.username, testpackages.itestuse, customer.customer_name from testpackages " +
+	"left join customer on testpackages.ar_code = customer.ar_code " +
+	"where testpackages.deleted=0 " +
+	"and testpackages.username = '" + usercrt + "' " +
+	"order by testpackages.package_name";
+
+	if(itype == 2)
+		sqlstatem = "select top 200 testpackages.origid, testpackages.package_name, testpackages.lastupdate, " +
+		"testpackages.username, testpackages.itestuse, customer.customer_name from testpackages " +
+		"left join customer on testpackages.ar_code = customer.ar_code " +
+		"where testpackages.deleted=0 " +
+		"and (customer.customer_name like '" + bycustname + "' or testpackages.package_name like '" + bycustname + "') " +
+		"order by testpackages.package_name";
+
+	tp_recs = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tp_recs.size() == 0) return;
+
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new TestPackages_Listener());
+
+	for(tpi : tp_recs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(tpi.get("origid").toString());
+		pckname = tpi.get("package_name");
+		if(pckname.equals("")) pckname = "-undefined-";
+
+		//pckname = lbhand.trimListitemLabel(pckname,30);
+		kabom.add(pckname);
+
+		icompanyname = (tpi.get("customer_name") == null) ? "Undefined" : tpi.get("customer_name");
+
+		kabom.add(lbhand.trimListitemLabel(icompanyname,20));
+
+		kabom.add(tpi.get("lastupdate").toString().substring(0,10));
+		kabom.add(tpi.get("username"));
+
+		ituse = tpi.get("itestuse");
+		itusestr = (ituse == null) ? "NO" : ((ituse == 1) ? "YES" : "NO");
+		kabom.add(itusestr);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// 04/08/2011: clear and refresh test-packages listbox and test-items div
+void cleanupTestPackages_displays()
+{
+	populateTestPackages(packages_div,last_listpackage_type);
+	testpackage_items_lb.setParent(null);
+	package_name_lbl.setValue("Package name: ");
+}
+
+// get package name in textbox and update into database
+void updateTestPackageName()
+{
+	pckname = package_name_tb.getValue();
+	if(pckname.equals("")) return;
+	if(selected_package_id.equals("")) return;
+	
+	if(!getPackageOwner().equals(useraccessobj.username))
+	{
+		// if user is level 9 - can delete stuff
+		if(useraccessobj.accesslevel != 9)
+		{
+			guihand.showMessageBox("Not owner, cannot update package name.. sorry");
+			return;
+		}
+	}
+
+	pcknamewrite = kiboo.replaceSingleQuotes(pckname);
+
+	if(!tphand.isUniqTestPackageName(pcknamewrite))
+	{
+		guihand.showMessageBox("Test package name is not unique");
+		return;
+	}
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlst = "update TestPackages set package_name='" + pcknamewrite + "',  lastupdate='" + todate + "' where origid=" + selected_package_id;
+	sql.execute(sqlst);
+	sql.close();
+
+	// refresh the test-package name in listbox
+	lbhand.setListcellItemLabel(testpackage_listitem,1,pcknamewrite);
+}
+
+void delTestPackage()
+{
+	if(selected_package_id.equals("")) return;
+
+	selitem = testpackages_lb.getSelectedItem();
+	packowner = lbhand.getListcellItemLabel(selitem,4);
+
+	/*
+	if(!getPackageOwner().equals(useraccessobj.username))
+	{
+		// if user is level 9 - can delete stuff
+		if(useraccessobj.accesslevel != 9)
+		{
+			guihand.showMessageBox("Not owner, cannot delete.. sorry");
+			return;
+		}
+	}
+	*/
+
+	packname = package_name_tb.getValue();
+
+	if (Messagebox.show("Delete this test package : " + packname , "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlst = "update TestPackages set deleted=1 where origid=" + selected_package_id;
+	sql.execute(sqlst);
+	sql.close();
+
+	cleanupTestPackages_displays(); // clear and refresh listboxes
+}
+
+void removeTestPackageItem()
+{
+	if(selected_package_id.equals("") || tpi_selected_item == null) return;
+	jorigid = lbhand.getListcellItemLabel(tpi_selected_item,0);
+	tphand.deleteTestPackage_ItemRec(jorigid);
+	populateTestPackageItems(packageitems_div, selected_package_id);
+}
+
+// 13/9/2010: move test-item up=1 or down=2 .. report-template sorter field
+void moveTestItem_clicker(int idirection)
+{
+	if(!lbhand.check_ListboxExist_SelectItem(packageitems_div,"testpackage_items_lb")) return;
+
+	selindex = testpackage_items_lb.getSelectedIndex();
+	selitem = testpackage_items_lb.getSelectedItem();
+	nextindex = selindex;
+	nextitem = selitem;
+	doit = false;
+
+	switch(idirection)
+	{
+		case 1:	// move up
+			nextindex--;
+			if(nextindex != -1) doit = true;
+			break;
+
+		case 2: // move down
+			nextindex++;
+			if(nextindex <= testpackage_items_lb.getItemCount()-1) doit = true;
+			break;
+	}
+
+	if(doit)
+	{
+		nextitem = testpackage_items_lb.getItemAtIndex(nextindex);
+
+		// get sorter numbers and swap
+		oldsorter = lbhand.getListcellItemLabel(selitem,2);
+		oldid = lbhand.getListcellItemLabel(selitem,0);
+
+		newsorter = lbhand.getListcellItemLabel(nextitem,2);
+		newid = lbhand.getListcellItemLabel(nextitem,0);
+
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+
+		// update old
+		sqlstm1 = "update testpackage_items set sorter=" + newsorter + " where origid=" + oldid;
+		sql.execute(sqlstm1);
+		// update new
+		sqlstm2 = "update testpackage_items set sorter=" + oldsorter + " where origid=" + newid;
+		sql.execute(sqlstm2);
+		sql.close();
+		
+		populateTestPackageItems(packageitems_div, selected_package_id); //refresh
+	}
+}
+
+// 13/9/2010: Added 2 additional fields in table, lor and bill - for package LOR or analytes billable
+void updateTestPackageItem_LORBILL_clicker()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(packageitems_div,"testpackage_items_lb")) return;
+
+	selitem = testpackage_items_lb.getSelectedItem();
+	selected_testpackage_origid = lbhand.getListcellItemLabel(selitem,0);
+	mysoftc = lbhand.getListcellItemLabel(selitem,1);
+
+	// need to be a valid stock-item before can modify lor or bill
+	if(mysoftc.equals("") || mysoftc.equals("0")) return;
+	
+	// update popup before popping.. haha
+	lor = lbhand.getListcellItemLabel(selitem,6);
+	bill = lbhand.getListcellItemLabel(selitem,7);
+	units = lbhand.getListcellItemLabel(selitem,8);
+	uprice = lbhand.getListcellItemLabel(selitem,5);
+	
+
+	lor = (lor.equals("----")) ? "" : lor;
+	
+	tpi_lor.setValue(lor);
+	lbhand.matchListboxItems(tpi_billflag,bill);
+	tpi_units.setValue(units);
+	tpi_unitprice.setValue(uprice);
+	
+	modLORBILL_popup.open(selitem);
+}
+
+// called from popup to actually store the lor and bill-flag
+// 03/08/2011: update unitprice in testpackage_items
+void storeTestPackageItem_LORBILL_clicker()
+{
+	modLORBILL_popup.close();
+	if(selected_testpackage_origid.equals("")) return;
+
+	lor = kiboo.replaceSingleQuotes(tpi_lor.getValue());
+	billflag = tpi_billflag.getSelectedItem().getLabel();
+	units = kiboo.replaceSingleQuotes(tpi_units.getValue());
+	uprice = kiboo.replaceSingleQuotes(tpi_unitprice.getValue());
+	if(uprice.equals("")) uprice="0.0";
+
+	lor = (lor.equals("----")) ? "" : lor;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update testpackage_items set lor='" + lor + "', bill='" + billflag + "', units='" + units + "', unitprice=" + uprice +
+	" where origid=" + selected_testpackage_origid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	selected_testpackage_origid = ""; // reset the global holder
+	populateTestPackageItems(packageitems_div, selected_package_id); //refresh
+}
+
+// Clicker to create a new package
+void createNewTestPackage_clicker()
+{
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	tphand.createNewTestPackage(todate,"",useraccessobj.username); // call database-func
+
+	// 03/08/2011: recreate created-by users drop-down
+	populateTestPackage_users(byuser_div);
+
+	// match created package to user
+	lbhand.matchListboxItems(byusers_dd,useraccessobj.username);
+	populateTestPackages(packages_div,1); // refresh the TestPackage listbox - packages_div def in UI
+	
+}
+
+// 6/7/2010: make a new testpackage-item clicker
+void newTestPackageItem_clicker()
+{
+	// Make sure selected a package before adding, otherwise headless item.. muhahaha
+	if(selected_package_id.equals("")) return;
+	
+	// 13/9/2010: now uses sorter, need to get the next sorter number before inserting.
+	nextsorter = testpackage_items_lb.getItemCount() + 1;
+	nextsorter = nextsorter.toString();
+	
+	tphand.createTestPackage_ItemRec(selected_package_id, nextsorter);
+	populateTestPackageItems(packageitems_div, selected_package_id);
+}
+
+//******** this customer picker thing can be used for other mods
+// Populate customer lil listbox
+void populateCustomerPicker(String icustname)
+{
+	Object[] customerpicker_lb_headers = {
+	new listboxHeaderObj("AR CODE",true),
+	new listboxHeaderObj("Customer",true),
+	};
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select top 50 ar_code,customer_name from Customer where customer_name like '%" + icustname + "%' order by customer_name";
+	customerrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(customerrecs.size() == 0)
+	{
+		guihand.showMessageBox("Cannot find anything.. please try again");
+		return;
+	}
+
+	Listbox newlb = lbhand.makeVWListbox(customer_picker_div, customerpicker_lb_headers, "customers_lb", 12);
+
+	for(custrec : customerrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(custrec.get("ar_code"));
+		kabom.add(custrec.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// Search csutomer clicker for popup
+void searchCustomer_Clicker()
+{
+	custnameinp = cs_name_tb.getValue();
+	if(custnameinp.equals("")) return;
+	populateCustomerPicker(custnameinp);
+}
+
+// Part of the customer picker popup thing, customize this section to update whatever table in other mods
+void pickCustomerDi()
+{
+	if(customer_picker_div.getFellowIfAny("customers_lb") == null) return;
+	if(customers_lb.getSelectedIndex() == -1) return;
+	if(selected_package_id.equals("")) return;
+
+	iar_code = customers_lb.getSelectedItem().getLabel(); // first column is the ar_code
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update TestPackages set ar_code='" + iar_code + "' where origid=" + selected_package_id;
+	sql.execute(sqlstm);
+	sql.close();
+
+	customerpickerPopup.close();
+	populateTestPackages(packages_div,last_listpackage_type); // refresh listbox - other mods will be diff here
+}
+
+// Clicker called by UI
+void popupCustomerPicker_clicker()
+{
+	// make sure something selected - mod-dependant
+	if(testpackages_lb.getSelectedIndex() == -1) return;
+	customerpickerPopup.open(ass_customer_btn); // ass_customer_btn def in UI
+}
+
+//***** end of customer picker thing
+
+// 02/08/2011: populate drop-down with users whom created test-packages - for list search purpose
+void populateTestPackage_users(Div idiv)
+{
+	Object[] sm_lb_headers = {
+	new dblb_HeaderObj("TP.User",true,"username",1),
+	};
+
+	// Remove previously created drop-down
+	if(idiv.getFellowIfAny("byusers_dd") != null) byusers_dd.setParent(null);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct username from testpackages";
+	Listbox newlb = lbhand.makeVWListbox_onDB(idiv,sm_lb_headers,"byusers_dd",1,sql,sqlstm);
+	sql.close();
+	newlb.setMold("select");
+	newlb.setStyle("font-size:9px");
+	try
+	{
+		byusers_dd.setSelectedIndex(0);
+	}
+	catch (IndexOutOfBoundsException e) {}
+}
+
+// 03/08/2011: toggle billable flag in test-package items
+void toggleBillable()
+{
+	if(testpackage_items_lb.getSelectedCount() == 0) return;
+	selitems = testpackage_items_lb.getSelectedItems().toArray();
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	for(i=0;i<testpackage_items_lb.getSelectedCount();i++)
+	{
+		ilbs = selitems[i];
+		iorig = lbhand.getListcellItemLabel(ilbs,0);
+		sqlstm = "select bill from testpackage_items where origid=" + iorig;
+		trec = sql.firstRow(sqlstm);
+		if(trec != null)
+		{
+			billflag = trec.get("bill");
+			if(billflag.equals("NO") || billflag.equals("---"))
+				billflag = "YES";
+			else
+				billflag = "NO";
+
+			sqlstm2 = "update testpackage_items set bill='" + billflag + "' where origid=" + iorig;
+			sql.execute(sqlstm2);
+		}
+	}
+
+	sql.close();
+	populateTestPackageItems(packageitems_div, selected_package_id); // refresh
+}
+
+// 03/08/2011: jump to test in tests-list , let user click to jump instead of auto-jump..
+void jumpTo_TestList()
+{
+	selitem = testpackage_items_lb.getSelectedItem();
+	if(selitem == null) return;
+
+	jmysoftc = lbhand.getListcellItemLabel(selitem,1);
+	if(!jmysoftc.equals("0") && !jmysoftc.equals(""))
+		autoAssignTestBox(jmysoftc);
+}
+
+// -------- search stock items, ALS version .. can be used in other mods -- remember the popup too
+// knockoff from assign_tests_v2.zul
+
+class itemsearchDoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = founditems_lb.getSelectedItem();
+		selected_test = lbhand.getListcellItemLabel(selitem,0);
+		autoAssignTestBox(selected_test);
+		//showStockItem_Metadata(selected_test);
+		//newstockitem_btn.setLabel("Update test/sale item"); // change button label if item selected
+		searchitem_popup.close();
+	}
+}
+
+void searchStockItem_clicker()
+{
+Object[] finditems_lb_headers = {
+	new dblb_HeaderObj("mysoftcode",false,"id",2),
+	new dblb_HeaderObj("Stock.Code",true,"stock_code",1),
+	new dblb_HeaderObj("Test",true,"description",1),
+	new dblb_HeaderObj("Method",true,"description2",1),
+	new dblb_HeaderObj("Division",true,"stock_cat",1),
+	new dblb_HeaderObj("Section",true,"groupcode",1),
+	};
+
+	srchstr = kiboo.replaceSingleQuotes(itemsearch_text.getValue());
+	if(srchstr.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+
+	sqlstatem = "select id,stock_code,description,description2,stock_cat,groupcode from stockmasterdetails " + 
+		"where item_type='Service Item' and nominal_code like '5%' " +
+		"and (stock_code like '%" + srchstr + "%' or description like '%" + srchstr + "%' or description2 like '%" + srchstr + "%') " +
+		"order by description" ;
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(founditems_holder,finditems_lb_headers,"founditems_lb",5,sql,sqlstatem);
+	sql.close();
+
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+	if(newlb.getItemCount() > 0)
+	{
+		dc_obj = new itemsearchDoubleClick_Listener();
+		lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+	}
+}
+// -------- ENDOF search stock items, ALS version .. can be used in other mods -- remember the popup too
+
+// 04/08/2011: hard delete test-package - only admin
+void adminHardDelete()
+{
+	if (Messagebox.show("HaRD DeleTE ..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// delete all testpackage items --
+	sqlstm = "delete from testpackage_items where testpackage_id=" + selected_package_id;
+	sql.execute(sqlstm);
+
+	// delete the testpackage finally
+	sqlstm = "delete from testpackages where origid=" + selected_package_id;
+	sql.execute(sqlstm);
+	sql.close();
+
+	cleanupTestPackages_displays(); // refresh	
+}
+
+// 04/05/2012: set testpackages.itestuse flag
+void setuseflag_iTest()
+{
+	if(selected_package_id.equals("")) return;
+	sqlstm = "update testpackages set itestuse=1-itestuse where origid=" + selected_package_id;
+	sqlhand.gpSqlExecuter(sqlstm);
+	populateTestPackages(packages_div,last_listpackage_type);
+}
+
+]]>
+</zscript>
+
+<!-- popup to change LOR and BILL flag -->
+<popup id="modLORBILL_popup">
+<groupbox width="320px">
+	<grid>
+		<rows>
+			<row>
+				<label value="LOR" style="font-size:9px" />
+				<textbox id="tpi_lor" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Units" style="font-size:9px" />
+				<textbox id="tpi_units" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Price" style="font-size:9px" />
+				<textbox id="tpi_unitprice" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Bill" style="font-size:9px" />
+				<listbox id="tpi_billflag" mold="select" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Update" style="font-size:9px" onClick="storeTestPackageItem_LORBILL_clicker()" />
+	<button label="Close" style="font-size:9px" onClick="modLORBILL_popup.close()" />
+</hbox>
+</popup>
+<!-- end of popup to change LOR and BILL flag -->
+
+<!-- Customer picker popup -->
+<popup id="customerpickerPopup">
+<groupbox width="600px">
+<caption id="customerpickerpopup_lbl" label="Pick a supplier" />
+	<vbox>
+		<hbox>
+			<label value="Customer name" style="font-size:9px" />
+			<textbox id="cs_name_tb" style="font-size:9px" />
+			<button id="custsearch_btn" label="Search" style="font-size:9px" onClick="searchCustomer_Clicker()" />
+		</hbox>
+
+		<div id="customer_picker_div" />
+
+		<hbox>
+			<button label="Select" style="font-size:9px" onClick="pickCustomerDi()" />
+			<button label="Close" style="font-size:9px" onClick="customerpickerPopup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of customer picker popup -->
+
+<!-- stock items search popup -->
+<popup id="searchitem_popup">
+<groupbox mold="3d" width="600px" style="padding:3px">
+	<caption label="Search Items.." />
+	<hbox>
+		<label value="Search item" style="font-size:9px" />
+		<textbox id="itemsearch_text" style="font-size:9px" width="200px" />
+		<button label="Find" style="font-size:9px" onClick="searchStockItem_clicker()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="founditems_holder" />
+</groupbox>
+</popup>
+<!-- end of stock items search popup -->
+
+<div width="1200px">
+<panel id="testpackages_man_panel" title="Test Packages Setup ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<!-- <button label="X Close panel" style="font-size:9px" onClick="testpackages_man_panel.setParent(null)" /> -->
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<div>
+<hbox>
+	<div width="600px" >
+		<grid>
+		<rows>
+			<row>
+				<hbox>
+					<div id="byuser_div" />
+					<zscript>
+						populateTestPackage_users(byuser_div);
+					</zscript>
+					<button label="Dig by user" style="font-size:9px" onClick="populateTestPackages(packages_div,1)" />
+				</hbox>
+				<hbox>
+					<label value="Customer" style="font-size:9px" />
+					<textbox id="bycustomer_tb" width="200px" style="font-size:9px" />
+					<button label="Dig" style="font-size:9px" onClick="populateTestPackages(packages_div,2)" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<hbox>
+					<button label="New package" style="font-size:9px" onClick="createNewTestPackage_clicker()" />
+					<button id="ass_customer_btn" label="Assign customer" style="font-size:9px" onClick="popupCustomerPicker_clicker()" />
+					<button label="Remove package" style="font-size:9px" onClick="delTestPackage()" />
+					<button label="Use in I-Test" style="font-size:9px" onClick="setuseflag_iTest()" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<hbox>
+				</hbox>
+			</row>
+			<row>
+				<label value="Package name" style="font-size:9px" />
+				<hbox>
+				<textbox id="package_name_tb" width="220px" style="font-size:9px" />
+				<button label="Update package name" style="font-size:9px" onClick="updateTestPackageName()" />
+				</hbox>
+			</row>
+		</rows>
+		</grid>
+		<separator height="3px" />
+		<div id="packages_div" />
+	</div>
+
+	<div id="packageitems_holder" visible="false">
+		<label id="pack_otherinfo_lbl" />
+
+		<div style="background:#778899;padding:3px">
+			<label id="package_name_lbl" style="color:#ffffff;padding:3px" value="Package name:" />
+		</div>
+
+		<separator height="3px" />
+		<div id="packageitems_div" />
+		<separator height="3px" />
+		<hbox>
+			<button label="New item" style="font-size:9px" onClick="newTestPackageItem_clicker()" />
+			<button label="LOR/Billing" style="font-size:9px" onClick="updateTestPackageItem_LORBILL_clicker()" />
+			<button label="Remove item" style="font-size:9px" onClick="removeTestPackageItem()" />
+			<button label="Toggle bill-able" style="font-size:9px" onClick="toggleBillable()" />
+		</hbox>
+		<separator height="3px" />
+		<hbox>
+			<button label="Jump to" style="font-size:9px" onClick="jumpTo_TestList()" />
+			<button label="Move up" style="font-size:9px" onClick="moveTestItem_clicker(1)" />
+			<button label="Move down" style="font-size:9px" onClick="moveTestItem_clicker(2)" />			
+			<label value="(Sort order is important during report-generation, please set accordingly)" style="font-size:9px" />
+		</hbox>
+	</div>
+</hbox>
+<separator height="3px" />
+<hbox>
+<button id="searchitem_btn" label="Search test" style="font-size:9px" onClick="searchitem_popup.open(searchitem_btn)" />
+
+<div id="adminstaff_div" style="background:#ff0000;padding:3px" visible="false">
+	<button id="harddelete_btn" label="Hard delete test-package" style="font-size:9px" onClick="adminHardDelete()" />
+</div>
+
+</hbox>
+<separator height="3px" />
+
+<div id="testspanel_holder" visible="false" >
+	<hbox>
+		<groupbox mold="3d">
+			<div style="background:#7f7f7f;padding:2px">
+				<label value="Division" style="font-size:9px;color:#ffffff" />
+			</div>
+			<div id="division_column" />
+		</groupbox>
+		<groupbox mold="3d">
+			<div style="background:#7f7f7f;padding:2px">
+				<label value="Section" style="font-size:9px;color:#ffffff" />
+			</div>
+			<div id="section_column" />
+		</groupbox>
+		<groupbox mold="3d">
+			<div id="testparameters_column" />
+		</groupbox>
+	</hbox>
+</div>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+//kiboo.setTodayDatebox(hiddendatebox);
+//todaydate_str = kiboo.getDateFromDatebox(hiddendatebox);
+
+// Setup TestsPanel() . showType=2 (have pricings)
+testspanel = new TestsPanel(division_column,"",section_column,"",testparameters_column,"");
+testspanel.populateDivisionColumn();
+testspanel.showType = 3;
+testspanel.testOnClicker = new ALSTestParametersLB_Listener();
+
+lbhand.populateDropdownListbox(tpi_billflag, yesno_dropdown);
+	//populateTestPackages(packages_div);
+	//testspanel.populateDivisionColumn();
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstaff_div.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

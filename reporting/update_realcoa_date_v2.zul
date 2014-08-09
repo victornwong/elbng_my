@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="updaterealcoadate_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v2.0";
+/*
+Title : Allow lab/reporting staff to upload scanned COA - capture upload date as real-completed.
+		No fake job-complete date now.
+
+Coding began date	: 1/6/2010
+Developers			: Victor Wong
+
+29/09/2011: some optimization and enhancement(find by folder#)
+15/11/2010: remove branch checking
+28/03/2012: port to byte-compiled funcs
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+admin_selected_folderorigid = "";
+admin_selected_folderno = "";
+last_searchtype = 0;
+
+void playFolderDriller(String ifoldno)
+{
+	theparam = "folderno=" + ifoldno;
+	uniqwindowid = kiboo.makeRandomId("flxd");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+void localPlayDriller()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+	lstitem = folderjobs_lb.getSelectedItem();
+	ifolderno = lbhand.getListcellItemLabel(lstitem,1);
+	playFolderDriller(ifolderno);
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+		playFolderDriller(ifolderno);
+	}
+}
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Folder.No",true),
+	new listboxHeaderObj("Recv.Date",true),
+	new listboxHeaderObj("Due.Date",true),
+	new listboxHeaderObj("Prnt.Date",true),
+	new listboxHeaderObj("COA.Date",true),
+	new listboxHeaderObj("N.S",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+// itype: 1=folder number, 2=sample-id
+
+void startFolderJobsSearch(int itype)
+{
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	cnm = kiboo.replaceSingleQuotes(customer_tb.getValue());
+	foldno = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+
+	last_searchtype = itype;
+
+	Listbox newlb = lbhand.makeVWListbox(folders_searchdiv, folders_lb_headers, "folderjobs_lb", 5);
+
+    sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// 29/3/2010: check branch
+	branch_str = "";
+	ibranch = useraccessobj.branch;
+
+	/*
+	if(useraccessobj.accesslevel != 9)
+	{
+		branch_str = "and branch='" + ibranch + "' ";
+	}
+	else // added branch drop-down for admin only.. use the selected branch
+	{
+		kkk = branch_drd.getSelectedItem().getLabel();
+		branch_str = "and branch='" + kkk + "' ";
+	}
+	*/
+
+	sqlstm = "select top 200 jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," + 
+			"jobfolders.duedate, jobfolders.coaprintdate, jobfolders.coadate, " + 
+			"customer.customer_name, cashsales_customerinfo.customer_name as cs_customer, " +
+			"count(jobsamples.origid) as sample_count " +
+			"from jobfolders left join customer on customer.ar_code = jobfolders.ar_code " +
+			"left join jobsamples on jobsamples.jobfolders_id = jobfolders.origid " +
+			"left join cashsales_customerinfo on cashsales_customerinfo.folderno_str = jobfolders.folderno_str where ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "jobfolders.datecreated between '" + sdate + "' and '" + edate + "'" + 
+			"and customer.customer_name like '%" + cnm + "%' ";
+			break;
+
+		case 2:
+			sqlstm += "jobfolders.folderno_str like '%" + foldno + "%' ";
+			break;
+
+		case 3:
+			sqlstm += "jobsamples.sampleid_str like '_________%" + sampid + "%' ";
+			break;
+	}
+
+	sqlstm += "and jobfolders.deleted=0 and jobfolders.folderstatus in ('" + FOLDERCOMMITED + "') and jobsamples.deleted=0 " + branch_str;
+	sqlstm += " group by jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," + 
+			"jobfolders.duedate, jobfolders.coaprintdate, jobfolders.coadate, " + 
+			"customer.customer_name, cashsales_customerinfo.customer_name";
+
+	tlist = sql.rows(sqlstm);
+	sql.close();
+
+	if(tlist.size() == 0) return;
+	if(tlist.size() > 5) newlb.setRows(30);
+	// newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	total_numsamples = 0;
+
+	for(ilist : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+
+		iorigid = ilist.get("origid");
+
+		kabom.add(iorigid.toString());
+
+		folderbranch = ilist.get("branch");
+		folderprefix = kiboo.folderPrefixByBranch(folderbranch);
+		folderstr = folderprefix + kiboo.padZeros5(iorigid);
+
+		kabom.add(folderstr);
+		kabom.add(ilist.get("datecreated").toString().substring(0,10));
+
+		kabom.add(ilist.get("duedate").toString().substring(0,10));
+
+		coaprintdate = ilist.get("coaprintdate");
+		coaprintdate_str = "---";
+		if(coaprintdate != null)
+		{
+			coaprintdate = coaprintdate.toString().substring(0,10);
+			coaprintdate_str = (coaprintdate.equals("1900-01-01")) ? "---" : coaprintdate;
+		}
+		kabom.add(coaprintdate_str);
+
+		coadate = ilist.get("coadate");
+		coadate_str = "---";
+		if(coadate != null)
+		{
+			coadate = coadate.toString().substring(0,10);
+			coadate_str = (coadate.equals("1900-01-01")) ? "---" : coadate;
+		}
+
+		kabom.add(coadate_str);
+
+		kabom.add(ilist.get("sample_count").toString());
+		total_numsamples += ilist.get("sample_count");
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = ilist.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft.
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				csname = ilist.get("cs_customer");
+				if(csname == null) csname = "-NO NAME-";
+				icompanyname = "CshAct: " + csname;
+			}
+			else
+				icompanyname = (ilist.get("customer_name") != null) ? ilist.get("customer_name") : "---";
+		}
+
+		kabom.add(icompanyname);
+		kabom.add(ilist.get("folderstatus"));
+		kabom.add(ilist.get("branch"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,JOBFOLDERS_PREFIX,"");
+	}
+
+	// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+	numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+
+	newlb.invalidate();
+	found_gb.setVisible(true);
+
+} // end of startFolderJobsSearch()
+
+void doViewDoculinkPopup()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+	lstitem = folderjobs_lb.getSelectedItem();
+	foldern = lbhand.getListcellItemLabel(lstitem,1);
+
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+// Update the real COA date .. need user to upload a COA - store it in document attachements.
+void updateCOADateClick()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+
+	lstitem = folderjobs_lb.getSelectedItem();
+	iorigid = lbhand.getListcellItemLabel(lstitem,0);
+	ifoldern = lbhand.getListcellItemLabel(lstitem,1);
+
+	// popup for user to upload COA
+	doculink_str = documentLinkProp.document_idprefix + ifoldern;
+	docustatus_str = "ACTIVE";
+	ftitle = "COA";
+	fdesc = "Date captured COA rel";
+
+	// make sure user do upload something .. else return	
+	if(uploadLinkingDocument(useraccessobj.username, useraccessobj.branch,kiboo.getDateFromDatebox(hiddendatebox),doculink_str,docustatus_str,ftitle,fdesc) == false) return;
+
+	// store todays date into JobFolders.coadate .. gotcha
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	samphand.updateJobFolder_COADate(iorigid, todaydate);
+
+	// 19/10/2011: disable for now
+	//updateJobFolder_labfolderstatus(iorigid,FOLDERRELEASED); // FOLDERRELEASED def in alsglobaldefs.zs
+
+	guihand.showMessageBox("Ka-ching. COA release-date captured");
+
+	startFolderJobsSearch(last_searchtype); // refresh
+}
+
+void adminEditCOADate()
+{
+	// must very sure it's admin, else return
+	//if(useraccessobj.accesslevel < 9) return;
+	if(!lbhand.check_ListboxExist_SelectItem(folders_searchdiv,"folderjobs_lb")) return;
+
+	lstitem = folderjobs_lb.getSelectedItem();
+	admin_selected_folderorigid = lbhand.getListcellItemLabel(lstitem,0);
+	admin_selected_folderno = lbhand.getListcellItemLabel(lstitem,1);
+	coadate = lbhand.getListcellItemLabel(lstitem,5);
+
+	if(coadate.equals("---"))
+		kiboo.setTodayDatebox(accd_datebox);
+	else
+	{
+		foldrec = samphand.getFolderJobRec(admin_selected_folderorigid);
+		coadd = foldrec.get("coadate");
+		accd_datebox.setValue(coadd);
+	}
+	
+	accd_folder_lbl.setValue("FolderN: " + admin_selected_folderno);
+	adminchgcoadate_popup.open(adminchgcoadate_btn);
+}
+
+// clicker to change coa-date - admin only access
+void adminchgcoadate_clicker()
+{
+	chgdate = kiboo.getDateFromDatebox(accd_datebox);
+	samphand.updateJobFolder_COADate(admin_selected_folderorigid,chgdate); // samplereg_funcs.zs
+	startFolderJobsSearch(last_searchtype); // refresh
+	adminchgcoadate_popup.close();
+}
+
+void adminremovecoadate_clicker()
+{
+	samphand.updateJobFolder_COADate(admin_selected_folderorigid,""); // samplereg_funcs.zs
+	startFolderJobsSearch(last_searchtype);
+	adminchgcoadate_popup.close();
+}
+
+// 11/10/2010: export listbox as EXCEL file
+// folders_searchdiv, folders_lb_headers, "folderjobs_lb"
+void kasiExport_clicker()
+{
+	exportListboxExcel_HideColumn(folders_searchdiv,"folderjobs_lb","coareleasedate.xls",folders_lb_headers,"COAReleaseDate", kasiexport_holder,65,false);
+}
+
+]]>
+</zscript>
+
+<popup id="adminchgcoadate_popup">
+<groupbox>
+<caption label="Change COA release date" />
+	<vbox>
+		<label id="accd_folder_lbl" />
+		<datebox id="accd_datebox" format="yyyy-MM-dd" />
+		<separator height="3px" />
+		<label value="**USED IN EXTREME CASES ONLY**" />
+		<separator height="5px" />		
+		<hbox>
+			<button label="Change" style="font-size:9px" onClick="adminchgcoadate_clicker()" />
+			<button label="Remove date" style="font-size:9px" onClick="adminremovecoadate_clicker()" />
+			<button label="Close" style="font-size:9px" onClick="adminchgcoadate_popup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of admin change COA date popup -->
+
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of document management popup -->
+
+<div width="1200px">
+<panel id="updatecoarealdate_panel" title="Update COA release date ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+<vbox>
+
+<groupbox mold="3d" width="100%">
+<hbox>
+<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" style="font-size:9px" format="yyyy-MM-dd" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" style="font-size:9px" format="yyyy-MM-dd" />
+			<button label="Search/Refresh" style="font-size:9px" onClick="startFolderJobsSearch(1)" />
+		</row>
+		<row spans=",4">
+			<label value="Customer" style="font-size:9px" />
+			<textbox id="customer_tb" style="font-size:9px" width="98%" />
+		</row>
+		<row spans="5">
+			<label value="(Max. 200 recs per search)" style="font-size:8px" />
+		</row>
+	</rows>
+</grid>
+
+<grid>
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px" width="98%" />
+			<button label="By folder" style="font-size:9px" onClick="startFolderJobsSearch(2)" />
+		</row>
+		<row>
+			<label value="SampleID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" width="98%" />
+			<button label="By sample-id" style="font-size:9px" onClick="startFolderJobsSearch(3)" />
+		</row>
+	</rows>
+</grid>
+
+<div id="branch_selector" visible="false" >
+	<hbox>
+		<label value="Branch" style="font-size:9px" />
+		<listbox id="branch_drd" mold="select" style="font-size:9px" />
+	</hbox>
+</div>
+
+</hbox>
+
+</groupbox>
+
+<!-- search results box -->
+<groupbox id="found_gb" mold="3d" width="100%" visible="false">
+<hbox>
+	<button label="Folder details" style="font-size:9px" onClick="localPlayDriller()" />
+	<button id="viewdoculinks_btn" label="COC/PO/Documents" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+	<button id="updatecoadate_btn" label="Update COA COMPLETION date" style="font-size:9px" onClick="updateCOADateClick()" />
+	<button id="adminchgcoadate_btn" label="admin: change COA date" style="font-size:9px" visible="false" onClick="adminEditCOADate()" />
+</hbox>
+<separator height="3px" />
+<vbox>
+<div id="folders_searchdiv" />
+<label id="numofsamples_lbl" />
+<button label="Export list to Excel" style="font-size:9px" onClick="kasiExport_clicker()" />
+<div id="kasiexport_holder" />
+</vbox>
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+kiboo.setTodayDatebox(hiddendatebox);
+
+lbhand.populateDropdownListbox(branch_drd, dd_branches);
+
+// if user is admin - can see other shits
+if(useraccessobj.accesslevel == 9)
+{
+	branch_selector.setVisible(true);
+	adminchgcoadate_btn.setVisible(true);
+}
+
+// if user is not from the REPORTGEN_USERGROUP and at least level 3, disable some buttons
+if(!sechand.check_UsergroupAccess(useraccessobj.origid,REPORTGEN_USERGROUP,3))
+{
+	updatecoadate_btn.setDisabled(true);
+}
+
+// 29/09/2011: only username able to change coa-release-date
+username = useraccessobj.username;
+if(username.equals("aik")) adminchgcoadate_btn.setVisible(true);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+</vbox>
+</panelchildren>
+</panel>
+</div>
+</zk>

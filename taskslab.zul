@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="tasks_slab_mod"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobalfuncs.zs" />
+<zscript src="alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="alsglobal/samplereg_funcs.zs" />
+<zscript src="alsglobal/securityfuncs.zs" />
+<zscript src="alsglobal/doculink_funcs.zs" />
+<zscript src="alsglobal/divisiongroup_funcs.zs" />
+<zscript src="alsglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="alsglobal/emailfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+/*
+Title: tasks-slab for e-Labman
+Written by: Victor Wong
+Date: 30/7/2010
+
+*NOTES*
+crank-out tasks from BPM_Actions and let ppl do something about it.
+important stuff:
+bpm_actions.assigner is what thing req action - link to parent thing
+bpm_actions.actiontype is what action to do - APPROVAL, RELEASE or whatever
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+// global func to do document-linking thing
+void doViewDoculinkPopup()
+{
+	foldern = getListcellItemLabel(lstitem,0);
+	documentLinkProp.global_eq_origid = foldern;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(hiddendatebox);
+}
+
+Object[] preqs_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("PR.ID",true),
+	new listboxHeaderObj("Supplier",true),
+	new listboxHeaderObj("PR.Date",true),
+	new listboxHeaderObj("Due.Date",true),
+	new listboxHeaderObj("Owner",true),
+	new listboxHeaderObj("Your.Dec",true),
+	new listboxHeaderObj("Act.Date",true),
+};
+
+// Show all purchase-req approving tasks for the user
+void showPurchaseReq_Tasks(int showall)
+{
+	Listbox newlb = makeVWListbox(pr_tasks_div, preqs_lb_headers, "purchase_reqs_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	theuserstr = " and assignee='" + useraccessobj.username + "' ";
+
+	// if(useraccessobj.accesslevel == 9)
+	 // theuserstr = "";
+
+	// need to put in something later to filter out done/undone tasks
+	sqlstm = "select * from BPM_Actions where (deleted=0 or deleted is null) and " + 
+	"assigner like '" + PURCHASE_REQ_PREFIX + "%' " + 
+	theuserstr + 
+	" order by origid desc";
+	actionrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(actionrecs.size() == 0) return;
+	rowcounter = 1;
+	ding = 0;
+	
+	for(dpi : actionrecs)
+	{
+		actionstatus = dpi.get("actionstatus");
+		actionstatus = (actionstatus == null) ? "" : actionstatus;
+		
+		if(!actionstatus.equals(PR_STATUS_APPROVED) || showall == 0)
+		{
+			prid = dpi.get("assigner");
+			prorigid = prid.substring(3);
+			pr_rec = getPurchaseReq_Rec(prorigid);
+			pr_stat = "";
+			
+			if(pr_rec != null)
+				pr_stat = pr_rec.get("pr_status");
+				
+			if(pr_stat.equals(PR_STATUS_COMMITED))
+			{
+			ding = 1;
+			ArrayList kabom = new ArrayList();
+
+			kabom.add(dpi.get("origid").toString());
+			kabom.add(rowcounter.toString() + "." );
+			kabom.add(prid);
+
+			pr_suppname = trimListitemLabel(pr_rec.get("SupplierName"),30);
+			pr_datecreated = pr_rec.get("datecreated").toString().substring(0,10);
+			pr_duedate = pr_rec.get("duedate").toString().substring(0,10);
+			pr_username = pr_rec.get("username");
+
+			kabom.add(pr_suppname);
+			kabom.add(pr_datecreated);
+			kabom.add(pr_duedate);
+			kabom.add(pr_username);
+
+			actionstatus = checkEmptyString(checkNullString(dpi.get("actionstatus")));
+			kabom.add(actionstatus);
+		
+			actiondate = dpi.get("actiondate");
+			actiondate = (actiondate == null) ? "----------" : actiondate.toString().substring(0,10);
+		
+			kabom.add(actiondate);
+
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems(newlb,strarray,"false");
+			rowcounter++;
+			}
+		}
+	}
+	
+	if(ding == 1) newlb.setRows(20);
+}
+
+// crank-up PR details window for user
+// pr_tasks_div, preqs_lb_headers, "purchase_reqs_lb"
+void viewPRDetails_clicker()
+{
+	if(pr_tasks_div.getFellowIfAny("purchase_reqs_lb") == null) return;
+	if(purchase_reqs_lb.getSelectedIndex() == -1) return;
+	
+	selitem = purchase_reqs_lb.getSelectedItem();
+	prorigid = getListcellItemLabel(selitem,2).substring(3);
+
+	wnid = makeRandomId("prdslb");
+	params = "prid=" + prorigid;
+	globalActivateWindow("miscwindows","acctmodules/purchasereq_driller.zul", wnid, params, useraccessobj);
+}
+
+]]>
+</zscript>
+
+<popup id="doculink_popup">
+<groupbox width="400px">
+	<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+	<separator height="5px" />
+	<hbox>
+		<button label="Close" onClick="doculink_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of document management popup -->
+
+<window id="tasks_slab_win" width="700px" height="500px" title="Tasks Slab" position="center" mode="overlapped" border="normal" closable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<button label="X Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+<separator height="3px" />
+
+<tabbox height="640px">
+	<tabs>
+		<tab id="tab1" label="Purchase Requisitions"/>
+		<tab id="tab2" label="Folders/Job" />
+		<tab id="tab3" label="Misc" />
+	</tabs>
+	<tabpanels>
+
+<!-- tab 1 -->	
+	<tabpanel>
+		<div style="padding:2px">
+			<hbox>
+				<button id="pr_showallapproval_btn" label="Show approved items too" style="font-size:9px" onClick="showPurchaseReq_Tasks(0)" />
+			</hbox>
+			<separator height="5px" />
+			<div id="pr_tasks_div" />
+			<separator height="5px" />
+			<hbox>
+				<button id="pr_refresh_btn" label="Refresh" style="font-size:9px" onClick="showPurchaseReq_Tasks(1)" />
+				<button id="pr_details_btn" label="Open Purchase-Req" style="font-size:9px" onClick="viewPRDetails_clicker()" />
+			</hbox>
+		</div>
+	</tabpanel>
+	
+<!-- tab 2 -->
+	<tabpanel fulfill="tab2.onSelect">
+
+	</tabpanel>
+	
+<!-- tab 3 -->
+	<tabpanel fulfill="tab3.onSelect">
+
+	</tabpanel>
+
+	</tabpanels>
+</tabbox>
+
+
+</div>
+
+<zscript>
+<![CDATA[
+
+// Set today's date
+setTodayDatebox(hiddendatebox);
+
+showPurchaseReq_Tasks(1); // first tab info for now
+
+//documentLinkProp.document_idprefix = "DOCS";
+//setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+</window>
+</zk>

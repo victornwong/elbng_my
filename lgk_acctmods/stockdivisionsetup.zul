@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="stockdivisionsetup_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Stock Division / group setup
+Written by: Victor Wong
+Started: 18/10/2010
+
+**NOTES**
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+selected_stock_cat_id = "";
+selected_stock_cat = "";
+
+selected_stock_group = "";
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// onSelect for populateStockCategory()
+class stockcatlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_stock_cat = getListcellItemLabel(selitem,1);
+		stkdesc = getListcellItemLabel(selitem,2);
+
+		stock_cat_tb.setValue(selected_stock_cat);
+		stock_cat_tb.setDisabled(true);
+		stock_cat_desc_tb.setValue(stkdesc);
+		newupdate_cat_btn.setLabel("Update");
+		
+		//populateStockGroup();
+	}
+}
+
+// Show category from stockcategory
+void populateStockCategory()
+{
+	Object[] stockcat_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("Code",true),
+	new listboxHeaderObj("Description",true),
+	};
+
+	Listbox newlb = makeVWListbox(stockcat_holder,stockcat_headers,"stockcategory_lb",10);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstm = "select distinct stock_cat,id,stock_cat_desc from stockcategory";
+	stkcats = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkcats.size() == 0) return;
+	
+	newlb.addEventListener("onSelect", new stockcatlb_Listener());
+	
+	for(dpi : stkcats)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("stock_cat"));
+		kabom.add(dpi.get("stock_cat_desc"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void clearStockCatInputs_clicker()
+{
+	selected_stock_cat = "";
+	stock_cat_tb.setValue("");
+	stock_cat_tb.setDisabled(false);
+	stock_cat_desc_tb.setValue("");
+	newupdate_cat_btn.setLabel("New");
+}
+
+void clearGroupInputs_clicker()
+{
+	selected_stock_group = "";
+	groupcode_tb.setValue("");
+	groupcode_tb.setDisabled(false);
+	group_description_tb.setValue("");
+	newupdate_group_btn.setLabel("New");
+}
+
+void newupdate_StockCat_clicker()
+{
+	// if selected_stock_cat == "" .. new stock category
+	
+	tstock_cat = replaceSingleQuotes(stock_cat_tb.getValue());
+	tstock_cat_desc = replaceSingleQuotes(stock_cat_desc_tb.getValue());
+
+	if(tstock_cat.equals("")) return;
+
+	sqlstm = "insert into stockcategory (stock_cat,stock_cat_desc,groupcode) values ('" + tstock_cat + "','" + tstock_cat_desc + "','0')";
+
+	// 18/10/2010: not sure to do this -- if update stock_cat, need to update stockmasterdetails as well..
+	// anyway, stock_cat is locked and update description only
+
+	if(!selected_stock_cat.equals(""))
+		sqlstm = "update stockcategory set stock_cat_desc='" + tstock_cat_desc + "' where stock_cat='" + selected_stock_cat + "'";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateStockCategory(); // refresh
+	clearStockCatInputs_clicker();
+}
+
+void delete_stockcat_clicker()
+{
+	if(selected_stock_cat.equals("")) return;
+	if (Messagebox.show("Delete this stock category..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	// Check if stock_cat is being used in stockmaster
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select top 1 stock_code from stockmasterdetails where stock_cat='" + selected_stock_cat + "'";
+	chkrec = sql.firstRow(sqlstm);
+	if(chkrec != null)
+	{
+		showMessageBox("Stock category is used by some stock items, cannot delete");
+		sql.close();
+		return;
+	}
+
+	sqlstm = "delete from stockcategory where stock_cat='" + selected_stock_cat + "'";
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateStockCategory(); // refresh
+	clearStockCatInputs_clicker();
+}
+
+// onSelect for populateStockGroup()
+class stockgrouplb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_stock_group = getListcellItemLabel(selitem,1);
+		stkgroupdesc = getListcellItemLabel(selitem,2);
+
+		groupcode_tb.setValue(selected_stock_group);
+		groupcode_tb.setDisabled(true);
+		group_description_tb.setValue(stkgroupdesc);
+		newupdate_group_btn.setLabel("Update");
+	}
+}
+
+// Show group from tblstockgroup
+void populateStockGroup()
+{
+	Object[] stockgroup_headers = {
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("Code",true),
+	new listboxHeaderObj("Description",true),
+	};
+
+	Listbox newlb = makeVWListbox(stockgroup_holder,stockgroup_headers,"stockgroup_lb",10);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstm = "select distinct groupcode,id,description from tblstockgroup";
+	stkcats = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkcats.size() == 0) return;
+
+	newlb.addEventListener("onSelect", new stockgrouplb_Listener());
+
+	for(dpi : stkcats)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(dpi.get("groupcode"));
+		kabom.add(dpi.get("description"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void newupdate_StockGroup_clicker()
+{
+	tstock_group = replaceSingleQuotes(groupcode_tb.getValue());
+	tstock_group_desc = replaceSingleQuotes(group_description_tb.getValue());
+
+	if(tstock_group.equals("")) return;
+
+	sqlstm = "insert into tblstockgroup (groupcode,description,classcode) values ('" + tstock_group + "','" + tstock_group_desc + "','0')";
+
+	if(!selected_stock_cat.equals(""))
+		sqlstm = "update tblstockgroup set stock_cat_desc='" + tstock_group_desc + "' where groupcode='" + selected_stock_group + "'";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateStockGroup(); // refresh
+	clearGroupInputs_clicker();
+}
+
+void delete_stockgroup_clicker()
+{
+	if(selected_stock_group.equals("")) return;
+	if (Messagebox.show("Delete this sub-category ..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	// Check if groupcode is being used in stockmaster
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select top 1 groupcode from stockmasterdetails where groupcode='" + selected_stock_group + "'";
+	chkrec = sql.firstRow(sqlstm);
+	if(chkrec != null)
+	{
+		showMessageBox("Sub-category is used by some stock items, cannot delete");
+		sql.close();
+		return;
+	}
+
+	sqlstm = "delete from tblstockgroup where groupcode='" + selected_stock_group + "'";
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateStockGroup(); // refresh
+	clearGroupInputs_clicker();
+}
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="stockdivisionsetup_panel" title="Stock - Division - Group Setup" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+
+<groupbox mold="3d" style="padding:3px" >
+	<caption label="Stock Category" />
+	<div id="stockcat_holder" width="500px" />
+	<separator height="3px" />
+
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Category.Code" style="font-size:9px" />
+				<textbox id="stock_cat_tb" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Category.Description" style="font-size:9px" />
+				<textbox id="stock_cat_desc_tb" width="300px" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" style="font-size:9px" onClick="clearStockCatInputs_clicker()" />
+		<button id="newupdate_cat_btn" label="New" style="font-size:9px" onClick="newupdate_StockCat_clicker()" />
+		<button id="delete_cat_btn" label="Delete" style="font-size:9px" onClick="delete_stockcat_clicker()" />
+	</hbox>
+
+</groupbox>
+
+<groupbox mold="3d" style="padding:3px" >
+	<caption label="Sub-Category" />
+	<div id="stockgroup_holder" width="500px" />
+	<separator height="3px" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="Sub-category.Code" style="font-size:9px" />
+				<textbox id="groupcode_tb" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Sub-category.Description" style="font-size:9px" />
+				<textbox id="group_description_tb" width="300px" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" style="font-size:9px" onClick="clearGroupInputs_clicker()" />
+		<button id="newupdate_group_btn" label="New" style="font-size:9px" onClick="newupdate_StockGroup_clicker()" />
+		<button id="delete_group_btn" label="Delete" style="font-size:9px" onClick="delete_stockgroup_clicker()" />
+	</hbox>
+</groupbox>
+
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+populateStockCategory();
+populateStockGroup();
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

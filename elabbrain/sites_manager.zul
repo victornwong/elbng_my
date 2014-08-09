@@ -1,0 +1,557 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="lgk_system" ?>
+<?page title="LGK System"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+
+<zk xmlns:h="http://www.w3.org/1999/xhtml"
+	xmlns:zk="http://www.zkoss.org/2005/zk">
+
+<zscript src="lgkglobal/globaldefs.zs" />
+<zscript src="lgkglobal/globalfuncs.zs" />
+<zscript src="lgkglobal/global_guifuncs.zs" />
+
+<zscript src="lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="lgkglobal/securityfuncs.zs" />
+
+<zscript src="lgkglobal/storagetemplate_sql.zs" />
+
+<zscript>
+<![CDATA[
+/*
+LKTree.value1 = river-name or whatever descriptive
+LKTree.value2 = WKA - alot, not practical to put into a dropdown
+LKTree.value8 = storage-template id
+
+*/
+
+selected_stationcode = "";
+selected_stationname = "";
+
+selected_basincode = "";
+selected_basinname = "";
+
+selected_statecode = "";
+selected_statename = "";
+
+// Update storage-template origid into LKTree.value8
+void updateLKTree_StorageTemplate_Field(String istationcode, String ist_origid)
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	sqlstm = "update LKTree set value8='" + ist_origid + "' where idlookups=" + istationcode;
+	sql.execute(sqlstm);
+	sql.close();
+}
+
+Object[] storefields_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("F.code",true),
+	new listboxHeaderObj("F.name",true),
+	new listboxHeaderObj("Prfx",true),
+	new listboxHeaderObj("Sffx",true),
+};
+
+void showFieldsListbox(String iwhich)
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+
+	sqlstm = "select * from StorageFields where parent_template=" + iwhich + " order by sorter asc";
+	temprecs = sql.rows(sqlstm);
+	sql.close();
+
+	Listbox newlb = makeVWListbox(storagetemp_lb_div, storefields_lb_headers, "storagefields_lb", 15);
+	storagefields_lb.setMultiple(true);
+	
+	if(temprecs.size() == 0) return;
+
+	String[] strarray = new String[5];
+
+	for(thetemp : temprecs)
+	{
+		origid = thetemp.get("origid").toString();
+		strarray[0] = origid;
+		strarray[1] = thetemp.get("field_code");
+		strarray[2] = thetemp.get("field_disptext");
+		strarray[3] = thetemp.get("prefix");
+		strarray[4] = thetemp.get("suffix");
+		
+		//strarray[5] = thetemp.get("sorter").toString();
+		//delflag = (thetemp.get("deleted") == 1) ? "D" : "-";
+		//strarray[6] = delflag;
+
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Storage-template id will be stored in LKTree.value8
+void showStorageTemplateForStation(String iwhich)
+{
+	strec = getLKTreeRec(iwhich);
+	st_origid = strec.get("value8");
+	
+	// No storage-template assigned, remove label and listbox
+	if(st_origid == null)
+	{
+		storagetemp_lbl.setValue("");
+		Listbox newlb = makeVWListbox(storagetemp_lb_div, storefields_lb_headers, "storagefields_lb", 15);
+		return;
+	}
+	
+	// get storage-template record
+	storagetemp = getStorageTemplate_Rec(st_origid); // storagetemplate_sql.zs
+	
+	// storagetemp_lbl to show storage-template name - def in UI
+	tempcode = storagetemp.get("template_code");
+	tempname = storagetemp.get("template_disptext");
+	
+	storagetemp_lbl.setValue(tempcode + "\n" + tempname);
+	showFieldsListbox(st_origid);
+	
+}
+
+Object[] storetemp_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Template code",true),
+	new listboxHeaderObj("Template name",true),
+};
+
+void populateAssign_ST_LB()
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	sqlstm = "select * from StorageTemplates";
+	temprecs = sql.rows(sqlstm);
+	sql.close();
+	
+	Listbox newlb = makeVWListbox(st_assign_div, storetemp_lb_headers, "assign_st_lb", 12);
+	
+	if(temprecs.size() == 0) return;
+	
+	String[] strarray = new String[3];
+	
+	for(thetemp : temprecs)
+	{
+		origid = thetemp.get("origid").toString();
+		strarray[0] = origid;
+
+		strarray[1] = thetemp.get("template_code");
+		strarray[2] = thetemp.get("template_disptext");
+		
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void st_AssignBtnClick()
+{
+	if(selected_stationcode.equals("")) return;
+	
+	// IMPORTANT: in a running system, once a storage-template is assigned, only admin can change it.
+	// if don't control, storage-data will go haywire
+	
+	populateAssign_ST_LB();
+	st_choose_popup.open(st_assign_btn);
+}
+
+void realAssign_ST()
+{
+	st_choose_popup.close();
+	
+	if(selected_stationcode.equals("")) return;
+	if(assign_st_lb.getSelectedIndex() == -1) return;
+	
+	// get selected storage-template origid
+	st_sel_origid = assign_st_lb.getSelectedItem().getLabel();
+	updateLKTree_StorageTemplate_Field(selected_stationcode,st_sel_origid);
+	
+	// refresh whatever storage-template related UI
+	showStorageTemplateForStation(selected_stationcode);
+}
+
+Object[] stations_lb_headers = {
+
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("Stations",true),
+	new listboxHeaderObj("River",true),
+};
+
+class stationlb_onSelectListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		metom = stations_lb.getSelectedItem();
+		selected_stationcode = getListcellItemLabel(metom, 0);
+		selected_stationname = getListcellItemLabel(metom,1);
+
+		showStorageTemplateForStation(selected_stationcode); // show storage-template thangs
+
+		station_edit_btn.setVisible(true);
+		storagetemp_gb.setVisible(true);
+	}
+}
+
+// Stations lookup tree make use of value1 in table to store river or whatever
+void populateStations(String iwhich, String itubname)
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	sqlstat = "select * from LKTree where myparent = " + iwhich;
+	stationrecs = sql.rows(sqlstat);
+	sql.close();
+	
+	if(stationrecs.size() == 0) return;
+
+	// change the Tubs string to statename in listbox header - better visualization	
+	stations_lb_headers[1].header_str = itubname;
+	
+	Listbox newlb = makeVWListbox(stations_column, stations_lb_headers, "stations_lb", 18);
+	newlb.addEventListener("onSelect", new stationlb_onSelectListener());
+	
+	String[] strarray = new String[3];
+	
+	for(onestation : stationrecs)
+	{
+		idlook = onestation.get("idlookups").toString();
+		strarray[0] = idlook;
+
+		strarray[1] = onestation.get("disptext");
+		
+		value1 = onestation.get("value1");
+		if(value1 == null) value1 = "---";
+		
+		strarray[2] = value1;
+
+		insertListItems(newlb,strarray,"false");
+
+	}
+}
+
+Object[] basins_lb_headers = {
+
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("Tubs",true),
+};
+
+class tubslb_onSelectListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		metom = basins_lb.getSelectedItem();
+		selected_basincode = getListcellItemLabel(metom, 0);
+		selected_basinname = getListcellItemLabel(metom,1);
+		
+		populateStations(selected_basincode,selected_basinname);
+		
+		// basin_edit_btn.setVisible(true);
+		station_edit_btn.setVisible(false);	// hide station edit button
+		storagetemp_gb.setVisible(false);
+		
+		station_add_btn.setVisible(true);
+		basin_lbl.setValue(selected_statename + " : " + selected_basinname); // show basin name
+		
+	}
+}
+
+// Populate basin column when a state is selected, iwhich = the areacode to list the basins as in LKTree
+void populateBasins(String iwhich, String istatename)
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	sqlstat = "select * from LKTree where myparent = " + iwhich;
+	basinrecs = sql.rows(sqlstat);
+	sql.close();
+	
+	if(basinrecs.size() == 0) return;
+
+	// change the Tubs string to statename in listbox header - better visualization	
+	basins_lb_headers[1].header_str = istatename;
+	
+	Listbox newlb = makeVWListbox(basins_column, basins_lb_headers, "basins_lb", 18);
+	newlb.addEventListener("onSelect", new tubslb_onSelectListener());
+	
+	String[] strarray = new String[2];
+	
+	for(onebasin : basinrecs)
+	{
+		idlook = onebasin.get("idlookups").toString();
+		strarray[0] = idlook;
+
+		strarray[1] = onebasin.get("disptext");
+
+		insertListItems(newlb,strarray,"false");
+
+	}
+	
+	//alert(basinrecs);
+
+}
+
+Object[] states_lb_headers = {
+
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("States",true),
+};
+
+class stateslb_onSelectListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		metom = states_lb.getSelectedItem();
+		selected_statecode = getListcellItemLabel(metom, 0);
+		selected_statename = getListcellItemLabel(metom,1);
+		
+		populateBasins(selected_statecode,selected_statename);
+		
+		// state_edit_btn.setVisible(true);
+		basin_edit_btn.setVisible(false); // hide basin edit button..
+		
+	}
+}
+
+// Grab states from lookup tree - SITES is the parent
+void populateStates()
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	// grab SITES idlookups
+	sqlstat = "select * from LKTree where lookupcode='SITES'";
+	veryfirst = sql.firstRow(sqlstat);
+	if(veryfirst == null) return;
+	
+	veryfirstid = veryfirst.get("idlookups").toString();
+	
+	// now grab all states with myparent = veryfirstid
+	
+	sqlstat = "select * from LKTree where myparent = " + veryfirstid;
+	staterecs = sql.rows(sqlstat);
+	
+	sql.close();
+	
+	Listbox newlb = makeVWListbox(states_column, states_lb_headers, "states_lb", 18);
+	newlb.addEventListener("onSelect", new stateslb_onSelectListener());
+	
+	String[] strarray = new String[2];
+	
+	for(onestate : staterecs)
+	{
+		idlook = onestate.get("idlookups").toString();
+		strarray[0] = idlook;
+		
+		strarray[1] = onestate.get("disptext");
+		
+		insertListItems(newlb,strarray,"false");
+	
+	}
+	
+//ddd.setValue("db opened : SITES = " + veryfirstid);
+
+}
+
+// Add a new station
+void stationNewClick()
+{
+	newstation_popup.open(station_add_btn);
+
+}
+
+// Actually creating a new station
+void saveNewStation()
+{
+
+
+}
+
+// Edit existing station's data
+void stationEditClick()
+{
+	stationedit_popup.open(station_edit_btn);
+	
+	// Retrieve data from LKTree for station selected .. fillup the popup textboxes
+	
+	stationrec = getLKTreeRec(selected_stationcode);
+	
+	disptext = stationrec.get("disptext");
+	value1 = stationrec.get("value1");
+	
+	if(value1 == null) value1 = "";
+	
+	ed_station_tb.setValue(disptext);
+	ed_river_tb.setValue(value1);
+
+}
+
+void saveStationEdit()
+{
+	sql = lgk_sql();
+	if(sql == null) return;
+	
+	// alert("selected_stationcode: " + selected_stationcode);
+	
+	stationname = replaceSingleQuotes(ed_station_tb.getValue());
+	rivername = replaceSingleQuotes(ed_river_tb.getValue());
+	
+	// station's river name is stored in value1 field
+	
+	sqlstatm = "update LKTree set disptext = '" + stationname + "', value1 = '" + rivername + "' where idlookups=" + selected_stationcode;
+	
+	sql.execute(sqlstatm);
+	sql.close();
+	
+	// refresh the listbox..
+	populateStations(selected_basincode,selected_basinname);
+	
+	stationedit_popup.close();
+	
+}
+
+]]>
+</zscript>
+
+<!-- station edit popup -->
+<popup id="stationedit_popup">
+<groupbox width="200px">
+<caption label="Edit station" />
+	<hbox>
+		<label value="Station" style="font-size:9px" />
+		<textbox id="ed_station_tb" width="150px" style="font-size:9px" />
+	</hbox>
+	
+	<hbox>
+		<label value="River" style="font-size:9px" />
+		<separator width="6px" />
+		<textbox id="ed_river_tb" width="150px" style="font-size:9px" />
+	</hbox>
+
+	<separator height="5px" />
+	<hbox>
+		<button label="Update" style="font-size:9px" onClick="saveStationEdit()" />
+		<button label="Close" onClick="stationedit_popup.close()" style="font-size:9px" />
+	</hbox>
+
+</groupbox>
+</popup>
+<!-- end of station edit popup -->
+
+<!-- new station popup -->
+<popup id="newstation_popup">
+<groupbox width="200px">
+<caption label="Add new station" />
+	<hbox>
+		<label value="Station" style="font-size:9px" />
+		<textbox id="new_station_tb" width="150px" style="font-size:9px" />
+	</hbox>
+	
+	<hbox>
+		<label value="River" style="font-size:9px" />
+		<separator width="6px" />
+		<textbox id="new_river_tb" width="150px" style="font-size:9px" />
+	</hbox>
+
+	<separator height="5px" />
+	<hbox>
+		<button label="Save" style="font-size:9px" onClick="saveNewStation()" />
+		<button label="Close" onClick="newstation_popup.close()" style="font-size:9px" />
+	</hbox>
+
+</groupbox>
+</popup>
+<!-- end of new station popup -->
+
+<popup id="st_choose_popup">
+<groupbox width="350px">
+<caption label="Choose storage template" />
+	<div id="st_assign_div" />
+	<separator height="5px" />
+	<hbox>
+		<button label="Assign" style="font-size:9px" onClick="realAssign_ST()" />
+		<button label="Close" onClick="st_choose_popup.close()" style="font-size:9px" />
+	</hbox>
+</groupbox>
+</popup>
+
+<div width="990px">
+<panel id="checksampleid_panel" title="My Sites" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+	<borderlayout id="mysites_boxer" height="380px" >
+		<west title="Region" size="200px" flex="true" splittable="true" collapsible="true">
+			<vbox>
+			<div id="states_column" />
+			<button id="state_edit_btn" label="Modify" visible="false" style="font-size:9px" />
+			</vbox>
+		</west>
+
+		<center>
+			<borderlayout height="350px" width="100%">
+				<west title="Basin" size="200px" flex="true" splittable="true" collapsible="true">
+					<vbox>
+					<div id="basins_column" />
+					<button id="basin_edit_btn" label="Modify" visible="false" style="font-size:9px" />
+					</vbox>
+				</west>
+
+				<center>
+					<borderlayout height="350px" width="100%">
+						<west title="Stations" size="100%" flex="true" splittable="true" collapsible="true">
+						<div>
+						<hbox>
+							<separator width="3px" />
+							<label id="basin_lbl" style="font-size:12px;font-weight:bold;background:#8899AA" />
+						</hbox>
+						
+						<hbox>
+							<vbox>
+							<div id="stations_column" width="250px" />
+							
+							<hbox>
+								<separator width="3px" />
+								<button id="station_add_btn" label="New" visible="false" onClick="stationNewClick()" style="font-size:9px" />
+								<button id="station_edit_btn" label="Modify" visible="false" onClick="stationEditClick()" style="font-size:9px" />
+							</hbox>
+							
+							</vbox>
+							
+							<vbox>
+								<groupbox id="storagetemp_gb" visible="false">
+									<caption label="Storage template" />
+									<label id="storagetemp_lbl" style="font-size:12px;font-weight:bold;background:#AAAA00" multiline="true" />
+
+									<separator height="3px" />
+									<div id="storagetemp_lb_div" />
+
+									<separator height="5px" />
+									<button id="st_assign_btn" label="Assign template" onClick="st_AssignBtnClick()" style="font-size:9px" />
+								</groupbox>
+
+							</vbox>
+
+						</hbox>
+						</div>
+						</west>
+					</borderlayout>
+				</center>
+
+			</borderlayout>
+		</center>
+	</borderlayout>
+
+	<label id="ddd" />
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+populateStates();
+
+</zscript>
+
+
+</zk>

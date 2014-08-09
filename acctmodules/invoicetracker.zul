@@ -1,0 +1,463 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="invoice_tracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript>
+<![CDATA[
+MYPANEL = "invoicetracker_panel";
+MYTITLE = "Invoices / Credit-control Tracker";
+MYVERSION = "v1.0";
+/*
+Title: Invoice Tracker
+Written by: Victor Wong
+Date started: 14/1/2011
+
+**NOTES**
+14/01/2011: credit-control people to call and update invoice status or watever
+02/04/2012: ported to byte-compl
+03/06/2014: rework and optimize sh**s
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+
+global_selected_invoice = global_selected_arcode = global_selected_company = "";
+
+void showInvoiceMeta(String iwhat)
+{
+	sqlstm = "select inv.salesperson, inv.attention, cust.telephone_no from invoice inv " +
+	"left join customer cust on cust.ar_code = inv.code where inv.voucherno='" + iwhat + "';";
+	r = sqlhand.gpSqlFirstRow(sqlstm);
+	if(r == null) return;
+
+	i_attention.setValue( kiboo.checkNullString(r.get("attention")) );
+	i_telephone_no.setValue( kiboo.checkNullString(r.get("telephone_no")) );
+	i_salesperson.setValue( kiboo.checkNullString(r.get("salesperson")) );
+}
+
+Object[] invitmhds =
+{
+	new listboxHeaderWidthObj("No.",true,"30px"),
+	new listboxHeaderWidthObj("Item",true,""),
+	new listboxHeaderWidthObj("Description",true,""),
+	new listboxHeaderWidthObj("U.Price",true,"70px"),
+	new listboxHeaderWidthObj("Qty",true,"30px"),
+	new listboxHeaderWidthObj("S.Amt",true,"70px"),
+};
+
+// Can be modded for other mods
+void showInvoiceItems(String iwhat, Object iwinholder)
+{
+	sqlstm = "select invd.item, invd.description as invdesc, invd.unitprice, invd.quantity, invd.netamount, " + 
+	"invd.itemdescription as invitemname " +
+	"from invoicedetail invd where invd.invoiceno='" + iwhat + "' order by invd.item;";
+
+	mwin = vMakeWindow(iwinholder,"INVOICE: " + iwhat,"0","center","700px","");
+	kdiv = new Div();
+	kdiv.setParent(mwin);
+	Listbox newlb = lbhand.makeVWListbox_Width(kdiv, invitmhds, "invdrill_lb", 3);
+
+	r = sqlhand.gpSqlGetRows(sqlstm);
+	if(r.size() == 0) return;
+	newlb.setMold("paging");
+	newlb.setRows(21);
+	//newlb.addEventListener("onSelect", grnclikor);
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "item", "invitemname", "invdesc", "unitprice", "quantity", "netamount" };
+	for(d : r)
+	{
+		popuListitems_Data(kabom,fl,d);
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+// onSelect for showQuotations_Listbox()
+class invoices_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_invoice = lbhand.getListcellItemLabel(selitem,0);
+		global_selected_arcode = lbhand.getListcellItemLabel(selitem,4);
+		global_selected_company = lbhand.getListcellItemLabel(selitem,5);
+		clearTrackerFields(1);
+		clearTrackerFields(2);
+		showTrackNotes(1);
+		showTrackNotes(2);
+		showInvoiceMeta(global_selected_invoice);
+	}
+}
+wolicliker = new invoices_lb_Listener();
+
+class activiDclk implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		global_selected_invoice = lbhand.getListcellItemLabel(isel,0);
+		showInvoiceItems(global_selected_invoice,winsholder);
+	}
+}
+woliDclker = new activiDclk();
+
+Object[] invoices_lb_headers = {
+	new listboxHeaderObj("Invoice#",true),
+	new listboxHeaderObj("Inv.Date",true),
+	new listboxHeaderObj("Due.Date",true),
+	new listboxHeaderObj("Issuer",true),
+	new listboxHeaderObj("AR.Code",false),
+	new listboxHeaderObj("Customer",true),
+	//new listboxHeaderObj("Contact",true),
+	//new listboxHeaderObj("Telephone",true),
+	//new listboxHeaderObj("Salesman",true),
+	new listboxHeaderObj("Amount",true),
+	//new listboxHeaderObj("Terms",true),
+	new listboxHeaderObj("Receipt",true),
+	new listboxHeaderObj("R.Date",true),
+	new listboxHeaderObj("R.RefNo",true),
+	new listboxHeaderObj("R.Amt",true),
+};
+
+// itype:	0 = previous, 1 = by date, 2 = by customer
+// "attention", "telephone_no", "salesperson"
+void showInvoices(int itype)
+{
+	Listbox newlb = lbhand.makeVWListbox(invoices_div, invoices_lb_headers, "invoices_lb", 5);
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+    custnam = kiboo.replaceSingleQuotes(customer_tb.getValue().trim());
+
+    basesql = "select dl.code, cust.customer_name, dl.strdate as invdate, dl.voucherno, dl.discount, dl.curcode, dl.amount, dl.duedate, dl.user1, " +
+    "(select voucherno from debtorledger where type='PAY' and id=cpb.receiptid) as rcpvno, " +
+    "(select referenceno from debtorledger where type='PAY' and id=cpb.receiptid) as rcprefno, " +
+    "cpb.curcode as rcpcurcode, cpb.amount as rcpamount, cpb.strdate as rcpdate, " +
+    "inv.attention, cust.telephone_no, inv.salesperson " +
+    "from debtorledger dl " +
+    "left join tblcustpaidbill cpb on cpb.salesid = dl.id " +
+    "left join customer cust on cust.ar_code = dl.code " +
+    "left join invoice inv on inv.voucherno = dl.voucherno " +
+    "where dl.type='INV' ";
+
+   	sqlstm = basesql + "and dl.strdate between '" + sdate + "' and '" + edate + "' ";
+
+	if(itype == 2)
+		sqlstm = sqlstm + "and cust.customer_name like '%" + custnam + "%' ";
+
+	sqlstm += " order by dl.voucherno;";
+
+	invrows = sqlhand.gpSqlGetRows(sqlstm);
+	if(invrows.size() == 0) return;
+	newlb.setRows(22);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", wolicliker);
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "voucherno", "invdate", "duedate", "user1", "code", "customer_name" };
+	String[] fl2 = { "rcpvno", "rcpdate", "rcprefno" };
+	for(dpi : invrows)
+	{
+		popuListitems_Data(kabom,fl,dpi);
+		kabom.add(dpi.get("curcode") + " " + nf2.format(dpi.get("amount")));
+		popuListitems_Data(kabom,fl2,dpi);
+
+		rpm = sty = "";
+		try { rpm = dpi.get("rcpcurcode") + " " + nf2.format(dpi.get("rcpamount")); } catch (Exception e) {}
+		if(rpm.equals("")) sty = "text-decoration:underline; font-weight:bold; font-size:9px";
+
+		kabom.add(rpm);
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false",sty);
+		kabom.clear();
+	}
+	lbhand.setDoubleClick_ListItems(newlb, woliDclker);
+}
+
+Object[] invoice_tracks_lb_headers = 
+{
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Dated",true),
+	new listboxHeaderObj("Feedback",true),
+	new listboxHeaderObj("Poster",true),
+};
+// can be used for other mods - generalize it later
+// itype: 1=company, 2=invoices
+void showTrackNotes(int itype)
+{
+	lbn = "companytracks_lb";
+	hld = companytracks_holder;
+	sqlstm = "select * from elb_invoice_track where invoice_parent='" + global_selected_arcode + "' order by datecreated desc";
+
+	switch(itype)
+	{
+		case 1:
+			company_label.setValue(global_selected_company + " :: tracking notes");
+			companytrack_div.setVisible(true);
+			break;
+
+		case 2:
+			hld = tracks_holder;
+			lbn = "invoicetracks_lb";
+			sqlstm = "select * from elb_invoice_track where invoice_parent='" + global_selected_invoice + "' order by datecreated desc";
+			invoice_label.setValue("Call-up tracking notes for invoice: " + global_selected_invoice);
+			invoicetracks_div.setVisible(true);
+			break;
+	}
+	Listbox newlb = lbhand.makeVWListbox(hld, invoice_tracks_lb_headers, lbn, 5);
+	qitems = sqlhand.gpSqlGetRows(sqlstm);
+	if(qitems.size() == 0) return;
+	newlb.setRows(20);
+	newlb.setMold("paging");
+	//newlb.addEventListener("onSelect", new quote_items_lb_Listener());
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "origid", "datecreated", "notes", "username" };
+	for(dpi : qitems)
+	{
+		popuListitems_Data(kabom,fl,dpi);
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+void clearTrackerFields(int itype)
+{
+	switch(itype)
+	{
+		case 1 :
+			tracknotes.setValue("");
+			break;
+
+		case 2:
+			company_tracknotes.setValue("");
+			break;
+	}
+}
+
+void saveInvoiceTracker(int itype)
+{
+	thefeedback = kiboo.replaceSingleQuotes(tracknotes.getValue().trim());
+	invcode = global_selected_invoice;
+	
+	if(itype == 2)
+	{
+		thefeedback = kiboo.replaceSingleQuotes(company_tracknotes.getValue().trim());
+		invcode = global_selected_arcode;
+	}
+
+	if(!thefeedback.equals(""))
+	{
+		sqlstm = "insert into elb_invoice_track (invoice_parent,datecreated,notes,username) values ('" +
+			invcode + "','" + kiboo.todayISODateString() + "','" + thefeedback + "','" + useraccessobj.username + "')";
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		k = (itype == 1) ? 2 : 1;
+		showTrackNotes(k);
+	}
+}
+
+void printQuoteTracks()
+{
+	uniqid = kiboo.makeRandomId("pqt");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","sales/printquotetrack.zul", uniqid, "", useraccessobj);
+}
+
+void exportTrackNotes(int itype)
+{
+	klb = companytracks_lb;
+	fnm = "CompanyTrackNotes.xls";
+	shn = "compTnotes";
+	
+	if(itype == 2)
+	{
+		klb = invoicetracks_lb;
+		fnm = "InvoiceTrackNotes.xls";
+		shn = "invTnotes";
+	}
+	exportExcelFromListbox(klb, kasiexport, invoice_tracks_lb_headers, fnm,shn);
+}
+
+void exportTrackInvoices()
+{
+	exportExcelFromListbox(invoices_lb, kasiexport, invoices_lb_headers, "CCTrackInvoices.xls","INV");
+}
+
+// 22/06/2014: add invoice-collection task
+void addInvoiceTrackTask()
+{
+	if(global_selected_invoice.equals("")) return;
+	unm = useraccessobj.username;
+	insertInternalTask("INVOICE", global_selected_invoice, "Credit-control actions", unm, unm);
+}
+
+]]>
+</zscript>
+
+<style src="/real-world.css" />
+
+<div width="${PANELWIDTH}">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren style="background:#C7724E">
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="kiboo.setTodayDatebox(self)" />
+
+<div sclass="shadowbox" style="background:#384238" >
+	<hbox>
+		<label value="Start date" sclass="k9b" />
+		<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+		<label value="End date" sclass="k9b" />
+		<datebox id="enddate" format="yyyy-MM-dd"  style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+		<button label="Load invoices by date" sclass="k9" onClick="showInvoices(0)" />
+		<separator width="5px" />
+		<textbox id="customer_tb" sclass="k9" width="200px" />
+		<button label="Load by customer" sclass="k9" onClick="showInvoices(2)" />
+		<separator width="10px" />
+		<button label="Export" sclass="k9" onClick="exportTrackInvoices()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="invoices_div" />
+</div>
+<separator height="3px" />
+
+<div sclass="shadowbox" style="background:#384238">
+<grid width="700px">
+	<rows>
+		<row style="background:#384238" >
+			<label value="Contact person" sclass="k9b" />
+			<label id="i_attention" sclass="k9b" />
+			<label value="Tel" sclass="k9b" />
+			<label id="i_telephone_no" sclass="k9b" />
+			<label value="Salesperson" sclass="k9b" />
+			<label id="i_salesperson" sclass="k9b" />
+			<button label="Add tasks/to-do" sclass="k9mo" onClick="addInvoiceTrackTask()" />
+			<button label="List tasks/to-do" sclass="k9mo" onClick="actInternalTasks()" />
+		</row>
+	</rows>
+</grid>
+</div>
+
+<hbox>
+
+<div id="companytrack_div" sclass="shadowbox" style="background:#384238" width="550px" visible="false" >
+	<label id="company_label" style="color:#ffffff;font-weight:bold" value="Company" />
+	<button label="Export" sclass="k9" onClick="exportTrackNotes(1)" />
+	<separator height="3px" />
+	<div id="companytracks_holder" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Dated" sclass="k9" />
+			<datebox id="companytrack_date" format="yyyy-MM-dd" disabled="true" onCreate="kiboo.setTodayDatebox(self)"  />
+		</row>
+		<row>
+			<label value="Call / Notes" sclass="k9" />
+			<textbox id="company_tracknotes" sclass="k9" multiline="true" width="480px" height="80px" />		
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" sclass="k9" onClick="clearTrackerFields(2)" />
+		<button label="Save" sclass="k9" onClick="saveInvoiceTracker(2)" />
+	</hbox>
+</div>
+
+<div id="invoicetracks_div" sclass="shadowbox" style="background:#384238" visible="false" >
+	<label id="invoice_label" style="color:#ffffff;font-weight:bold" value="Call-up/tracking notes" />
+	<button label="Export" sclass="k9" onClick="exportTrackNotes(2)" />
+	<separator height="3px" />
+	<div id="tracks_holder" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Dated" sclass="k9" />
+			<datebox id="track_date" format="yyyy-MM-dd" disabled="true" onCreate="kiboo.setTodayDatebox(self)" />
+		</row>
+		<row>
+			<label value="Call / Notes" sclass="k9" />
+			<textbox id="tracknotes" sclass="k9" multiline="true" width="480px" height="80px" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" sclass="k9" onClick="clearTrackerFields(1)" />
+		<button label="Save" sclass="k9" onClick="saveInvoiceTracker(1)" />
+	</hbox>
+</div>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<div id="kasiexport" visible="false" />
+<div id="winsholder" />
+<zscript>
+<![CDATA[
+
+// Admin only stuff to show else hidden
+if(useraccessobj.accesslevel > 8)
+{
+
+}
+
+/*
+// old method of listing invoices ONLY - no payment-details..
+void showInvoices_org(int itype)
+{
+	Listbox newlb = lbhand.makeVWListbox(invoices_div, invoices_lb_headers, "invoices_lb", 5);
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+    custnam = kiboo.replaceSingleQuotes(customer_tb.getValue().trim());
+
+    basesql = "select invoice.invoiceno,invoice.invoicedate,invoice.username,invoice.duedate,invoice.code," + 
+	"invoice.name,invoice.attention,invoice.salesperson," + 
+	"invoice.terms,invoice.total,invoice.curcode, customer.telephone_no from invoice " +
+	"left join customer on invoice.code = customer.ar_code "; 
+
+   	sqlstm = basesql + "where invoice.invoicedate between '" + sdate + "' and '" + edate + "'";
+
+	if(itype == 2)
+		sqlstm = sqlstm + " and invoice.name like '%" + custnam + "%'";
+
+	invrows = sqlhand.gpSqlGetRows(sqlstm);
+	if(invrows.size() == 0) return;
+	newlb.setRows(20);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", wolicliker);
+	DecimalFormat nf = new DecimalFormat("##.00");
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "invoiceno", "invoicedate", "duedate", "username", "code", "name", "attention" , "telephone_no" };
+	String[] fl2 = { "salesperson", "terms" };
+	for(dpi : invrows)
+	{
+		popuListitems_Data(kabom,fl,dpi);
+		kabom.add(dpi.get("curcode") + " " + nf.format(dpi.get("total")));
+		popuListitems_Data(kabom,fl2,dpi);
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+*/
+]]>
+</zscript>
+</zk>

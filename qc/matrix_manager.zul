@@ -1,0 +1,463 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="matrix_manager_mod"?>
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/als_lookuptree.zs" />
+
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+Caption submatrix_caption;
+Div sub_matrix_div;
+Div matrixclass_div;
+
+// Hardcoded for ALS .. change accordingly for other system
+MATRIX_LOOKUP_ID = "41";
+
+global_selected_matrixclass = "";
+global_matrixclass_disptext = "";
+global_selected_submatrix = "";
+
+Object[] submatrixclass_lb_headers = {
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("Ref.Code",true),
+	new listboxHeaderObj("Sub.Matrix",true),
+};
+
+void showSubMatrix(String theparent, String parentdisptext)
+{
+	submatrix_caption.setLabel(parentdisptext);
+
+	Listbox newlb = makeVWListbox(sub_matrix_div, submatrixclass_lb_headers, "submatrix_lb", 5);
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	expstring = " and expired=0";
+	// Admin can see deleted/expired item
+	if(useraccessobj.accesslevel == 9)
+		expstring = "";
+
+	sqlstm = "select idlookups,name,disptext,expired from Lookups where myparent='" + theparent + "'" + expstring;
+	mcrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(mcrecs.size() == 0) return;
+
+	newlb.setRows(15);
+
+	for(dpi : mcrecs)
+	{
+		ArrayList scmk = new ArrayList();
+		scmk.add(dpi.get("idlookups").toString());
+		scmk.add(dpi.get("name"));
+
+		expkk = (dpi.get("expired") == 0) ? "" : "[DEL] ";
+
+		scmk.add(expkk + dpi.get("disptext"));
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+Object[] matrixclass_lb_headers = {
+	new listboxHeaderObj("idlookups",false),
+	new listboxHeaderObj("Mat.Code",true),
+	new listboxHeaderObj("Class",true),
+};
+
+class matrixclasslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		global_selected_matrixclass = getListcellItemLabel(selitem,0);
+		global_matrixclass_disptext = getListcellItemLabel(selitem,2);
+	
+		showSubMatrix(global_selected_matrixclass,global_matrixclass_disptext);
+	}
+}
+
+void showMatrixClass()
+{
+	// if there's a submatrix listbox shown earlier, remove it and reset other vars
+	if(sub_matrix_div.getFellowIfAny("submatrix_lb") != null)
+	{
+		kabing = sub_matrix_div.getFellow("submatrix_lb");
+		kabing.setParent(null);
+
+		submatrix_caption.setLabel("Sub-Matrix");
+
+		global_selected_matrixclass = "";
+		global_matrixclass_disptext = "";
+	}
+
+	Listbox newlb = makeVWListbox(matrixclass_div, matrixclass_lb_headers, "matrixclass_lb", 15);
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	expstring = " and expired=0";
+	// Admin can see deleted/expired item
+	if(useraccessobj.accesslevel == 9)
+		expstring = "";
+
+	sqlstm = "select idlookups,name,disptext,expired from Lookups where myparent='" + MATRIX_LOOKUP_ID + "'" + expstring;
+	mcrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(mcrecs.size() == 0) return;
+	
+	newlb.addEventListener("onSelect", new matrixclasslb_Listener());
+	
+	for(dpi : mcrecs)
+	{
+		ArrayList scmk = new ArrayList();
+		scmk.add(dpi.get("idlookups").toString());
+		scmk.add(dpi.get("name"));
+
+		expkk = (dpi.get("expired") == 0) ? "" : "[DEL] ";
+		scmk.add(expkk + dpi.get("disptext"));
+
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void addsubM_clicker()
+{
+	if(global_selected_matrixclass.equals("")) return;
+	submatrix_add_popup.open(add_submatrix_btn);
+}
+
+void addsm_add_clicker()
+{
+	submatrix_add_popup.close();
+
+	tmstr = addsm_name_tb.getValue();
+	if(tmstr.equals("")) return;
+
+	rmstr = addsm_code_tb.getValue();
+	if(rmstr.equals("")) return;
+
+	rmstr = replaceSingleQuotes(rmstr);
+	tmstr = replaceSingleQuotes(tmstr);
+
+	if(isUniqueCode(rmstr) == false)
+	{
+		showMessageBox("Matrix ref.code already used.. please use a different code");
+		return;
+	}
+
+	insertLookups_Rec(rmstr,tmstr,global_selected_matrixclass); // als_lookuptree.zs
+	showSubMatrix(global_selected_matrixclass,global_matrixclass_disptext); // refresh..
+}
+
+void editsubM_clicker()
+{
+	if(!check_ListboxExist_SelectItem(sub_matrix_div,"submatrix_lb")) return;
+
+	matid = submatrix_lb.getSelectedItem().getLabel(); // 1st col. is idlookups
+	matobj = getLookupRec_ByID(matid);
+	if(matobj == null) return;
+
+	global_selected_submatrix = matid;
+
+	tmpname = matobj.get("name");
+	tmpdisptext = matobj.get("disptext");
+	editsm_code_tb.setValue(tmpname);
+	editsm_name_tb.setValue(tmpdisptext);
+	submatrix_edit_popup.open(edit_submatrix_btn);
+}
+
+void editsm_update_clicker()
+{
+	tmpdisptext = replaceSingleQuotes(editsm_name_tb.getValue());
+	if(tmpdisptext.equals(""))
+	{
+		showMessageBox("Cannot use blank sub-matrix");
+		return;
+	}
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update Lookups set disptext='" + tmpdisptext + "' where idlookups=" + global_selected_submatrix;
+	sql.execute(sqlstm);
+	sql.close();
+}
+
+void delsubM_clicker()
+{
+	if(!check_ListboxExist_SelectItem(sub_matrix_div,"submatrix_lb")) return;
+	
+	matid = submatrix_lb.getSelectedItem().getLabel(); // 1st col is idlookups
+
+	if (Messagebox.show("Toggle expired-flag for this submatrix", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+	
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select expired from Lookups where idlookups=" + matid;
+	kebing = sql.firstRow(sqlstm);
+	if(kebing != null)
+	{
+		expstring = (kebing.get("expired") == 0) ? "1" : "0";
+		sqlstm2 = "update Lookups set expired=" + expstring + " where idlookups=" + matid;
+		sql.execute(sqlstm2);
+	}
+	sql.close();
+	
+	showSubMatrix(global_selected_matrixclass,global_matrixclass_disptext); // refresh..
+}
+
+void addmatrix_clicker()
+{
+	matrix_add_popup.close();
+
+	tmstr = addm_name_tb.getValue();
+	if(tmstr.equals("")) return;
+
+	rmstr = addm_code_tb.getValue();
+	if(rmstr.equals("")) return;
+
+	rmstr = replaceSingleQuotes(rmstr);
+	tmstr = replaceSingleQuotes(tmstr);
+
+	if(isUniqueCode(rmstr) == false)
+	{
+		showMessageBox("Matrix code already used.. please use a different code");
+		return;
+	}
+
+	insertLookups_Rec(rmstr,tmstr,MATRIX_LOOKUP_ID); // als_lookuptree.zs
+	showMatrixClass(); // refresh
+}
+
+void editmatrix_clicker()
+{
+	if(!check_ListboxExist_SelectItem(matrixclass_div,"matrixclass_lb")) return;
+
+	matid = matrixclass_lb.getSelectedItem().getLabel(); // 1st col. is idlookups
+	matobj = getLookupRec_ByID(matid);
+	if(matobj == null) return;
+
+	global_selected_matrixclass = matid;
+
+	tmpname = matobj.get("name");
+	tmpdisptext = matobj.get("disptext");
+	editm_code_tb.setValue(tmpname);
+	editm_name_tb.setValue(tmpdisptext);
+	matrix_edit_popup.open(editmatrixclass_btn);
+}
+
+void editm_update_clicker()
+{
+	matrix_edit_popup.close();
+
+	tmpdisptext = replaceSingleQuotes(editm_name_tb.getValue());
+	tmpname = replaceSingleQuotes(editm_code_tb.getValue());
+
+	if(tmpdisptext.equals(""))
+	{
+		showMessageBox("Cannot use a blank matrix ");
+		return;
+	}
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update Lookups set disptext='" + tmpdisptext + "' where idlookups=" + global_selected_matrixclass;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showMatrixClass(); // refresh
+}
+
+void delmatrix_clicker()
+{
+	if(!check_ListboxExist_SelectItem(matrixclass_div,"matrixclass_lb")) return;
+	matid = matrixclass_lb.getSelectedItem().getLabel(); // 1st col is idlookups
+
+	if (Messagebox.show("Toggle expired-flag for this matrix", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select expired from Lookups where idlookups=" + matid;
+	kebing = sql.firstRow(sqlstm);
+	if(kebing != null)
+	{
+		expstring = (kebing.get("expired") == 0) ? "1" : "0";
+		sqlstm2 = "update Lookups set expired=" + expstring + " where idlookups=" + matid;
+		sql.execute(sqlstm2);
+	}
+	sql.close();
+
+	showMatrixClass(); // refresh
+}
+
+]]>
+</zscript>
+
+<!-- Edit Matrix class-->
+<popup id="matrix_edit_popup">
+<groupbox>
+	<caption label="Edit matrix class" />
+	<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Mat.Code" style="font-size:9px" />
+			<textbox id="editm_code_tb" width="200px" style="font-size:9px" disabled="true" />		
+		</row>
+		<row>
+		<label value="Name" style="font-size:9px" />
+		<textbox id="editm_name_tb" width="200px" style="font-size:9px" />		
+		</row>
+	</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<button label="Update" style="font-size:9px" onClick="editm_update_clicker()" />
+<button label="Close" onClick="matrix_edit_popup.close()" style="font-size:9px" />
+</popup>
+<!-- End of Edit Matrix class -->
+
+<!-- Add Matrix class-->
+<popup id="matrix_add_popup">
+<groupbox>
+	<caption label="Add matrix class" />
+	<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Mat.Code" style="font-size:9px" />
+			<textbox id="addm_code_tb" width="200px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Name" style="font-size:9px" />
+			<textbox id="addm_name_tb" width="200px" style="font-size:9px" />		
+		</row>
+	</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<button label="Insert" style="font-size:9px" onClick="addmatrix_clicker()" />
+<button label="Close" onClick="matrix_add_popup.close()" style="font-size:9px" />
+</popup>
+<!-- End of Add Matrix class -->
+
+<!-- Add SubMatrix -->
+<popup id="submatrix_add_popup">
+<groupbox>
+	<caption label="Add sub-matrix item" />
+	<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Ref.Code" style="font-size:9px" />
+			<textbox id="addsm_code_tb" width="200px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Name" style="font-size:9px" />
+			<textbox id="addsm_name_tb" width="200px" style="font-size:9px" />		
+		</row>
+	</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<button label="Insert" style="font-size:9px" onClick="addsm_add_clicker()" />
+<button label="Close" onClick="submatrix_add_popup.close()" style="font-size:9px" />
+</popup>
+<!-- End of Add SubMatrix -->
+
+<!-- Edit SubMatrix -->
+<popup id="submatrix_edit_popup">
+<groupbox>
+	<caption label="Edit sub-matrix item" />
+	<grid>
+	<columns>
+		<column label="" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+			<label value="Ref.Code" style="font-size:9px" />
+			<textbox id="editsm_code_tb" width="200px" style="font-size:9px" disabled="true" />
+		</row>
+		<row>
+			<label value="Name" style="font-size:9px" />
+			<textbox id="editsm_name_tb" width="200px" style="font-size:9px" />
+		</row>
+	</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<button label="Update" style="font-size:9px" onClick="editsm_update_clicker()" />
+<button label="Close" onClick="submatrix_edit_popup.close()" style="font-size:9px" />
+</popup>
+<!-- End of Edit SubMatrix -->
+
+<window id="matrixmanager_win" width="700px" height="330px" title="Sample Matrix - Configuration" position="center" mode="overlapped" border="normal" closable="true" 
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<hbox>
+<groupbox width="300px">
+<caption label="Matrix Class"/>
+<div id="tmp_matrixclass_div" />
+<separator height="3px" />
+<button id="addmatrixclass_btn" label="Add class" style="font-size:9px" onClick="matrix_add_popup.open(addmatrixclass_btn)" />
+<button id="editmatrixclass_btn" label="Edit" style="font-size:9px" onClick="editmatrix_clicker()" />
+<button id="delmatrixclass_btn" label="Delete" style="font-size:9px" visible="false" onClick="delmatrix_clicker()" />
+</groupbox>
+
+<groupbox>
+<caption id="tmp_submatrix_caption" label="Sub-Matrix"/>
+<div id="tmp_sub_matrix_div" />
+<separator height="3px" />
+<button id="add_submatrix_btn" label="Add sub-matrix" style="font-size:9px" onClick="addsubM_clicker()" />
+<button id="edit_submatrix_btn" label="Edit" style="font-size:9px" onClick="editsubM_clicker()" />
+<button id="del_submatrix_btn" label="Delete" style="font-size:9px" visible="false" onClick="delsubM_clicker()" />
+
+</groupbox>
+</hbox>
+</div>
+
+<zscript>
+<![CDATA[
+
+// show stuff only admin can see --
+if(useraccessobj.accesslevel == 9)
+{
+	delmatrixclass_btn.setVisible(true);
+	del_submatrix_btn.setVisible(true);
+}
+
+submatrix_caption = tmp_submatrix_caption;
+sub_matrix_div = tmp_sub_matrix_div;
+
+matrixclass_div = tmp_matrixclass_div;
+
+showMatrixClass();
+
+]]>
+</zscript>
+</window>
+</zk>

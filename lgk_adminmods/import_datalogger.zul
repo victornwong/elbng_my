@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="datalogger_import_mod" ?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript src="../lgkglobal/storagetemplate_sql.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import com.svcon.jdbf.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,ADMIN_BIRT_REPORTS_USERGROUP,ADMIN_BIRT_REPORTS_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// Parse DBF file and show listbox
+void loadDBF_clicker()
+{
+	Object media = Fileupload.get();
+	if(media == null) return;
+
+	//FileInputStream kingkong = new FileInputStream(session.getWebApp().getRealPath("tmpdata/1K23.DBF"));
+	DBFReader newdbfreader = new DBFReader(media.getStreamData());
+	fieldcount = newdbfreader.getFieldCount();
+
+	ArrayList thefields = new ArrayList();
+
+	for(i=0;i<fieldcount;i++)
+	{
+		fieldstr = newdbfreader.getField(i).getName();
+		listboxHeaderObj koblok = new listboxHeaderObj(fieldstr,true);
+		thefields.add(koblok);
+	}
+
+	fieldheaders = thefields.toArray();
+	Listbox newlb = makeVWListbox(importdbf_div, fieldheaders, "wopime", 5);
+	uploaded_filename_lbl.setValue("Processed: " + media.getName());
+
+	SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+	TimeZone thetimezone = TimeZone.getTimeZone("GMT+8");
+
+	while(newdbfreader.hasNextRecord())
+	{
+		kombi = newdbfreader.nextRecord();
+		ArrayList kabom = new ArrayList();
+
+		for(j=0;j<kombi.length;j++)
+		{
+			wopdata = kombi[j];
+			kacheng = wopdata.toString();
+			
+			if(wopdata instanceof Date)
+			{
+				Calendar tempdate = Calendar.getInstance();
+				tempdate.setTimeZone(thetimezone);
+				tempdate.setTime(wopdata);
+				
+				kacheng = tempdate.get(Calendar.YEAR).toString() + "-" + (tempdate.get(Calendar.MONTH) + 1).toString() + "-" + 
+					tempdate.get(Calendar.DAY_OF_MONTH).toString() + " ";
+				
+				/* Time not exported properly in DBF - EcoWatch - not sure why!!
+				kacheng += tempdate.get(Calendar.HOUR_OF_DAY).toString() + ":" + 
+					tempdate.get(Calendar.MINUTE).toString() + ":" + tempdate.get(Calendar.SECOND).toString();
+				*/
+				
+				//kacheng = getDateString(wopdata, sdf,0);
+			}
+			
+			kabom.add(kacheng);
+		}
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	link_rec_btn.setVisible(true);
+}
+
+// Simple CDF(CSV) chopper
+void loadCDF_clicker()
+{
+	Object media = Fileupload.get();
+	if(media == null) return;
+	
+	bytearray = media.getByteData();
+	
+	String mystring = new String(bytearray);
+	chopped_csv = mystring.split("\r\n");
+	
+	if(chopped_csv.length == 0) return;
+	
+	// get the fields name
+	row1fieldnames = chopped_csv[0];
+	split5 = row1fieldnames.split(",");
+	for(j=0; j<split5.length; j++) 	// remove quotes
+	{
+		ktmp = split5[j];
+		split5[j] = ktmp.replace("\"","");
+	}
+	
+	ArrayList thefields = new ArrayList();
+
+	for(i=0;i<split5.length;i++)
+	{
+		fieldstr = split5[i];
+		listboxHeaderObj koblok = new listboxHeaderObj(fieldstr,true);
+		thefields.add(koblok);
+	}
+
+	fieldheaders = thefields.toArray();
+	Listbox newlb = makeVWListbox(importdbf_div, fieldheaders, "wopime", 5);
+	uploaded_filename_lbl.setValue("Processed: " + media.getName());
+	
+	if(chopped_csv.length > 20) newlb.setRows(20);
+	
+	// now lets do the rest of the lines - line 3 onwards are the data
+	for(i=2; i<chopped_csv.length; i++)
+	{
+		therow = chopped_csv[i];
+		split5 = therow.split(",");
+		ArrayList kabom = new ArrayList();
+
+		for(j=0; j<split5.length; j++) 	// remove quotes
+		{
+			ktmp = split5[j];
+			split5[j] = ktmp.replace("\"","");
+			kabom.add(split5[j]);
+		}
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	link_rec_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="datalogger_import_panel" title="Datalogger Import" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<div style="padding:3px" >
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<separator height="3px" />
+<button label="Upload datalogger DBF" style="font-size:9px" onClick="loadDBF_clicker()" />
+<button label="Upload CDF" style="font-size:9px" onClick="loadCDF_clicker()" />
+<label value="(Use DBF or CDF exported from EcoWatch)" style="font-size:9px" />
+<separator height="5px" />
+
+<div style="background:#558855;padding:3px">
+	<label id="uploaded_filename_lbl" style="color:#ffffff" />
+</div>
+
+<separator height="3px" />
+
+<div id="importdbf_div" />
+
+<separator height="3px" />
+<button id="link_rec_btn" label="Link records" style="font-size:9px" visible="false" />
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+</zk>

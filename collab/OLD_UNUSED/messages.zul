@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="collab_messages_module"?>
+<!--
+
+Version				: Messages
+Coding began date	: 21/6/2010
+Developers			: Nurul
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+/*
+useraccessobj.username = From
+FileOutputStream outstream = new FileOutputStream(session.getWebApp().getRealPath("/meabspath.txt"));
+*/
+
+// Some security checking codes here
+// useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+MODULE_DBNAME = "Collab_messages";
+
+String[] priorities = { "Normal" , "Urgent" };
+
+Object whathuh;
+
+class Message
+
+{
+	public Textbox origid;
+	public Datebox date_created;
+	public Textbox msg_from;
+	public Listbox msg_to;
+	public Textbox subject;
+	public Listbox priority;
+	public Textbox messages;
+	
+	public sendmessagesInputBox(Textbox iorigid, Datebox idate_created, Textbox imsg_from, Listbox imsg_to, Textbox isubject, Textbox ipriority, Textbox imessages)
+	{
+		origid = iorigid;
+		date_created = idate_created;
+		msg_from = imsg_from;
+		msg_to = imsg_to;
+		subject = isubject;
+		priority = ipriority;
+		messages = imessages;
+	}
+	
+	void clearDetails()
+	{
+		origid.setValue("");
+		date_created.setValue("");
+		msg_from.setValue("");
+		msg_to.setValue("");
+		subject.setValue("");
+		priority.setValue("");
+		messages.setValue("");
+	}
+	
+	void showDetails()
+	{
+		meid = origid.getValue();
+		iorigid = strip_PrefixID(meid);
+	
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		sqlstatem = "select * from Collab_messages where origid=" + iorigid;
+		therec = sql.rows(sqlstatem);
+		sql.close();
+
+		if(therec == null) return;
+	
+		date_created.setValue(date_created);
+		msg_from.setValue(msg_from);
+		msg_to.setValue(msg_to);
+		subject.setValue(subject);
+		priority.setValue(priority);
+		messages.setValue(messages);
+	}
+	
+	// save whatever in the inputbox back to database
+	void updateDetails()
+	{
+		// nothing to update, return
+		if(origid.getValue().equals("")) return;
+		
+		iorigid = strip_PrefixID(origid.getValue());
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		idate_created = getDateFromDatebox(date_created);
+		imsg_from = replaceSingleQuotes(msg_from.getValue());
+		imsg_to = replaceSingleQuotes(msg_to.getValue());
+		isubject = replaceSingleQuotes(subject.getValue());
+		ipriority = replaceSingleQuotes(priority.getValue());
+		imessages = replaceSingleQuotes(messages.getValue());
+		
+		
+		sqlstatem = "update Collab_messages set subject='" + isubject + "', " +
+			"priority='" + ipriority + "', " +
+			"messages='" + imessages + "', " +
+			"where origid=" + iorigid;
+		
+		sql.execute(sqlstatem);
+		//alert(sqlstatem);
+		sql.close();
+	}
+
+} // end of object boxrentalformInputBox
+
+void createMessages(Datebox date_created)
+{
+	sdate = getDateFromDatebox(date_created); 
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "insert into Collab_messages values ('" + sdate + "', '', '', '', '', '', 0 , 0 , 0 , 0 , '')";
+	sql.execute(sqlstatem);
+	//alert(sqlstatem);
+	sql.close();
+
+} // end of createNewMessages()
+
+// Do the search and populate listbox
+void startUsername_Search()
+{
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstatem = "select username from PortalUser where deleted=0 and locked=0 order by username";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist.size() == 0) return;
+	
+	ArrayList userlist = new ArrayList();
+	
+	for(ilist : tlist)
+	{
+		userlist.add(ilist.get("username"));
+	}
+	
+	strarray = convertArrayListToStringArray(userlist);
+	populateDropdownListbox(msg_to_lb, strarray);
+
+} // end of startUsername_Search()
+
+void playMsgSend()
+{	
+	sdate = getDateFromDatebox(date_created);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	sqlstatem = "insert into Collab_messages values ('" + sdate + "', '', '', '', '', '',  0 , 0 , 0 , 0 , '')";
+	//sql.execute(sqlstatem);
+	alert(sqlstatem);
+	sql.close();		
+}
+	
+]]>
+</zscript>
+
+<window id="collab_messages_win" width="430px" height="350px" title="Messages"
+	position="center" mode="overlapped" border="normal" closable="true" 
+    onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<div id="usernamelb_div" />
+<vbox>
+
+<groupbox id="collab_message">
+	<caption label="Send messages" />
+		<div style="padding:3px">
+					<hbox>
+						<separator width="10px" />
+						<label value="Date :" style="font-size:12px" />
+						<datebox id="date_created" format="yyyy-MM-dd" disabled="true"/>
+
+			<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+			<!-- put in a drop-down to allow search for deleted folders , only admin account can see this one -->
+					</hbox>
+
+						<separator width="8px" />
+					
+					<hbox>
+						<separator width="10px" />
+						<label value="From :" style="font-size:12px" />
+						<textbox id="username_tb" width="200px" disabled="true" />
+					</hbox>
+					
+						<separator width="8px" />
+					
+					<hbox>
+						<separator width="26px" />
+						<label value="To :" style="font-size:12px" />
+						<listbox id="msg_to_lb" mold="select" style="font-size:12px" />
+					
+						<separator width="5px" />
+					
+						<label value="Priority :" style="font-size:12px" />
+						<listbox id="priority_lb" mold="select" style="font-size:12px" />
+						<zscript>
+						populateDropdownListbox(priority_lb,priorities);
+						</zscript>
+					</hbox>
+
+					<separator width="8px" />
+					
+					<hbox>
+						<label value="Subject :" style="font-size:12px" />
+						<textbox id="subject_tb" width="200px" style="font-size:12px" />
+					</hbox>
+					
+					<separator width="8px" />
+					<label value="Message" style="font-size:12px" />
+					<textbox id="messeage_tb" multiline="true" height="80px" width="350px" style="font-size:12px" />
+					
+					<separator height="5px" />
+					<hbox>
+					<button label="Send" style="font-size:12px" onClick="playMsgSend()"/>
+					<button label="Close window" style="font-size:12px" onClick="globalCloseWindow(myincludeid)"/>
+					</hbox>
+		</div>
+	</groupbox>
+</vbox>
+
+</div>
+
+<zscript>
+<![CDATA[
+// Set search startdate and enddate to today's date
+Calendar kkk = Calendar.getInstance();
+setTodayDatebox(date_created);
+setTodayDatebox(hiddendatebox);
+
+username_tb.setValue(useraccessobj.username);
+startUsername_Search();
+
+// startFolderJobsSearch(startdate,enddate,customer_tb);
+
+]]>
+</zscript>
+
+</window>
+</zk>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="request_tracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+VERSION: 1.0
+
+Title: Simple request tracker
+Written by: Victor Wong
+
+**NOTES**
+14/09/2011: start development - simple request tracker to be used by ALSI and ALSM for watever things
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="oldmysoftquotebrowswer" title="Old MySoft Quotations Browser v.1" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+//setTodayDatebox(startdate);
+//setTodayDatebox(enddate);
+
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

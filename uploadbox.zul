@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="uploadbox"?>
+<zk>
+
+<zscript>
+<![CDATA[
+wooly = Executions.getCurrent().getParameter("wooly");
+
+]]>
+</zscript>
+
+<label id="wooley" />
+
+<zscript>
+wooley.setValue("value for wooley=" + wooly);
+</zscript>
+</zk>

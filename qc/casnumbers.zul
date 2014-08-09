@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="cas_ref_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+selected_cas = "";
+global_searchstring = "";
+
+// Hardcoded section for this module - other modules might inject data into different fields
+void showCASDetails(String icasnum, ichemname, ishotname)
+{
+	casrn.setValue(icasnum);
+	chemical_name.setValue(ichemname);
+	short_name.setValue(ishotname);
+}
+
+// onSelect event for showCASMegalist()
+class casmegalistLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_cas = getListcellItemLabel(selitem,0);
+		casnum = getListcellItemLabel(selitem,1);
+		chemname = getListcellItemLabel(selitem,2);
+		shotname = getListcellItemLabel(selitem,3);
+
+		showCASDetails(casnum,chemname,shotname);
+	}
+}
+
+void showCASMegalist(String isearch, Div iwhich)
+{
+	Object[] casmegalist_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("CAS.Number",true),
+	new listboxHeaderObj("Chemical.Name",true),
+	new listboxHeaderObj("Short.Name",true),
+	};
+
+	if(isearch.equals("")) return;
+
+	Listbox newlb = makeVWListbox(iwhich, casmegalist_lb_headers, "casmegalist_lb", 5);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select top 100 * from elb_chemistry_lookup where casrn like '%" + isearch + 
+	"%' or chemical_name like '%" + isearch + "%' or short_name like '%" + isearch + "%' order by chemical_name";
+	casrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(casrecs.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new casmegalistLB_Listener());
+
+	for(dpi : casrecs)
+	{
+		ArrayList scmk = new ArrayList();
+
+		scmk.add(dpi.get("origid").toString());
+		scmk.add(dpi.get("casrn"));
+		scmk.add(dpi.get("chemical_name"));
+		scmk.add(dpi.get("short_name"));
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+void searchCAS_clicker(Textbox thebox, Div theholder)
+{
+	global_searchstring = replaceSingleQuotes(thebox.getValue());
+	if(global_searchstring.equals("")) return;
+	showCASMegalist(global_searchstring, theholder);
+}
+
+void clearInputBoxes()
+{
+	casrn.setValue("");
+	chemical_name.setValue("");
+	short_name.setValue("");
+	selected_cas = "";
+}
+
+void updateCAS_clicker()
+{
+	if(selected_cas.equals("")) return;
+
+	icasnum = replaceSingleQuotes(casrn.getValue());
+	ichemname = replaceSingleQuotes(chemical_name.getValue());
+	ishotname = replaceSingleQuotes(short_name.getValue());
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update elb_chemistry_lookup set casrn='" + icasnum + "',chemical_name='" + ichemname + "',short_name='" + ishotname + "' where origid=" + selected_cas;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showCASMegalist(global_searchstring, casmegalist_holder); // refresh
+	clearInputBoxes();
+}
+
+]]>
+</zscript>
+
+<window id="cas_ref_win" width="750px" height="510px" title="CAS Numbers" position="center" mode="overlapped" border="normal" closable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+<div>
+<groupbox mold="3d">
+	<caption label="Search CAS" />
+	<hbox>
+		<label value="CAS/Chemical.Name" style="font-size:9px" />
+		<separator width="5px" />
+		<textbox id="main_searchstr" width="150px" style="font-size:9px" />
+		<button label="Search" style="font-size:9px" onClick="searchCAS_clicker(main_searchstr,casmegalist_holder)" />
+		<separator width="5px" />
+		<label value="(search max. 100 CAS per click)" style="font-size:9px" />
+	</hbox>
+</groupbox>
+
+<groupbox mold="3d">
+	<caption label="CAS Mega-list" />
+	<div id="casmegalist_holder" />
+</groupbox>
+
+<groupbox mold="3d">
+	<caption label="Workspace" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+			<row>
+				<label value="CAS #" style="font-size:9px" />
+				<textbox id="casrn" width="200px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Chemical.Name" style="font-size:9px" />
+				<textbox id="chemical_name" width="400px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Short.Name" style="font-size:9px" />
+				<hbox>
+					<textbox id="short_name" width="200px" style="font-size:9px" />
+					<button label="Update" style="font-size:9px" onClick="updateCAS_clicker()" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</div>
+</window>
+</zk>

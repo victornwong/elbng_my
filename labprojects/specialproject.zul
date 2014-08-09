@@ -1,0 +1,430 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="project_special_jobs"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title: Special projects handling
+Written by: Victor Wong
+
+**NOTES**
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+global_panelTitle = Executions.getCurrent().getParameter("paneltitle");
+global_arcode = Executions.getCurrent().getParameter("arcode");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+//PROJECT_CLIENT_ARCODE = "300G/351"; // GHD Abu Dhabi
+//PROJECT_CLIENT_ARCODE = "300H/131";
+
+PROJECT_CLIENT_ARCODE = global_arcode;
+
+void localPlayDriller()
+{
+	if(folders_searchdiv.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	selitem = folderjobs_lb.getSelectedItem();
+	ifolderno = getListcellItemLabel(selitem,1);
+	theparam = "folderno=" + ifolderno;
+	uniqwindowid = makeRandomId("xxfoldxx");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// user can view the attached doc in DocumentTable
+void viewDocumentStorage_clicker()
+{
+	if(documents_holder.getFellowIfAny("supportdocs_lb") == null) return;
+	if(supportdocs_lb.getSelectedIndex() == -1) return;
+
+	eorigid = supportdocs_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vdoc");
+	globalActivateWindow("miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+// Show the linking documents - uses DocumentStorage
+void populateSupportingDocuments(String ifolderstr)
+{
+	Object[] suppdocs_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Title",true),
+	new listboxHeaderObj("Description",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Owner",true),
+	};
+
+	// hardcoded with prefix DOCS
+	ifolderstr = "DOCS" + ifolderstr;
+	Listbox newlb = makeVWListbox(documents_holder, suppdocs_lb_headers, "supportdocs_lb", 5);
+
+	ds_sql = als_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,file_description,docu_status,username,datecreated from DocumentTable where docu_link='" + ifolderstr + "'";
+	docsrecs = ds_sql.rows(sqlstm);
+	ds_sql.close();
+
+	if(docsrecs.size() == 0) return;
+
+	newlb.setRows(8);
+
+	for(docitem : docsrecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(docitem.get("origid").toString());
+
+		ftitle = trimListitemLabel(docitem.get("file_title"),15);
+		kabom.add(ftitle);
+
+		fdesc = trimListitemLabel(docitem.get("file_description"),23);
+		kabom.add(fdesc);
+
+		kabom.add(docitem.get("datecreated").toString().substring(0,10));
+		kabom.add(docitem.get("docu_status"));
+		kabom.add(docitem.get("username"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+
+class sampleteststree_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+	theref = event.getReference();
+	wopix = getTreeItemLabel_Column(theref,0);
+	alert(wopix);
+	
+	}
+}
+
+// Chop from folderjobs_driller.zul
+void populateSamplesTestParameters(Tree itree, String ifolderno)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	// get all sample IDs for folderno
+	// 4/3/2010: sql statement for admin login - can see even deleted samples
+
+	sqlstatem = "select * from " + JOBSAMPLES_TABLE + " where jobfolders_id=" + ifolderno + " and deleted=0 order by sampleid_str asc";
+
+	if(useraccessobj.accesslevel > 8)
+		sqlstatem = "select * from " + JOBSAMPLES_TABLE + " where jobfolders_id=" + ifolderno + " order by sampleid_str asc";
+
+	allsampleids = sql.rows(sqlstatem);
+
+	Treechildren tocheck = itree.getTreechildren();
+	if(tocheck != null)	tocheck.setParent(null);
+
+	if(allsampleids != null && allsampleids.size() != 0)
+	{
+		// create a new treechildren for the tree
+		Treechildren mychildren = new Treechildren();
+		mychildren.setParent(itree);
+
+		String[] strarray = new String[2];
+		String[] brancho = new String[2];
+
+		// loop through each sample IDs and get tests
+		for(eachsampleid : allsampleids)
+		{
+			sdelstr = (eachsampleid.get("deleted") == 1) ? " [del]" : "";
+
+			sampleidstr = eachsampleid.get("sampleid_str") + sdelstr;
+			//sampleidstr = padZeros5(eachsampleid.get("origid"));
+			sampleidno = eachsampleid.get("origid");
+			samplemark = eachsampleid.get("samplemarking");
+
+			// if sample id str in table ain't set.. set it. old codes didn't update the sample id str properly
+			if(sampleidstr.equals(""))
+			{
+				sampleidstr = param_folderno + padZeros5(sampleidno); // param_folderno is global, def at top
+
+				// 27/2/2010: update sampleid_str field incase of old codes never do it
+				sqls3 = "update " + JOBSAMPLES_TABLE + " set sampleid_str='" + sampleidstr + "' where origid=" + sampleidno.toString();
+				sql.execute(sqls3);
+			}
+
+			//Treeitem titem = insertTreeLeaf(mychildren, sampleidstr, "font-weight:bold; background:#AACC66; color:#333333");
+			brancho[0] = sampleidstr;
+			brancho[1] = "----Results----";
+			Treeitem titem = insertTreeLeaf_Multi(mychildren, brancho, "font-weight:bold; background:#AACC66; color:#333333");
+
+			// get tests assigned for the sample-id
+			sqlstatem2 = "select jobtestparameters.mysoftcode, stockmasterdetails.description from jobtestparameters " +
+			"left join stockmasterdetails on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+			"where jobtestparameters.jobsamples_id = " + sampleidno.toString();
+
+			teststosampleid = sql.rows(sqlstatem2);
+
+			if(teststosampleid != null)
+			{
+				Treechildren newone = new Treechildren();
+				newone.setParent(titem);
+
+				// insert sample marking as leaf if available
+				if(!samplemark.equals(""))
+					insertTreeLeaf(newone, "SM: " + samplemark, "font-size:9px; background:#4466bb; color:#ffffff");
+
+				// loop through all the tests assigned and put them as leafs
+				for(eacht2s : teststosampleid)
+				{
+					mysoftcode = eacht2s.get("mysoftcode").toString();
+					if(mysoftcode.equals("")) continue;
+
+					testdesc = eacht2s.get("description");
+					testdesc = trimListitemLabel(testdesc,45);
+					strarray[0] = testdesc;
+
+					// get result from Chemistry_Results
+					resrec = getLatestResult(sampleidstr, mysoftcode);
+					finalresult = "WIP";
+
+					if(resrec != null)
+					{
+						finalres = resrec.get("Final");
+						if(finalrec != null)
+						{
+							if(!resrec.get("Final").equals(""))
+							{
+								resunit = resrec.get("Result_Unit");
+								resunit = (resunit == null) ? "" : resunit;
+								finalresult = resrec.get("Final") + " " + resunit;
+							}
+						}
+					}
+
+					strarray[1] = finalresult;
+					insertTreeLeaf_Multi(newone, strarray, "font-size:9px");
+				}
+			}
+		}
+	}
+	sql.close();
+
+} // end of populateSamplesTestParameters()
+
+// onSelect event for makeALSTestParametersListbox()
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		folderorigid = getListcellItemLabel(selitem,0);
+		foldernostr = getListcellItemLabel(selitem,1);
+
+		populateSupportingDocuments(foldernostr);
+
+		// show all samples+tests assigned to folder and update title
+		populateSamplesTestParameters(sampletests_tree,folderorigid);
+		folder_title_lbl.setValue("Folder: " + foldernostr);
+
+		//ifolderno = folderjobs_lb.getSelectedItem().getLabel();
+		//playFolderDriller(ifolderno);
+	}
+}
+
+// Do the search and populate listbox
+void startFolderJobsSearch(Datebox startd, Datebox endd)
+{
+	Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("#Samp",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Stat",true),
+	new listboxHeaderObj("Lab.Stat",true),
+	new listboxHeaderObj("COA.Date",true),
+	};
+
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select origid,datecreated,duedate,folderno_str,folderstatus,labfolderstatus,coadate from JobFolders where ar_code='" + PROJECT_CLIENT_ARCODE + "'" + 
+	" and datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 and folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') " + " order by datecreated desc";
+
+	tlist = sql.rows(sqlstatem);
+
+	sql.close();
+
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	Listbox newlb = makeVWListbox(folders_searchdiv, folders_lb_headers, "folderjobs_lb", 15);
+	newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	if(reccount == 0) return;
+
+	total_numsamples = 0;
+
+	for(ilist : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+
+		forigid = ilist.get("origid");
+		kabom.add(forigid.toString());
+		db_folderno_str = ilist.get("folderno_str");
+		kabom.add(db_folderno_str);
+
+		numsamples = getNumberOfSamples_InFolder(forigid);
+		kabom.add(numsamples.toString());
+
+		kabom.add(ilist.get("datecreated").toString().substring(0,10));
+		kabom.add(ilist.get("duedate").toString().substring(0,10));
+
+		//total_numsamples = total_numsamples + numsamples;
+
+		kabom.add(ilist.get("folderstatus"));
+		kabom.add(ilist.get("labfolderstatus"));
+		
+		coadate = ilist.get("coadate").toString().substring(0,10);
+		coadate = (coadate.equals("1900-01-01")) ? "----------" : coadate;
+		kabom.add(coadate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+	}
+
+		// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+		//numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+
+} // end of startFolderJobsSearch()
+
+// Do EDD file export - for certain client(ASMA), will do direct data exchange instead of output CSV
+void doEDD()
+{
+	alert("programming now..");
+
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="labproj_panel" title="Special Projects" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<groupbox mold="3d">
+	<caption label="Job Folders" />
+	<hbox>
+		<vbox>
+			<hbox>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" />
+				<button label="Search" style="font-size:9px" onClick="startFolderJobsSearch(startdate,enddate)" />
+			</hbox>
+			<div id="folders_searchdiv" width="600px"/>
+			
+			<groupbox mold="3d" id="docu_groupbox">
+				<caption label="Available documents" />
+					<hbox>
+						<button label="View document" style="font-size:9px" onClick="viewDocumentStorage_clicker()" />
+						<button label="Upload to e-RA" style="font-size:9px" />
+					</hbox>
+					<separator height="3px" />
+					<div id="documents_holder" width="590px" />
+			</groupbox>
+		</vbox>
+		<vbox>
+			<hbox>
+				<button label="Release folder" style="font-size:9px" />
+				<button label="Transfer results" style="font-size:9px" />
+				<button label="EDD" style="font-size:9px" onClick="doEDD()" />
+			</hbox>
+			
+			<groupbox mold="3d">
+				<caption label="Folder-Samples-Tests-Results" />
+				<hbox>
+					<vbox>
+						<div style="background:#445555;padding:2px">
+							<label id="folder_title_lbl" style="color:#ffffff" />
+						</div>
+						<separator height="3px" />
+						<tree id="sampletests_tree" zclass="z-dottree" rows="18">
+							<treecols>
+								<treecol label="SampleID/Sample Marking/Tests" />
+							</treecols>
+						</tree>
+					</vbox>
+				</hbox>
+			</groupbox>
+		</vbox>
+	</hbox>
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+// Set search startdate and enddate to today's date
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+sampletests_tree.addEventListener("onSelect", new sampleteststree_Listener());
+
+labproj_panel.setTitle("Special Projects : " + global_panelTitle);
+
+//startFolderJobsSearch(startdate,enddate,customer_tb);
+
+documentLinkProp.document_idprefix = "DOCS";
+//setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

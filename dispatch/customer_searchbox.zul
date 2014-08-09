@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customer_searchbox"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.3";
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+Title: Let user select customer from database - drag+drop possible
+Written by: Victor Wong
+
+**NOTES**
+17/07/2010: Activate bad-account blockade - check out hardcoded_bad_arcode[] and checkCustomerAccountStat(String iarcode)
+15/09/2010: added check on customer.credit_period to filter out BLACKLISTED customer - checkCustomerAccountStat()
+02/04/2012: optimize and port to byte-compl
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+global_selected_arcode = "";
+
+/*
+17/7/2010: this list will subject to be reviewed every month for accuracy.
+17/7/2010: 310H/028 - Puteri Specialist Hospital - account cleared, 
+			client request to charge to 310H/059 Hospital Pakar Puteri instead - req by MsWong JB
+16/8/2010: requested by Zack to block MULTI HERBS PHARMACEUTICAL (M) SDN BHD = 300M/033
+*/
+
+String[] hardcoded_bad_arcode = { "310H/028", "300M/033" };
+
+// 17/7/2010: To be able check customer account status, good, bad, evil
+boolean checkCustomerAccountStat(String iarcode)
+{
+	retval = false;
+	whop = iarcode.toUpperCase();
+	
+	// 17/7/2010: hardcoded blocked ar_code
+	/*
+	for(i=0; i<hardcoded_bad_arcode.length; i++)
+	{
+		if(hardcoded_bad_arcode[i].equals(whop))
+		{
+			retval = false;
+			break;
+		}
+	}
+	*/
+
+	comprec = sqlhand.getCompanyRecord(whop);
+	if(comprec != null)
+	{
+		// 15/9/2010: check for black-listed
+		credit_period = comprec.get("credit_period");
+		if(credit_period != null)
+		{
+			if(credit_period.equals("BLACKLIST")) retval = true;
+		}
+	}
+
+	return retval;
+}
+
+class CustomerLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = customers_lb.getSelectedItem().getLabel();
+		comprec = sqlhand.getCompanyRecord(irecno);
+		if(comprec == null) return;
+
+		// populate the company details groupbox with the record
+		customerdet_caption.setLabel(kiboo.checkNullString(comprec.get("customer_name")));
+		addr1.setValue(kiboo.checkNullString(comprec.get("address1")));
+		addr2.setValue(kiboo.checkNullString(comprec.get("address2")));
+		addr3.setValue(kiboo.checkNullString(comprec.get("address3")));
+		contact.setValue("Contact: " + kiboo.checkNullString(comprec.get("contact_person1")));
+		phone.setValue("Phone: " + kiboo.checkNullString(comprec.get("telephone_no")));
+		fax.setValue("Fax: " + kiboo.checkNullString(comprec.get("fax_no")));
+		salesman_code.setValue("Salesman: " + kiboo.checkNullString(comprec.get("Salesman_code")));
+		emailaddress.setValue("E-Mail: " + kiboo.checkNullString(comprec.get("E_mail")));
+	}
+}
+
+// Do the search and populate listbox
+void startCustomerSearch(Textbox icustomercode, Textbox icustomername, Textbox icustomeraddress)
+{
+Object[] customers_lb_headers = {
+	new listboxHeaderObj("AR_CODE",true),
+	new listboxHeaderObj("Customer",true),
+	};
+
+	ccode = kiboo.replaceSingleQuotes(icustomercode.getValue());
+	cname = kiboo.replaceSingleQuotes(icustomername.getValue());
+	caddr = kiboo.replaceSingleQuotes(icustomeraddress.getValue());
+
+	// nothing to search, don't waste time, return
+	if(ccode.equals("") && cname.equals("") && caddr.equals("")) return;
+
+	ccodestr = "";
+	if(!ccode.equals("")) ccodestr = "ar_code like '%" + ccode + "%' ";
+
+	cnamestr = "";
+	if(!cname.equals("")) cnamestr = "customer_name like '%" + cname + "%' ";
+
+	caddrstr = "";
+	if(!caddr.equals("")) caddrstr = "(address1 like '%" + caddr + "%' or address2 like '%" + caddr + "%' or address3 like '%" + caddr + "%') ";
+
+    sqlstatem = "select top 100 ar_code,customer_name from customer where " +
+	ccodestr + (ccodestr.equals("") ? "" : (cnamestr.equals("") ? "" : "and ")) +
+	cnamestr + (cnamestr.equals("") ? "" : (caddrstr.equals("") ? "" : "and ")) +
+	caddrstr +
+	"order by ar_code,customer_name";
+
+	tlist = sqlhand.gpSqlGetRows(sqlstatem);
+	if(tlist.size() == 0) return;
+
+	Listbox newlb = lbhand.makeVWListbox(searchdiv, customers_lb_headers, "customers_lb", 16);
+	newlb.addEventListener("onSelect", new CustomerLB_Listener());
+
+	for(dpi : tlist)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("ar_code"));
+		kabom.add(dpi.get("customer_name"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"","");
+	}
+
+} // end of startCustomerSearch()
+
+void printCitylinkLabel_clicker()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(searchdiv,"customers_lb")) return;
+	global_selected_arcode = customers_lb.getSelectedItem().getLabel();
+	contstr = contact.getValue().substring(9);
+	citylink_attn_tb.setValue(contstr);
+	citylinkinfo_popup.open(citylink_btn);
+}
+
+void generalFunc(Object iwhat)
+{
+	itype = iwhat.getId();
+
+	runfn = "";
+	theparam = "";
+
+	if(itype.equals("poslaju_btn"))
+	{
+		if(!lbhand.check_ListboxExist_SelectItem(searchdiv,"customers_lb")) return;
+		global_selected_arcode = customers_lb.getSelectedItem().getLabel();
+		theparam = "arcode=" + global_selected_arcode;
+		runfn = "dispatch/print_poslajulabel.zul";
+	}
+
+	if(itype.equals("rprint_citylink"))
+	{
+		if(global_selected_arcode.equals("")) return;
+		theparam = "arcode=" + global_selected_arcode + "&donum=" + citylink_do_tb.getValue() + "&attn=" + citylink_attn_tb.getValue();
+		runfn = "dispatch/print_poslajulabel.zul";
+	}
+
+	if(itype.equals("addresslabel_btn"))
+	{
+		if(!lbhand.check_ListboxExist_SelectItem(searchdiv,"customers_lb")) return;
+		ar_code = customers_lb.getSelectedItem().getLabel();
+		theparam = "arcode=" + ar_code;
+		runfn = "dispatch/print_addresslabel.zul";
+	}
+
+	if(!runfn.equals(""))
+	{
+		rndid = kiboo.makeRandomId("xje");
+		guihand.globalActivateWindow(mainPlayground,"miscwindows",runfn, rndid, theparam, useraccessobj);
+	}
+
+}
+
+]]>
+</zscript>
+
+<popup id="citylinkinfo_popup">
+<groupbox style="padding:5px">
+	<caption label="Citylink Airway-Bill" />
+	<vbox>
+		<hbox>
+			<label value="Attention" style="font-size:9px" />
+			<textbox id="citylink_attn_tb" style="font-size:9px" width="180px" />
+		</hbox>
+		<hbox>
+			<label value="DO Number" style="font-size:9px" />
+			<textbox id="citylink_do_tb" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<button id="rprint_citylink" label="Print" style="font-size:9px" onClick="generalFunc(self)" />
+			<button label="Close" style="font-size:9px" onClick="citylinkinfo_popup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+
+<!-- start of main Div -->
+<div>
+<vbox>
+<groupbox mold="3d">
+<grid>
+	<rows>
+		<row>
+			<label value="Customer name" style="font-size:9px" />
+			<textbox id="customername" style="font-size:9px" />
+			<label value="AR Code" style="font-size:9px" />
+			<textbox id="customercode" style="font-size:9px" />
+		</row>
+		<row spans="1,1,2">
+			<label value="Address" style="font-size:9px" />
+			<textbox id="customeraddress" style="font-size:9px" />
+			<button label="Search" style="font-size:9px" onClick="startCustomerSearch(customercode,customername,customeraddress)" />
+		</row>
+	</rows>
+</grid>
+</groupbox>
+
+<!-- search results box -->
+<groupbox mold="3d">
+	<div id="searchdiv" />
+</groupbox>
+
+<!-- customer's details -->
+<groupbox id="customerdet_groupbox">
+	<caption id="customerdet_caption" />
+	<grid>
+		<rows>
+			<row spans="2">
+				<label id="addr1" value="Address1" style="font-size:9px;font-style:italic" />	
+			</row>
+			<row spans="2">
+				<label id="addr2" value="Address2" style="font-size:9px;font-style:italic" />	
+			</row>
+			<row spans="2">
+				<label id="addr3" value="Address3" style="font-size:9px;font-style:italic" />
+			</row>
+			<row>
+				<label id="contact" value="Contact:" style="font-size:9px;font-weight:bold" />
+				<label id="salesman_code" value="Salesman" style="font-size:9px;font-weight:bold" />
+			</row>
+			<row>
+				<label id="phone" value="Phone:" style="font-size:9px" />
+				<label id="fax" value="Fax:" style="font-size:9px" />
+			</row>
+			<row spans="2">
+				<label id="emailaddress" value="E-Mail:" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+
+<hbox>
+	<button id="poslaju_btn" label="Print POSLAJU form" style="font-size:9px" onClick="generalFunc(self)" />
+	<button id="addresslabel_btn" label="Print stickor" style="font-size:9px" onClick="generalFunc(self)" />
+	<button id="citylink_btn" label="Print Citylink-stickor" style="font-size:9px" onClick="printCitylinkLabel_clicker()" />
+</hbox>
+
+</vbox>
+</div>
+<!-- end of main Div -->
+</zk>
+

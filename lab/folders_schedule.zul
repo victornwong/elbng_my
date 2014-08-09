@@ -1,0 +1,442 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="folder_schedule_fun"?>
+<!--
+
+Version				: Show folder/jobs due-date schedule
+Coding began date	:
+Developers			: Victor
+
+**NOTES**
+
+7/3/2010: Will use tabs instead of timeline - must check on how to set timeline to display smaller fonts
+			then can use timeline to display the schedule
+-->
+
+<zk>
+
+<style>
+tr.myodd td.z-row-inner, tr.myodd {
+	background-color: #E4EBF8;
+}
+.myimg {
+	margin: 5px; border: 1px solid #B0C75E;
+}
+div.z-column-cnt {
+	text-align: center; font-weight: bold;
+}
+div.z-row-cnt span {
+	font-family: Tahoma,Arial,serif;
+	color: #0E3A99;
+}
+</style>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Change this accordingly when deploying to production folder
+// DATAFILE_PATH = "webapps/als/data/";
+DATAFILE_PATH = "webapps/als/data/";
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+// Refresh folders schedule and create the proper timeline XML file
+/*
+Calendar cal = Calendar.getInstance(); 
+System.out.println("Today : " + cal.getTime()); 
+
+// Substract 30 days from the calendar 
+cal.add(Calendar.DATE, -30); 
+System.out.println("30 days ago: " + cal.getTime()); 
+
+// Add 10 months to the calendar 
+cal.add(Calendar.MONTH, 10); 
+System.out.println("10 months later: " + cal.getTime()); 
+
+// Substract 1 year from the calendar 
+cal.add(Calendar.YEAR, -1) 
+System.out.println("1 year ago: " + cal.getTime());
+
+*/
+	
+/*
+<data>
+    <event start="Oct 1 2006 00:00:00 GMT" 
+        end="Oct 1 2006 00:00:00 GMT"
+        title="Moving into new hospital">
+        We're moving into the new office block. Lots of things to unpack.
+    </event>
+	
+	<event start="Oct 5 2006 06:12:33 GMT"
+		end="Oct 10 2006 00:00:00 GMT"
+		isDuration="true"
+        title="Man woke up">
+        Luckily he's given antidote in time. He's awake now.
+    </event>
+	
+</data>
+
+*/
+void dumpTimeline_XML(Object irecs)
+{
+	//File file = new File(DATAFILE_PATH + "schedule_folders.xml");
+	File file = new File("schedule_folders.xml");
+    output = new BufferedWriter(new FileWriter(file));
+	
+	output.write("<data>\n");
+	
+	for(onerec:irecs)
+	{
+		Calendar cal = Calendar.getInstance();
+		
+		cal.setTime(onerec.get("datecreated"));
+		datecreated = cal.getTime();
+		
+		cal.setTime(onerec.get("duedate"));
+		duedate = cal.getTime();
+		
+			/*
+		datecreated = onerec.get("datecreated");
+		duedate = 
+		*/
+		
+		folderno_str = onerec.get("folderno_str");
+		
+		output.write("<event \n");
+		output.write("start=\"" + datecreated + "\"\n");
+		output.write("end=\"" + duedate + "\"\n");
+		output.write("isDuration=\"true\"\n");
+		output.write("title=\"" + folderno_str + "\" >\n");
+		output.write("tik tok tik tok...\n");
+		output.write("</event>\n");
+		
+	}
+	
+	// output.write("tik tik tik tik tokkkkk..");
+
+	output.write("</data>\n");
+	
+	output.close();
+
+} // end of dumpTimeline_XML()
+
+void refreshFolders_Timeline()
+{
+	// lets make some dates , 1 week before/after current date
+	/*
+	Calendar todayDate = Calendar.getInstance();
+	todayDate.setTime(currentDate);
+	
+	todayDate.add(Calendar.DATE,-7);
+    lw = sdf.format(todayDate.getTime());
+	
+	todayDate.add(Calendar.DATE,37);
+	nw = sdf.format(todayDate.getTime());
+
+	// read folders records
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	// sqlstatem = "select * from JobFolders where deleted=0 and duedate between '" + lw + "' and '" + nw + "' and folderstatus='" + FOLDERCOMMITED + "' order by origid";
+	sqlstatem = "select * from JobFolders where deleted=0 and duedate between '" + lw + "' and '" + nw + "' order by origid";
+	therows = sql.rows(sqlstatem);
+	sql.close();
+
+	if(therows == null) return;
+
+	// lets do the XML dump..
+	dumpTimeline_XML(therows);
+	
+	// now refresh the timeline
+
+	band1.setEventSourceUrl("data/schedule_folders.xml");
+	folders_timeline.invalidate();
+	*/
+
+} // end of refreshFolders_Timeline()
+
+void showmeparent(Component icompo)
+{
+	alert("parent=" + icompo.getParent().getId());
+}
+
+// this onSelect event listener belongs to makeGridDetails_Listbox
+// will get the sample-id and activate window to show test-parameters, results, runs and so on
+class sampleidlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbid = event.getReference();
+		isampid = lbid.getLabel();
+		
+		// alert(isampid);
+		
+/*		
+		theparam = "folderno=" + ifolderno;
+		uniqwindowid = makeRandomId("xxfoldxx");
+
+		globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+		*/
+	}
+}
+
+Listbox makeGridDetails_Listbox(Detail mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	/*
+	Listbox oldlb = mDiv.getFellowIfAny("samples_lb");
+	if(oldlb != null) oldlb.setParent(null);
+	*/
+
+    Listbox newlb = new Listbox();
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new sampleidlb_Listener());
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Sample marking");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    Listheader hd5 = new Listheader();
+    hd5.setLabel("Notes");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+	/*
+	
+    Listheader hd6 = new Listheader();
+    hd6.setLabel("Result");
+    hd6.setSort("auto");
+    hd6.setParent(newhead);
+	*/
+
+    newlb.setRows(5);
+
+    return newlb;
+
+} // end of makeGridDetails_Listbox()
+
+void updateGridRowDetails(Detail idetail, int ifolder_id)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	// get all sample-ids for the folder
+	
+	sqlstatem = "select sampleid_str,samplemarking,extranotes from JobSamples where jobfolders_id=" + ifolder_id + " and deleted=0 order by sampleid_str asc";
+	allsampleids = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(allsampleids != null)
+	{
+		det_lb = makeGridDetails_Listbox(idetail);
+		String[] strarray = new String[3];
+		
+		for(isampid : allsampleids)
+		{
+			strarray[0] = isampid.get("sampleid_str");
+			strarray[1] = isampid.get("samplemarking");
+			strarray[2] = isampid.get("extranotes");
+		
+			insertListItems(det_lb,strarray,"false");
+		}
+	}
+
+}
+
+int updateGridRow(Rows iparentrow, String isearchdate)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	// find all folders based on isearchdate
+	sqlstatem = "select * from JobFolders where deleted=0 and folderstatus in ('" + FOLDERLOGGED +"','" + FOLDERCOMMITED + "') " +
+		isearchdate + " order by origid";
+
+	foldrecs = sql.rows(sqlstatem);
+	sql.close();
+	
+	retrec = 0;
+	
+	if(foldrecs != null)
+	{
+		retrec = foldrecs.size();
+		
+		for(ifoldrec : foldrecs)
+		{
+			ifoldstr = ifoldrec.get("folderno_str");
+			ifoldorigid = ifoldrec.get("origid");
+			ifoldar_code = ifoldrec.get("ar_code");
+
+			// create a new Row
+			Row newrow = new Row();
+
+			Detail thedetails = new Detail();
+			updateGridRowDetails(thedetails,ifoldorigid);
+			
+			thedetails.setParent(newrow);
+			
+			// show folder no.
+			Label lbl_foldno = new Label();
+			lbl_foldno.setValue(ifoldstr);
+			lbl_foldno.setParent(newrow);
+			
+			// show duedate
+			Label lbl_duedate = new Label();
+			dued_str = ifoldrec.get("duedate").toString().substring(0,10);
+			//dued_str = dued_str.substring(0,10);
+			lbl_duedate.setValue(dued_str);
+			lbl_duedate.setParent(newrow);
+			
+			// show number of samples
+			numsamps = getNumberOfSamples_InFolder(ifoldorigid);
+			Label lbl_numsamp = new Label();
+			
+			lbl_numsamp.setValue(numsamps.toString());
+			lbl_numsamp.setParent(newrow);
+			
+			// show customer name
+			Label lbl_custname = new Label();
+			custname = getCompanyName(ifoldar_code);
+			
+			lbl_custname.setValue(custname);
+			lbl_custname.setParent(newrow);
+			
+			newrow.setParent(iparentrow);
+		}
+	}
+	
+	return retrec;
+}
+
+String showDateInGroupLabel(String prestr, int numdays)
+{
+	datess = getDateString(todayDate,sdf,numdays);
+	return prestr + " : " + datess;
+}
+
+]]>
+</zscript>
+
+<div width="990px">
+<panel id="folderjobs_schedulepanel" title="Folders/Jobs Schedule" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<!-- starts of folders schedule -->
+
+<grid fixedLayout="true" width="980px" oddRowSclass="myodd">
+	<columns>
+		<column width="30px" />
+		<column width="100px" label="Folder No."/>
+		<column width="100px" label="Due date" />
+		<column width="100px" label="Samples"/>
+		<column label="Customer"/>
+	</columns>
+
+	<rows id="maingridrows">
+		<!-- start of overdue folders -->
+		<group id="od_grouplabel" label="OVERDUES" />
+
+		<zscript>
+			// our system go online 2010-03-01 .. search between startdate and todaydate-1
+			tdatestr = getDateString(todayDate,sdf,-1);
+			sestr = "and duedate between '2010-03-01' and '" + tdatestr + "'";
+			
+			numr = updateGridRow(maingridrows,sestr);
+			
+			od_grouplabel.setLabel("OVERDUES : Number of folders = " + numr);
+
+		</zscript>
+		
+		<!-- end of overdue folders -->
+
+		<!-- start of today folders -->
+		<group id="grouplabel_today"/>
+		<zscript>
+			toda = getDateString(todayDate,sdf,0);
+			sestr = "and duedate='" + toda + "'";
+			numr = updateGridRow(maingridrows,sestr);
+
+			glbl = showDateInGroupLabel("Todays",0) + " : Number of folders = " + numr;
+			grouplabel_today.setLabel(glbl);
+
+		</zscript>
+		<!-- end of today folders -->
+		
+		<!-- start of tomorrow folders -->
+		<group id="grouplabel_tomorrow"/>
+		<zscript>
+			tomo = getDateString(todayDate,sdf,1);
+			sestr = "and duedate='" + tomo + "'";
+			numr = updateGridRow(maingridrows,sestr);
+
+			glbl = showDateInGroupLabel("Tomorrow",1) + " : Number of folders = " + numr;
+			grouplabel_tomorrow.setLabel(glbl);
+
+		</zscript>
+		<!-- end of tomorrow folders -->
+		
+		<!-- start of day after tomorrow -->
+		<group id="grouplabel_dayaftertomorrow"/>
+		<zscript>
+			tomo = getDateString(todayDate,sdf,2);
+			sestr = "and duedate='" + tomo + "'";
+			numr = updateGridRow(maingridrows,sestr);
+
+			glbl = showDateInGroupLabel("Day after tomorrow",2) + " : Number of folders = " + numr;
+			grouplabel_dayaftertomorrow.setLabel(glbl);
+		</zscript>
+		<!-- end of day after tomorrow -->
+		
+	</rows>
+</grid>
+<!-- end of folders schedule -->
+
+</div>
+
+</panelchildren>
+</panel>
+
+</div>
+
+</zk>
+

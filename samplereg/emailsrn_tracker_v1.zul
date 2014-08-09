@@ -1,0 +1,778 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="emailsrctracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title		: E-mail SRN to client tracker
+Written by	: Victor Wong
+
+Revisions:
+
+11/01/2012: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.awt.Color;
+import java.io.FileOutputStream;
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.pdf.PdfWriter;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+last_foldersearch_type = 0;
+selected_folderorigid = "";
+selected_folderno = "";
+selected_client = "";
+global_labfolderstatus = "";
+global_pdf_fname = "";
+
+Object[] folders_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("arcode",false),
+	new listboxHeaderObj("Folder",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Brnh",true),
+	new listboxHeaderObj("Email.By",true),
+	new listboxHeaderObj("Email.To",true),
+	new listboxHeaderObj("Email.Date",true),
+	};
+
+class folderjobslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_folderorigid = getListcellItemLabel(selitem,0);
+		selected_folderno = getListcellItemLabel(selitem,2);
+		selected_client = getListcellItemLabel(selitem,4);
+
+		foldertitle.setValue(selected_folderno + " :: " + selected_client);
+	}
+}
+
+// itype: 1=by date, 2=by customer-name and selected date, 3=by folder, 4=by sampleid
+void listFolders(int itype)
+{
+	// reset vars
+	selected_folderorigid = "";
+	selected_folderno = "";
+	selected_client = "";
+	foldertitle.setValue("");
+
+	sdate = getDateFromDatebox(startdate);
+	edate = getDateFromDatebox(enddate);
+	searchtext = replaceSingleQuotes(customer_tb.getValue());
+	foldnum = replaceSingleQuotes(folderno_tb.getValue());
+	sampid = replaceSingleQuotes(sampleid_tb.getValue());
+	last_foldersearch_type = itype;
+
+	if(itype==3 && foldnum.equals("")) return;
+	if(itype==4 && sampid.equals("")) return;
+	
+	// header query
+	sqlstm = 
+	"select top 200 jf.origid, jf.datecreated, jf.folderno_str, jf.branch, jf.ar_code, " +
+	"jf.srnemailby, jf.srnemailto, jf.srnemaildate, " +
+	"customer.customer_name, csci.customer_name as cashcustomer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid ";
+
+	switch(itype)
+	{
+		case 1:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + "'";
+			break;
+			
+		case 2:
+			sqlstm += "where jf.datecreated between '" + sdate + "' and '" + edate + "' and customer.customer_name like '%" + searchtext + "%'";
+			break;
+			
+		case 3:
+			sqlstm += "where jf.folderno_str like '%" + foldnum + "%'";
+			break;
+			
+		case 4:
+			sqlstm += "where js.origid=" + sampid;
+			break;
+	}
+
+	// footer query	
+	sqlstm += " and js.deleted=0 and jf.deleted=0 and jf.folderstatus='COMMITED' " + 
+	"group by jf.origid, jf.datecreated, jf.folderno_str, jf.branch,jf.ar_code, " +
+	"jf.srnemailby, jf.srnemailto, jf.srnemaildate, " +
+	"customer.customer_name, csci.customer_name order by jf.origid";
+
+	Listbox newlb = makeVWListbox(folders_holder, folders_lb_headers, "folderjobs_lb", 5);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	therows = sql.rows(sqlstm);
+	sql.close();
+
+	if(therows.size() == 0) return;
+	if(therows.size() > 5) newlb.setRows(20);
+
+	newlb.addEventListener("onSelect", new folderjobslb_Listener());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+
+		kabom.add(dpi.get("folderno_str"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		//kabom.add(dpi.get("duedate").toString().substring(0,10));
+
+		iar_code = dpi.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = dpi.get("customer_name");
+
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+		{
+			csnam = dpi.get("cashcustomer");
+			if(csnam != null) icompanyname = csnam;
+		}
+
+		if(icompanyname == null) icompanyname = "Undefined";
+
+		kabom.add(icompanyname);
+
+		kabom.add(dpi.get("branch"));
+		
+		kabom.add(checkNullString(dpi.get("srnemailby")));
+		kabom.add(checkNullString(dpi.get("srnemailto")));
+		
+		semd = (dpi.get("srnemaildate") == null) ? "" : dpi.get("srnemaildate").toString().substring(0,10);
+		kabom.add(semd);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,JOBFOLDERS_PREFIX);
+	}
+
+	workdiv.setVisible(true);
+	newlb.invalidate();
+}
+
+int sendemailwithLogo_HTML(String ismtpserver, String ifrom, String ito, String isubj, String imessage)
+{
+	retval = 0;
+
+	Properties props = new Properties();
+	props.put("mail.smtp.host", ismtpserver);
+	props.put("mail.from", ifrom);
+	javax.mail.Session mailsession = javax.mail.Session.getInstance(props, null);
+
+	try
+	{
+        MimeMessage msg = new MimeMessage(mailsession);
+        msg.setFrom();
+        msg.setRecipients(Message.RecipientType.TO,ito);
+		msg.setSubject(isubj);
+		msg.setSentDate(new Date());
+		
+		MimeMultipart multipart = new MimeMultipart("related");
+
+    // first part (the html)
+    BodyPart messageBodyPart = new MimeBodyPart();
+
+    String htmlText = "<table><tr><td><img src=\"cid:thelogo\"></td>" + 
+    "<td>ALS | Malaysia - Indonesia<br>9 Jalan Astaka U8/84, Bukit Jelutong, 40150 Shah Alam, Selangor<br>" +
+	"PHONE +60 3 7845 8257 FAX +60 3 7845 8258 EMAIL info@alsglobal.com.my<br>" +
+	"WEB http://www.alsglobal.com" +
+	"</td></tr></table>";
+
+    messageBodyPart.setContent(htmlText, "text/html");
+
+    // add it
+    multipart.addBodyPart(messageBodyPart);
+
+    // second part (the image)
+    messageBodyPart = new MimeBodyPart();
+    thfn = session.getWebApp().getRealPath("img/alstechnichemlogo.jpg");
+    javax.activation.DataSource fds = new FileDataSource(thfn);
+
+    messageBodyPart.setDataHandler(new DataHandler(fds));
+    messageBodyPart.addHeader("Content-ID","<thelogo>");
+
+    // add it
+    multipart.addBodyPart(messageBodyPart);
+
+		msg.setContent(multipart);
+
+		Transport.send(msg);
+
+	} catch (MessagingException mex)
+	{
+		retval = 1;
+		//System.out.println("send failed, exception: " + mex);
+	}
+	
+	return retval;
+}
+
+// send SRN by email again!!! hahaha.. this time, generate PDF using itext and send
+// also CC to pre-def persons
+void sendemailSRN_again()
+{
+	if(selected_folderorigid.equals("")) return;
+
+	cliemail = clientemailaddress_tb.getValue();
+	//if(cliemail.equals("")) return;
+
+	todate = getDateFromDatebox(hiddendatebox);
+
+	// update send SRN records - who send, to-email, send-date
+	sqlstm = "update jobfolders set srnemailby='" + useraccessobj.username + "', srnemailto='" + replaceSingleQuotes(cliemail) + "'," +
+	"srnemaildate='" + todate + "' where origid=" + selected_folderorigid;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+
+	sql.close();
+
+	genSRA_PDF();
+	return;
+
+	subjstr = "[SRN] " + selected_folderno;
+	msgtxt =  "<p>Job/Folder No.: " + selected_folderno + "</p>";
+	msgtxt += "<table border=1><tr><td>testing</td><td>testing222</td></tr></table>";
+	msgtxt += "<p>Please contact our customer service or sales person if you have any enquiries.<br><br>";
+	msgtxt += "ALS | Malaysia - Indonesia<br>9 Jalan Astaka U8/84, Bukit Jelutong<br>40150 Shah Alam, Selangor<br>";
+	msgtxt += "PHONE +60 3 7845 8257<br>FAX +60 3 7845 8258<br>EMAIL info@alsglobal.com.my<br>";
+	msgtxt += "WEB http://www.alsglobal.com<br><br>-Please consider the environment before printing this email-</p>";
+
+	//sendemailwithLogo_HTML(SMTP_SERVER,"elabman@alsglobal.com.my","it@alsglobal.com.my",subjstr,msgtxt);
+
+	showMessageBox("SRN sent..");
+
+	listFolders(last_foldersearch_type); // refresh
+}
+
+// admin only..
+void adminClearRec()
+{
+	if(selected_folderorigid.equals("")) return;
+
+	sqlstm = "update jobfolders set srnemailby=null, srnemailto=null, srnemaildate=null where origid=" + selected_folderorigid;
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listFolders(last_foldersearch_type); // refresh
+}
+
+// Func: iText stuff to generate Barcode39 - ripped from some example-codes
+Object pdfMakeBarcode39(PdfWriter thewriter, String ithecode, String ialttext)
+{
+	if(ialttext.equals("")) ialttext = ithecode;
+	
+	PdfContentByte cb = thewriter.getDirectContent();
+	Barcode39 code39 = new Barcode39();
+	//codeEAN.setCodeType(com.lowagie.text.pdf.Barcode39.EAN13);
+	code39.setCode(ithecode);
+	code39.setAltText(ialttext);
+	com.lowagie.text.Image image39 = code39.createImageWithBarcode(cb, null, null);
+	PdfPCell bcodecell = new PdfPCell(image39,false);
+	return bcodecell;
+}
+
+// very customized SRA generator for ALS ONLY! - iText stuff ripped from examples
+void genSRA_PDF()
+{
+	if(selected_folderno.equals("")) return;
+
+	global_pdf_fname = session.getWebApp().getRealPath("tmp/" + selected_folderno + "_SRA.pdf");
+
+	Document document = new Document(PageSize.A4, 20, 20, 20, 20);
+	PdfWriter writer = PdfWriter.getInstance(document,new FileOutputStream(global_pdf_fname));
+
+	document.open();
+
+	// page-header table with logo and shit
+	PdfPTable pageheader_table = new PdfPTable(2);
+	pageheader_table.setWidthPercentage(100);
+	
+	float[] colwidths = {15,100};
+	pageheader_table.setWidths(colwidths);
+
+	PdfPCell defaultCell = pageheader_table.getDefaultCell();
+	defaultCell.setBorder(PdfPCell.NO_BORDER);
+
+	com.lowagie.text.Image logoimg = com.lowagie.text.Image.getInstance(session.getWebApp().getRealPath("img/alssmalllogo.jpg"));
+	PdfPCell cell1 = new PdfPCell(logoimg, false);
+	cell1.setBorder(PdfPCell.NO_BORDER);
+
+	pageheader_table.addCell(cell1);
+
+	// Address sub-tab
+	PdfPTable addr_tab = new PdfPTable(1);
+	PdfPCell dCell = addr_tab.getDefaultCell();
+	dCell.setBorder(PdfPCell.NO_BORDER);
+
+	addr_tab.addCell(new Paragraph("ALS Technichem (M) Sdn Bhd (117964-P)"));
+	addr_tab.addCell(new Paragraph("9 Jalan Astaka U8/84, Bukit Jelutong, 40150 Shah Alam, Selangor"));
+	addr_tab.addCell(new Paragraph("Phone: 03 7845 8257 Fax: 03 7845 8258"));
+
+	pageheader_table.addCell(addr_tab);
+
+	document.add(pageheader_table);
+
+	// SRA title bar
+	PdfPTable title_tab = new PdfPTable(1);
+	title_tab.setSpacingBefore(15);
+	title_tab.setWidthPercentage(100);
+
+	PdfPCell titcell = new PdfPCell(new Paragraph("SAMPLE RECEIPT ADVICE",
+		FontFactory.getFont(FontFactory.HELVETICA,16,Font.BOLD,new Color(0,0,0))));
+
+	titcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	titcell.setPadding(5);
+	title_tab.addCell(titcell);
+
+	document.add(title_tab);
+
+	// customer details tab
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select jf.ar_code,jf.datecreated,jf.attention,jf.temperature,jf.deliverymode,jf.customerpo,jf.customercoc," +
+	"jf.paperworknot,jf.paperworksamplesnot,jf.allgoodorder,jf.samplesdamaged,jf.extranotes,jf.quotation_no,jf.srnemailto," +
+	"(select count(js.origid) from jobsamples js where js.jobfolders_id = jf.origid and js.deleted=0) as sampcount, " +
+	"cmd.customer_name, cmd.telephone_no, cmd.fax_no," +
+	"csci.customer_name as csci_cust, csci.contact_person1,csci.telephone as cscitel, csci.fax as cscifax " +
+	"from jobfolders jf " +
+	"left join customer cmd on cmd.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.origid = " + selected_folderorigid;
+	fodet = sql.firstRow(sqlstm);
+	sql.close();
+
+	iar_code = fodet.get("ar_code");
+	iar_code = iar_code.toUpperCase().trim();
+
+	PdfPTable cust_tab = new PdfPTable(4);
+	cust_tab.setWidthPercentage(100);
+	cust_tab.setSpacingBefore(20);
+
+	float[] colwidths = {25,70,20,50};
+	cust_tab.setWidths(colwidths);
+
+	PdfPCell fillcell = new PdfPCell();
+	fillcell.setColspan(2);
+	cust_tab.addCell(fillcell);
+	
+	cust_tab.addCell(new Paragraph("Our Ref"));
+	cust_tab.addCell(new Paragraph(selected_folderno));
+	
+	cust_tab.addCell(new Paragraph("ATTENTION"));
+	
+	attn = fodet.get("attention");
+	if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550")) attn = fodet.get("contact_person1");
+	cust_tab.addCell(new Paragraph(attn));
+
+	cust_tab.addCell(new Paragraph("DATE"));
+	cust_tab.addCell(new Paragraph(fodet.get("datecreated").toString().substring(0,10)));
+
+	cust_tab.addCell(new Paragraph("COMPANY"));
+
+	icompanyname = "";
+
+	if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550"))
+		icompanyname += (fodet.get("csci_cust") != null) ? fodet.get("csci_cust") : "UNKNOWN";
+	else
+		icompanyname = checkNullString_RetWat(fodet.get("customer_name"),"Undefined");
+
+	PdfPCell copcell = new PdfPCell(new Paragraph(icompanyname));
+	copcell.setColspan(3);
+	cust_tab.addCell(copcell);
+
+	itelno = fodet.get("telephone_no");
+	ifaxno = fodet.get("fax_no");
+
+	cust_tab.addCell(new Paragraph("Email"));
+	PdfPCell emcell = new PdfPCell(new Paragraph(checkNullString(fodet.get("srnemailto"))));
+	emcell.setColspan(3);
+	cust_tab.addCell(emcell);
+
+	if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550"))
+	{
+		itelno = fodet.get("cscitel");
+		ifaxno = fodet.get("cscifax");
+	}
+	
+	cust_tab.addCell(new Paragraph("TEL"));
+	cust_tab.addCell(new Paragraph(itelno));
+	cust_tab.addCell(new Paragraph("Quote#"));
+	cust_tab.addCell(new Paragraph(checkNullString(fodet.get("quotation_no"))));
+	
+	cust_tab.addCell(new Paragraph("FAX"));
+	cust_tab.addCell(new Paragraph(ifaxno));
+	cust_tab.addCell(new Paragraph("Your PO"));
+	cust_tab.addCell(new Paragraph(checkNullString(fodet.get("customerpo"))));
+
+	document.add(cust_tab);
+	
+	// delivery tab
+	PdfPTable del_tab = new PdfPTable(2);
+	del_tab.setWidthPercentage(100);
+	del_tab.setSpacingBefore(30);
+
+	float[] colwidths = {70,30};
+	del_tab.setWidths(colwidths);
+	
+	PdfPCell wopcell = new PdfPCell(new Paragraph("ALS Technichem has received sample(s) for analysis from your company."));
+	wopcell.setColspan(2);
+	del_tab.addCell(wopcell);
+	
+	del_tab.addCell(new Paragraph("Number of sample(s) received"));
+	del_tab.addCell(new Paragraph(fodet.get("sampcount").toString()));
+	
+	del_tab.addCell(new Paragraph("Temperature of sample(s) upon receipt"));
+	del_tab.addCell(new Paragraph(checkNullString(fodet.get("temperature"))));
+	
+	del_tab.addCell(new Paragraph("Mode of delivery"));
+	del_tab.addCell(new Paragraph(checkNullString(fodet.get("deliverymode"))));
+	
+	del_tab.addCell(new Paragraph("Your Chain of Custody (COC) number"));
+	del_tab.addCell(new Paragraph(checkNullString(fodet.get("customercoc"))));
+	
+	document.add(del_tab);
+	
+	// sample state tab
+	PdfPTable st_tab = new PdfPTable(2);
+	st_tab.setWidthPercentage(100);
+	st_tab.setSpacingBefore(15);
+
+	float[] colwidths = {10,70};
+	st_tab.setWidths(colwidths);
+	
+	wopcell = new PdfPCell(new Paragraph( (fodet.get("allgoodorder") == 1) ? "X" : ""));
+	wopcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	st_tab.addCell(wopcell);
+	st_tab.addCell(new Paragraph("All samples and paperwork are received in good order"));
+	
+	wopcell = new PdfPCell(new Paragraph( (fodet.get("paperworknot") == 1) ? "X" : ""));
+	wopcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	st_tab.addCell(wopcell);
+	st_tab.addCell(new Paragraph("Paperwork unavailable. Please advise us of your requirement"));
+
+	wopcell = new PdfPCell(new Paragraph( (fodet.get("paperworksamplesnot") == 1) ? "X" : ""));
+	wopcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	st_tab.addCell(wopcell);
+	st_tab.addCell(new Paragraph("Paperwork/Samples incomplete or ambiguous. Please contact us immediately"));
+	
+	wopcell = new PdfPCell(new Paragraph( (fodet.get("samplesdamaged") == 1) ? "X" : ""));
+	wopcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	st_tab.addCell(wopcell);
+	st_tab.addCell(new Paragraph("Samples were damaged during transit. Please contact us immediately"));
+
+	document.add(st_tab);
+	
+	// comment tab
+	PdfPTable ct_tab = new PdfPTable(2);
+	ct_tab.setWidthPercentage(100);
+	ct_tab.setSpacingBefore(20);
+
+	float[] colwidths = {20,80};
+	ct_tab.setWidths(colwidths);
+	
+	wopcell = new PdfPCell(new Paragraph("Comments"));
+	wopcell.setHorizontalAlignment(Element.ALIGN_CENTER);
+	wopcell.setBorder(PdfPCell.NO_BORDER);
+
+	ct_tab.addCell(wopcell);
+	ct_tab.addCell(new Paragraph(checkNullString(fodet.get("extranotes"))));
+
+	document.add(ct_tab);
+	
+	// misc tab
+	PdfPTable mt_tab = new PdfPTable(1);
+	mt_tab.setWidthPercentage(100);
+	mt_tab.setSpacingBefore(50);
+	PdfPCell defaultCell = mt_tab.getDefaultCell();
+	defaultCell.setBorder(PdfPCell.NO_BORDER);
+	
+	PdfPCell noticecell = new PdfPCell(
+		new Paragraph("*Note: Please call 03 7845 8257 or email info@alsglobal.com.my for further clarification",
+		FontFactory.getFont(FontFactory.HELVETICA,8,Font.BOLD,new Color(0,0,0))));
+		
+	noticecell.setBorder(PdfPCell.NO_BORDER);
+
+	mt_tab.addCell(noticecell);
+
+	longtex = "This SRA is an acknowledgement that your samples have been received by ALS Technichem(M) Sdn Bhd. Unless otherwise stated, you do not need to respond to this SRA";
+	mt_tab.addCell(new Paragraph(longtex,FontFactory.getFont(FontFactory.HELVETICA,8,Font.ITALIC,new Color(0,0,0))));
+
+	document.add(mt_tab);
+	document.close();
+}
+
+void trygenPDF()
+{
+	Document document = new Document(PageSize.A4.rotate(), 20, 20, 20, 20);
+
+	//HtmlWriter htmlwrt = HtmlWriter.getInstance(document,new FileOutputStream(session.getWebApp().getRealPath("tmp/tgen1.html")));
+	PdfWriter writer = PdfWriter.getInstance(document,new FileOutputStream(session.getWebApp().getRealPath("tmp/tgen1.pdf")));
+	
+	document.open();
+	document.add(new Paragraph("First page of the document."));
+	document.add(new Paragraph(
+					"Some more text on the first page with different color and font type.",
+					FontFactory.getFont(FontFactory.COURIER, 14,Font.BOLD, new Color(255, 150, 200))));
+
+	Paragraph title1 = new Paragraph("Chapter 1", FontFactory.getFont(FontFactory.HELVETICA, 18, Font.BOLDITALIC, new Color(0, 0,255)));
+
+	Chapter chapter1 = new Chapter(title1, 1);
+	chapter1.setNumberDepth(0);
+	
+	Paragraph title11 = new Paragraph("This is Section 1 in Chapter 1",
+			FontFactory.getFont(FontFactory.HELVETICA, 28, Font.BOLD,new Color(255, 0, 0)));
+
+	Section section1 = chapter1.addSection(title11);
+	Paragraph someSectionText = new Paragraph("This text comes as part of section 1 of chapter 1.");
+	section1.add(someSectionText);
+	
+	someSectionText = new Paragraph("Following is a 3 X 2 table.");
+	section1.add(someSectionText);
+
+	PdfPTable table = new PdfPTable(3); // 3 columns.
+	table.setSpacingBefore(15);
+	
+	PdfPCell defaultCell = table.getDefaultCell();
+	defaultCell.setBorder(PdfPCell.NO_BORDER);
+
+    PdfPCell cell1 = new PdfPCell(new Paragraph("Cell 1"));
+    PdfPCell cell2 = new PdfPCell(new Paragraph("Cell 2"));
+    PdfPCell cell3 = new PdfPCell(new Paragraph("Cell 3"));
+    cell2.setRotation(90);
+
+    table.addCell(new Paragraph("testing cell 1 default",
+    FontFactory.getFont(FontFactory.HELVETICA, 7, Font.BOLD,new Color(100, 110, 0))
+    ));
+    table.addCell(cell2);
+    table.addCell(cell3);
+
+	//com.lowagie.text.Image image = com.lowagie.text.Image.getInstance(session.getWebApp().getRealPath("img/alstechnichemlogo.jpg"));
+	//PdfPCell cell4 = new PdfPCell(image, false);
+    //barcodecell = pdfMakeBarcode39(writer, "ALSM334455","");
+
+	section1.add(table);
+
+	List l = new List(true, true, 10);
+	l.add(new ListItem("First item of list"));
+	l.add(new ListItem("Second item of list"));
+	section1.add(l);
+
+	document.add(chapter1);
+	document.close();
+
+}
+
+// 31/01/2012: let user update customer's COC or PO and notes thing - sample-reg might not know these during registration
+// customer-support will get PO details and key-in here later
+void updatePOCOC_clicker()
+{
+	if(selected_folderorigid.equals("")) return;
+
+	therec = getFolderJobRec(selected_folderorigid);
+	if(therec == null)
+	{
+		showMessageBox("ERROR: cannot load folder record");
+		return;
+	}
+
+	quotation_no.setValue(checkNullString(therec.get("quotation_no")));
+	customer_po.setValue(checkNullString(therec.get("customerpo")));
+	customer_coc.setValue(checkNullString(therec.get("customercoc")));
+	extranotes.setValue(checkNullString(therec.get("extranotes")));
+
+	keyinpococ_popup.open(uppococ_btn);
+}
+
+void savePOCOC_clicker()
+{
+	qtno = replaceSingleQuotes(quotation_no.getValue());
+	iextranotes = replaceSingleQuotes(extranotes.getValue());
+	icustpo = replaceSingleQuotes(customer_po.getValue());
+	icustcoc = replaceSingleQuotes(customer_coc.getValue());
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update jobfolders set quotation_no='" + qtno + "', " + 
+	"extranotes='" + iextranotes + "', customerpo='" + icustpo + "', customercoc='" + icustcoc + "' " +
+	"where origid=" + selected_folderorigid;
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	keyinpococ_popup.close();
+}
+
+
+]]>
+</zscript>
+
+<!-- key-in PO / COC / Notes in folder popup -->
+<popup id="keyinpococ_popup">
+<grid width="400px">
+	<rows>
+		<row>
+			<label value="Our quotation#" style="font-size:9px" />
+			<textbox id="quotation_no" style="font-size:9px" width="99%" />			
+		</row>
+		<row>
+			<label value="Customer.PO" style="font-size:9px" />
+			<textbox id="customer_po" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Customer.COC" style="font-size:9px" />
+			<textbox id="customer_coc" style="font-size:9px" width="99%" />
+		</row>
+		<row>
+			<label value="Comments" style="font-size:9px" />
+			<textbox id="extranotes" multiline="true" height="80px" width="99%" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+<separator height="2px" />
+<hbox>
+	<button label="Update" style="font-size:9px" onClick="savePOCOC_clicker()" />
+	<button label="Close" style="font-size:9px" onClick="keyinpococ_popup.close()" />
+</hbox>
+</popup>
+
+
+<div width="1200px">
+<panel id="emailsrntracker_panel" title="Email SRA v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<button label="try gen pdf" onClick="trygenPDF()" />
+
+<hbox>
+<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="listFolders(1)" />
+		</row>
+		<row spans=",3,">
+			<label value="Customer" style="font-size:9px" />
+			<textbox id="customer_tb" width="99%" style="font-size:9px" />
+			<button label="Search" style="font-size:9px" onClick="listFolders(2)" />
+		</row>
+	</rows>
+</grid>
+
+<grid>
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px"  /> <!-- value="ALJB33007" -->
+			<button label="by folder" style="font-size:9px" onClick="listFolders(3)" />
+		</row>
+		<row>
+			<label value="Sample-ID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="by sample-id" style="font-size:9px" onClick="listFolders(4)" />
+		</row>
+	</rows>
+</grid>
+</hbox>
+
+<separator height="2px" />
+<label value="(Max. 200 folders per search)" style="font-size:8px" />
+
+<hbox id="workdiv" visible="false">
+	<div id="folders_holder" width="700px" />
+	
+	<grid width="450px">
+		<rows>
+			<row spans="2">
+				<label id="foldertitle" />
+			</row>
+			<row>
+				<label value="Client email:" style="font-size:9px" />
+				<textbox id="clientemailaddress_tb" style="font-size:9px" width="98%" />
+			</row>
+			<row spans="2">
+				<hbox>
+					<button label="Send email SRN" style="font-size:9px" onClick="sendemailSRN_again()" />
+					<button id="uppococ_btn" label="Update PO/COC/Notes" style="font-size:9px" onClick="updatePOCOC_clicker()" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<div style="background:#ff0000;padding:2px">
+					<label style="font-size:9px;color:#ffffff;font-weight:bold">
+					Please make sure all information have been entered correctly. ONCE SENT - NO RETRACTION - YOU ARE WARNED
+					</label>
+				</div>
+			</row>
+			<row spans="2">
+				<div id="adminstuff" style="background:#ff0000;padding:2px" visible="false">
+					<button label="clear sent rec" style="font-size:9px" onClick="adminClearRec()" />
+				</div>
+			</row>
+		</rows>
+	</grid>
+	
+</hbox>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+if(useraccessobj.accesslevel == 9) adminstuff.setVisible(true);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

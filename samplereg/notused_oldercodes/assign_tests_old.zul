@@ -1,0 +1,1455 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="registernew_samples3_panel"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title 		: Register new incoming PO/COC/Samples
+Written by	: Victor Wong
+
+Revisions/NOTES:
+
+29/3/2010: added branch - for deployment to other branches later
+	in startFolderJobsSearch(), will make use of the branch code to list out only relevant folders instead of everything
+	
+15/4/2010: set a new folder prefix for branches - def in alsglobaldefs.zs
+	JB = ALJB
+	KK = ALKK
+	
+16/4/2010: added 3 more fields to the JobFolders table - labfolderstatus, releasedby, releaseddate
+
+11/6/2010: clean-up and optimize some codes
+	added codes to do cash-account customer's details storing
+	SRA is not modified yet to printout customer-name from CashSales_CustomerInfo table
+	
+12/8/2010: added send notification email if CASH or CASH USD acct used
+
+19/11/2010: request by Fadzillah to add a field to signify whether samples are shared or not .. same like using the rubber-stamp on COC
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+// to count open window
+windcounter = 1;
+
+String[] desiredTAT = { "7" , "3" , "1", "14", "21", "30" };
+String[] securitySeals = { "Intact" , "Damaged" , "Missing" };
+String[] modeDelivery = { "Self delivery" , "We pickup", "Courier" };
+String[] priorities = { "NORMAL" , "HIGH", "SUPERHIGH" };
+
+/*
+String[] cashacct_email_notification = { "it@alsglobal.com.my" ,"zcheng@alsglobal.com.my" };
+*/
+
+Object whathuh;
+Object whathuh_samples;
+
+int sample_lb_currentindex = -1;
+int global_cashsales_needrefresh = 0;
+
+// check whether can do CRUD on samples. uses whathuh var to access folderJobObj
+boolean foldersamplesCRUD_Check()
+{
+	retval = true;
+	if(!whathuh.fj_folderstatus.equals(FOLDERDRAFT))
+	{
+		showMessageBox("Folder/job already logged or commited. Modification can only be performed by HOD or senior supervisor");
+		retval = false;
+	}
+	return retval;
+}
+
+// Use to disable all folder information groupbox 's form components
+// uses var whathuh and whathuh_samples to access the components
+// 19/11/2010: combine disable/enable function into 1 func..
+void toggleFolderInformationGroupbox(boolean iwhat)
+{
+	// disable folder information form components
+	whathuh.fj_date_created.setDisabled(iwhat);
+	whathuh.fj_ar_code.setDisabled(iwhat);
+	whathuh.fj_extranotes.setDisabled(iwhat);
+	whathuh.fj_tat_dd.setDisabled(iwhat);
+	whathuh.fj_customer_po.setDisabled(iwhat);
+	whathuh.fj_customer_coc.setDisabled(iwhat);
+	whathuh.fj_customer_request_date.setDisabled(iwhat);
+	whathuh.fj_deliverymode.setDisabled(iwhat);
+	whathuh.fj_securityseal.setDisabled(iwhat);
+	whathuh.fj_noboxes.setDisabled(iwhat);
+	whathuh.fj_temperature.setDisabled(iwhat);
+	whathuh.fj_allgoodorder.setDisabled(iwhat);
+	whathuh.fj_paperworknot.setDisabled(iwhat);
+	whathuh.fj_paperworksamplesnot.setDisabled(iwhat);
+	whathuh.fj_samplesdamaged.setDisabled(iwhat);
+	whathuh.fj_attention.setDisabled(iwhat);
+	// disable sample's metadata components
+	whathuh_samples.samplemarking.setDisabled(iwhat);
+	whathuh_samples.extranotes.setDisabled(iwhat);
+}
+
+class folderJobObj
+{
+	public Textbox fj_origid_folderno;
+	public Datebox fj_date_created;
+	public Textbox fj_ar_code;
+	public Label fj_customername;
+	public Textbox fj_extranotes;
+	public Listbox fj_tat_dd;
+	public Datebox fj_due_date;
+	
+	public Textbox fj_customer_po;
+	public Textbox fj_customer_coc;
+	
+	public Datebox fj_customer_request_date;
+	
+	public Listbox fj_deliverymode;
+	public Listbox fj_securityseal;
+	public Textbox fj_noboxes;
+	public Textbox fj_temperature;
+	
+	public Checkbox fj_allgoodorder;
+	public Checkbox fj_paperworknot;
+	public Checkbox fj_paperworksamplesnot;
+	public Checkbox fj_samplesdamaged;
+	
+	public Textbox fj_attention;
+	public String fj_folderstatus;
+	public Listbox fj_priority;
+
+	public folderJobObj(Textbox ifolderno, Datebox idatecreated, Textbox iarcode, Label icustomername, Textbox iextranotes, Listbox itatdd,
+		Textbox icustomer_po, Textbox icustomer_coc, Datebox icustreqdate, Listbox ideliverymode, Listbox isecurityseal, Textbox inoboxes, Textbox itemperature,
+		Checkbox iallgoodorder, Checkbox ipaperworknot, Checkbox ipaperworksamplesnot, Checkbox isamplesdamaged)
+	{
+		fj_origid_folderno = ifolderno;
+		fj_date_created = idatecreated;
+		fj_ar_code = iarcode;
+		fj_customername = icustomername;
+		fj_extranotes = iextranotes;
+		
+		fj_tat_dd = itatdd;
+		
+		fj_customer_po = icustomer_po;
+		fj_customer_coc = icustomer_coc;
+	
+		fj_customer_request_date = icustreqdate;
+	
+		fj_deliverymode = ideliverymode;
+		fj_securityseal = isecurityseal;
+		fj_noboxes = inoboxes;
+		fj_temperature = itemperature;
+		
+		fj_allgoodorder = iallgoodorder;
+		fj_paperworknot = ipaperworknot;
+		fj_paperworksamplesnot = ipaperworksamplesnot;
+		fj_samplesdamaged = isamplesdamaged;
+		
+		// cannot put anymore parameters.. huh?? check for direct assignment at the end.
+		// fj_attention = 
+
+		fj_folderstatus = "";
+	}
+	
+	int getOrigid()
+	{
+		return convertFolderNoToInteger(fj_origid_folderno.getValue());
+	}
+	
+	void clearDetails()
+	{
+		fj_origid_folderno.setValue("");
+		setTodayDatebox(fj_date_created);
+		
+		fj_ar_code.setValue("");
+		fj_ar_code.setDisabled(false);
+		
+		fj_customername.setValue("");
+		fj_extranotes.setValue("");
+		
+		fj_customer_po.setValue("");
+		fj_customer_coc.setValue("");
+	
+		setTodayDatebox(fj_customer_request_date);
+	
+		fj_deliverymode.setSelectedIndex(0);
+		fj_securityseal.setSelectedIndex(0);
+		fj_noboxes.setValue("");
+		fj_temperature.setValue("");
+		
+		fj_allgoodorder.setChecked(false);
+		fj_paperworknot.setChecked(false);
+		fj_paperworksamplesnot.setChecked(false);
+		fj_samplesdamaged.setChecked(false);
+		
+		fj_attention.setValue("");
+		
+		fj_tat_dd.setSelectedIndex(0); // reset index 0
+		
+		fj_folderstatus = "";
+	}
+	
+	void showDetails()
+	{
+		irec = Integer.parseInt(extractFolderNo(fj_origid_folderno.getValue()));
+		if(irec == 0) return;
+		
+		therec = getFolderJobRec(irec.toString());
+		if(therec == null) return;
+		
+		credate = therec.get("datecreated");
+		dudate = therec.get("duedate");
+
+		fj_date_created.setValue(credate);
+		fj_extranotes.setValue(therec.get("extranotes"));
+
+		iar_code = therec.get("ar_code");
+		
+		fj_ar_code.setValue(iar_code);
+		
+		fj_folderstatus = therec.get("folderstatus");
+		
+		if(!iar_code.equals(""))
+		{
+			icompname = getCompanyName(therec.get("ar_code"));
+			fj_customername.setValue(icompname);
+			
+			// already assigned folder to ar_code, supposed not to change - but then.. 26/1/2010
+			// maybe check for uploadToLIMS and uploadToMYSOFT flag, if set, cannot change anymore
+			//fj_ar_code.setDisabled(true);
+		}
+		
+		// matchListboxItems(Listbox ilb, String iwhich)
+		
+		fj_customer_request_date.setValue(therec.get("custreqdate"));
+		
+		fj_customer_po.setValue(therec.get("customerpo"));
+		fj_customer_coc.setValue(therec.get("customercoc"));
+		
+		idmode = therec.get("deliverymode");
+		matchListboxItems(fj_deliverymode, idmode);
+		
+		isecs = therec.get("securityseal");
+		matchListboxItems(fj_securityseal, isecs);
+		
+		ootat = therec.get("tat");
+		itat = ootat.toString();
+		matchListboxItems(fj_tat_dd, itat);
+
+		fj_due_date.setValue(dudate);
+		
+		// 10/2/2010: if create-date is same as due-date, always when a new folder is created, due some TAT calc
+		if(dudate.equals(credate))
+		{
+			addDaysToDate(fj_date_created,fj_due_date,ootat);
+			
+			weekEndCheck(fj_due_date);
+		}
+
+		fj_noboxes.setValue(therec.get("noboxes"));
+		fj_temperature.setValue(therec.get("temperature"));
+		
+		fj_allgoodorder.setChecked((therec.get("allgoodorder") == 1) ? true : false);
+		fj_paperworknot.setChecked((therec.get("paperworknot") == 1) ? true : false);
+		fj_paperworksamplesnot.setChecked((therec.get("paperworksamplesnot") == 1) ? true : false);
+		fj_samplesdamaged.setChecked((therec.get("samplesdamaged") == 1) ? true : false);
+		
+		fj_attention.setValue(therec.get("attention"));
+
+		ipriority = therec.get("priority");
+		matchListboxItems(fj_priority, ipriority);
+	}
+	
+	void saveDetails()
+	{
+		sql = als_mysoftsql();
+		if(sql == null) return;
+		
+		ifolderno_str = fj_origid_folderno.getValue();
+		ifold = extractFolderNo(ifolderno_str);
+		ifoldno = Integer.parseInt(ifold);
+		
+		idatecreated = getDateFromDatebox(fj_date_created);
+		iarcode = fj_ar_code.getValue();
+		iextranotes = replaceSingleQuotes(fj_extranotes.getValue());
+		
+		idmode = fj_deliverymode.getSelectedItem().getLabel();
+		isecs = fj_securityseal.getSelectedItem().getLabel();
+		
+		inoboxes = replaceSingleQuotes(fj_noboxes.getValue());
+		itempa = replaceSingleQuotes(fj_temperature.getValue());
+		
+		icustpo = replaceSingleQuotes(fj_customer_po.getValue());
+		icustcoc = replaceSingleQuotes(fj_customer_coc.getValue());
+		
+		iattention = replaceSingleQuotes(fj_attention.getValue());
+		
+		icustreqdate = getDateFromDatebox(fj_customer_request_date);
+		
+		ia1 = (fj_allgoodorder.isChecked()) ? "1" : "0";
+		ia2 = (fj_paperworknot.isChecked()) ? "1" : "0";
+		ia3 = (fj_paperworksamplesnot.isChecked()) ? "1" : "0";
+		ia4 = (fj_samplesdamaged.isChecked()) ? "1" : "0";
+		
+		itat = fj_tat_dd.getSelectedItem().getLabel();
+		ipriority = fj_priority.getSelectedItem().getLabel();
+		
+		iduedate = getDateFromDatebox(fj_due_date);
+
+		// 29/3/2010: to update branch field according to username branch setting.
+		ibranch = useraccessobj.branch;
+		if(ibranch.equals("") || ibranch.equals("ALL")) // if no branch setup or branch="ALL" <-- admin login, set branch "SA"
+			ibranch = "SA";
+
+		sqlstatem = "update JobFolders set ar_code='" + iarcode + "', " +
+		"datecreated='" + idatecreated + "', " +
+		"extranotes='" + iextranotes + "', " +
+		"folderno_str='" + ifolderno_str + "', " +
+		"deliverymode='" + idmode + "', " +
+		"securityseal='" + isecs + "', " +
+		"noboxes='" + inoboxes + "', " +
+		"temperature='" + itempa + "', " +
+		"custreqdate='" + icustreqdate + "', " +
+		"customerpo='" + icustpo + "', " +
+		"customercoc='" + icustcoc + "', " +
+		"folderstatus='" + fj_folderstatus + "', " +
+		"tat=" + itat + ", " +
+		"duedate='" + iduedate + "', " +
+		"allgoodorder=" + ia1 + ", " +
+		"paperworknot=" + ia2 + ", " +
+		"paperworksamplesnot=" + ia3 + ", " +
+		"samplesdamaged=" + ia4 + ", " +
+		"priority='" + ipriority + "'," +
+		"attention='" + iattention + "', " +
+		"branch='" + ibranch + "' " +
+		"where origid=" + ifoldno.toString();
+	
+		sql.execute(sqlstatem);
+		sql.close();
+
+	}
+} // end of class folderJobObj
+
+class sampleObj
+{
+	public Textbox sample_origid;
+	public Textbox samplemarking;
+	public Textbox extranotes;
+	
+	public sampleObj(Textbox isample_origid, Textbox isamplemarking, Textbox iextranotes)
+	{
+		sample_origid = isample_origid;
+		samplemarking = isamplemarking;
+		extranotes = iextranotes;
+	}
+	
+	void clearDetails()
+	{
+		sample_origid.setValue("");
+		samplemarking.setValue("");
+		extranotes.setValue("");
+	}
+	
+	void showDetails()
+	{
+		iorigid = convertSampleNoToInteger(sample_origid.getValue());
+		therec = getFolderSampleRec(iorigid.toString());
+		if(therec == null) return;
+		
+		samplemarking.setValue(therec.get("samplemarking"));
+		extranotes.setValue(therec.get("extranotes"));
+	}
+	
+	void saveDetails()
+	{
+		// make sure there's something to save
+		if(sample_origid.getValue().equals("")) return;
+		
+		sql = als_mysoftsql();
+		if(sql == null) return;
+		
+		isamporig = sample_origid.getValue();
+		isampmark = replaceSingleQuotes(samplemarking.getValue());
+		
+		iextrano = replaceSingleQuotes(extranotes.getValue());
+		
+		// 8/2/2010: get folderno from main folderno textbox
+		ifoldno = convertFolderNoToInteger(whathuh.fj_origid_folderno.getValue());
+
+		iorigid = convertSampleNoToInteger(sample_origid.getValue());
+		
+		sqlstatem = "update JobSamples set samplemarking='" + isampmark + "', " +
+		"extranotes='" + iextrano + "', " +
+		"sampleid_str='" + isamporig + "', " +
+		"jobfolders_id=" + ifoldno.toString() +
+		" where origid=" + iorigid.toString();
+		
+		//alert(sqlstatem);
+		sql.execute(sqlstatem);
+		
+		sql.close();
+	
+	}
+	
+} // end of class sampleObj
+
+// onSelect listener for samples_lb
+class SamplesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 8/2/2010: save whatever in the previous selection
+		prevn = whathuh_samples.sample_origid.getValue();
+
+		// make sure there was something selected before saving sample details
+		if(!prevn.equals("")) whathuh_samples.saveDetails();
+
+		// 9/2/2010: update samples_lb column 2(samplemarking) w/o doing a complete startFolderSamplesSearch()
+		if(sample_lb_currentindex != -1)
+		{
+			oldlc = samples_lb.getItemAtIndex(sample_lb_currentindex);
+			setListcellItemLabel(oldlc,1,whathuh_samples.samplemarking.getValue());
+		}
+
+		sample_lb_currentindex = samples_lb.getSelectedIndex(); // 9/2/2010: save the selected index now for use above logic later
+
+		irecno = samples_lb.getSelectedItem().getLabel();
+
+		whathuh_samples.clearDetails();
+		whathuh_samples.sample_origid.setValue(irecno);
+
+		// save a copy of the folderno
+		ifolderno = whathuh.fj_origid_folderno.getValue();
+
+		// 8/2/2010: refresh listbox -- not sure if it's possible to refresh/redraw the listbox within an eventListener,
+		// 'cause the makeSamplesListbox func will point to the same eventlistener. might crash..
+		whathuh_samples.showDetails();
+	}
+}
+
+// Search and populate samples in folders listbox
+void startFolderSamplesSearch(Textbox ifolderno)
+{
+Object[] samples_lb_headers = {
+
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Samp.Marking",true),
+};
+	foldns = ifolderno.getValue();
+	thefolderno = convertFolderNoToInteger(foldns);
+	if(thefolderno == 0) return;
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select top 200 origid,samplemarking from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0" +
+	" order by origid";
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	//Listbox newlb = makeSamplesListbox(samples_div);
+	Listbox newlb = makeVWListbox(samples_div, samples_lb_headers, "samples_lb", 10);
+	newlb.addEventListener("onSelect", new SamplesLB_Listener());
+
+	if(reccount > 0 && reccount <= 500)
+	{
+		samples_lb.setRows(20); // make listbox bigger if recs exist
+
+		String[] strarray = new String[2];
+
+		for(ilist : tlist)
+		{
+			ifno = ilist.get("origid");
+			strarray[0] = foldns + padZeros5(ifno);
+			strarray[1] = ilist.get("samplemarking");
+			insertListItems(newlb,strarray,SAMPLES_PREFIX);
+		}
+	}
+
+} // end of startFolderSamplesSearch()
+
+// Add new samples to job/folder
+// 24/2/2010: added codes to check if no AR_code, cannot create new samples
+void createNewSampleEntry()
+{
+	// folder/job must be selected before inserting a new sample
+	if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+
+	// 2/2/2010: if folderstatus not draft, cannot add new samples
+	if(!foldersamplesCRUD_Check()) return;
+
+	// 24/2/2010: no ar_code, cannot add new samples
+	if(whathuh.fj_ar_code.getValue().equals("")) return;
+
+	thefolderno = folderjobs_lb.getSelectedItem().getLabel();
+
+	// must check folder status before creating new samples, if it's LOGGED or COMMITTED, should not allow to add
+	/*
+	if(whathuh.fj_folderstatus.equals(FOLDERLOGGED))
+		require supervisor access level to add samples
+		
+	if(whathuh.fj_folderstatus.equals(FOLDERCOMMITED))
+		cannot change at all now.. already commited, suck into mysoft and starlims already
+
+	*/
+
+	createNewSampleRec(thefolderno);
+
+	// refresh samples listbox
+	startFolderSamplesSearch(whathuh.fj_origid_folderno);
+}
+
+// Set 'deleted' flag in table to reflect deletion. Later can write admin-cleanup utils to clean all these
+void removeSampleEntry()
+{
+	// no sample selected, return
+	if(whathuh_samples.sample_origid.getValue().equals("")) return;
+	if(samples_lb.getSelectedIndex() == -1) return;
+
+	// 2/2/2010: if folderstatus not draft, cannot do CRUD
+	if(!foldersamplesCRUD_Check()) return;
+
+	isampid = samples_lb.getSelectedItem().getLabel();
+
+	// must check folder status, if commited or logged..
+
+	if (Messagebox.show("Delete sample " + isampid, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		sampid = convertSampleNoToInteger(isampid);
+		sqlstatem = "update JobSamples set deleted=1 where origid=" + sampid.toString();
+		sql.execute(sqlstatem);
+		sql.close();
+		// refresh samples listbox
+		startFolderSamplesSearch(whathuh.fj_origid_folderno);
+		whathuh_samples.clearDetails();
+	}
+}
+
+// Save sample's metadata, sample-marking and other things
+void saveSampleMetadata()
+{
+	// 2/2/2010: only folder in DRAFT can save sample's metadata
+	if(!foldersamplesCRUD_Check()) return;
+
+	// use sampleObj func to save the details
+	whathuh_samples.saveDetails();
+
+	// refresh the samples listbox
+	startFolderSamplesSearch(whathuh.fj_origid_folderno);
+}
+
+// onSelect listener for folderjobs_lb
+class FolderLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 3/2/2010: to be coded - update JobSamples->sampleid_str with the full ALSM0000100001 string for easier access in BIRT
+		// 8/2/2010: if there was a previously selected folder, save the samples full string
+		oldfoldn = whathuh.fj_origid_folderno.getValue();
+		if(!oldfoldn.equals("")) saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+
+		irecno = folderjobs_lb.getSelectedItem().getLabel();
+
+		whathuh.clearDetails();
+		whathuh.fj_origid_folderno.setValue(irecno);
+		whathuh.showDetails();
+
+		// 27/1/2010: if folderstatus is LOGGED, don't allow changes to the customer-code
+		ifoldn = convertFolderNoToInteger(irecno);
+		therec = getFolderJobRec(ifoldn.toString());
+
+		ifoldstat = therec.get("folderstatus");
+
+		// disable customer-code box, so no drag-drop
+		// 2/2/2010: disable some of the groupbox if folderstatus is LOGGED or COMMITED
+		// arbox = (ifoldstat.equals(FOLDERLOGGED)) ? true : false;
+		// whathuh.fj_ar_code.setDisabled(arbox);
+		toggflag = false;
+		if(ifoldstat.equals(FOLDERLOGGED) || ifoldstat.equals(FOLDERCOMMITED)) toggflag = true;
+
+		toggleFolderInformationGroupbox(toggflag);
+
+		// show samples tied to this folder/job
+		whathuh_samples.clearDetails();
+		startFolderSamplesSearch(whathuh.fj_origid_folderno);
+	}
+}
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Priority",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+// Do the search and populate listbox
+// 29/3/2010: added branch checking - should be deployable to other branches later
+// 15/4/2010: added different folder prefix for branches
+// 11/6/2010: optimize codes - make use of makeVWListbox() to create listbox cols
+void startFolderJobsSearch(Datebox startd, Datebox endd)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	// 29/3/2010: check branch
+	branch_str = "";
+
+	ibranch = useraccessobj.branch;
+	if(!ibranch.equals("ALL")) // if admin login, should be able to see all folders else filter according to branch
+		branch_str = "and branch='" + ibranch + "'";
+
+	sqlstatem = "select top 200 origid,branch,datecreated,duedate,ar_code,priority,folderstatus from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+	" and deleted=0 and folderstatus='" + FOLDERDRAFT + "' " + branch_str + " order by datecreated desc";
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	reccount = tlist.size();
+	Listbox newlb = makeVWListbox(folderjobs_div, folders_lb_headers, "folderjobs_lb", 15);
+
+	if(reccount == 0) return;
+
+	newlb.addEventListener("onSelect", new FolderLB_Listener());
+	
+	String[] strarray = new String[7];
+
+	for(ilist : tlist)
+	{
+		ifolderno = ilist.get("origid");
+		folderprefix = JOBFOLDERS_PREFIX; // default folder prefix
+		chkbranch = ilist.get("branch");
+
+		// 15/4/2010: set branch folders prefix
+		if(chkbranch.equals("JB")) folderprefix = JB_JOBFOLDERS_PREFIX;
+		if(chkbranch.equals("KK")) folderprefix = KK_JOBFOLDERS_PREFIX;
+
+		strarray[0] = folderprefix + padZeros5(ifolderno);
+		strarray[1] = ilist.get("datecreated").toString().substring(0,10);
+		strarray[2] = ilist.get("duedate").toString().substring(0,10);
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = ilist.get("ar_code");
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+					csrec = getCashSalesCustomerInfo_Rec(strarray[0]);	// get rec based on folder no
+					icompanyname = "CshAct: Undefined";
+					if(csrec != null) icompanyname = "CshAct: " + csrec.get("customer_name");
+			}
+			else
+				icompanyname = getCompanyName(iar_code);
+		}
+
+		strarray[3] = icompanyname;
+		strarray[4] = ilist.get("priority");
+		ifoldstat = ilist.get("folderstatus");
+		statstr = (ifoldstat.equals(FOLDERLOGGED)) ? FOLDERLOGGED : FOLDERDRAFT; // def in alsglobaldefs.zs
+		strarray[5] = statstr;
+
+		strarray[6] = ilist.get("branch");
+		insertListItems(newlb,strarray,folderprefix);
+	}
+
+} // end of startFolderJobsSearch()
+
+// only accept arcode type 3XXX/XXX for drag-drop
+// 11/6/2010: able to accept all codes - added checks
+void dropAR_Code(Event event)
+{
+	Component dragged = event.dragged;
+	iarcode = dragged.getLabel();
+
+	// if no folder selected, don't put in the address
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+
+	comprec = getCompanyRecord(iarcode); // func in alsglobal_sqlfuncs.zs
+
+	// 11/6/2010: must be a valid ar_code
+	if(comprec != null)
+	{
+		self.setValue(iarcode);
+		customername.setValue(comprec.get("customer_name"));
+		attention.setValue(comprec.get("contact_person1"));
+	}
+}
+
+// 11/6/2010: if user manually key-in client's ar_code, this clicker will load the client's rec and show.
+void refreshCustomerDetails_Clicker()
+{
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	
+	kkk = ar_code.getValue();
+	if(kkk.equals("")) return;
+	
+	comprec = getCompanyRecord(kkk); // func in alsglobal_sqlfuncs.zs
+
+	if(comprec != null)
+	{
+		ar_code.setValue(comprec.get("ar_code"));
+		customername.setValue(comprec.get("customer_name"));
+		attention.setValue(comprec.get("contact_person1"));
+	}
+}
+
+void createNewFolder_Wrapper(Datebox ihiddendatebox)
+{
+	// 29/3/2010: add in branch
+	kkk = useraccessobj.branch;
+
+	// 16/4/2010: if user has "ALL" for branch, disallow adding new folder
+	if(kkk.equals("ALL"))
+	{
+		showMessageBox("Superuser cannot add folder.. please use a normal branch user");
+		return;
+	}
+
+	createNewFolderJob(ihiddendatebox,kkk); // samplereg_funcs.zs
+	startFolderJobsSearch(startdate,enddate);
+}
+
+void deleteFolderJob()
+{
+	// instead of deleting straight from the database, set the deleted flag instead
+	ifolds = whathuh.fj_origid_folderno.getValue();
+	if(ifolds.equals("")) return;
+
+	// 27/1/2010: if folderstatus is logged, cannot delete
+	therec = getFolderJobRec(whathuh.getOrigid().toString());
+
+	if(therec.get("folderstatus").equals(FOLDERLOGGED))
+	{
+		showMessageBox(ifolds + " is " + FOLDERLOGGED + " . Cannot delete");
+		return;
+	}
+
+	if (Messagebox.show("Delete folder/job " + ifolds, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		ifoldno = convertFolderNoToInteger(ifolds);
+
+		sqlstatem = "update JobFolders set deleted=1 where origid=" + ifoldno.toString();
+		sql.execute(sqlstatem);
+		sql.close();
+
+		// refresh folder listbox
+		startFolderJobsSearch(startdate,enddate);
+	}
+} // end of deleteFolderJob()
+
+// 11/6/2010: really save the folder information - this is after checking for cash-account and etc
+void reallySaveFolderInfo()
+{
+	// update table
+	whathuh.saveDetails();
+	whathuh.clearDetails();
+	
+	// deselect folder listbox
+	folderjobs_lb.clearSelection();
+	startFolderJobsSearch(startdate,enddate);
+	
+	// take away samples LB
+	samples_lb.setParent(null);
+	//makeVWListbox(samples_div, samples_lb_headers, "samples_lb", 20); // 11/6/2010: uses global-o lb maker!!
+}
+
+// clear the textboxes in the popup
+void clearCashAccountPopup_Textboxes()
+{
+	ca_customer_name_tb.setValue("");
+	ca_contact_person1_tb.setValue("");
+	ca_address1_tb.setValue("");
+	ca_address2_tb.setValue("");
+	ca_city_tb.setValue("");
+	ca_zipcode_tb.setValue("");
+	ca_state_tb.setValue("");
+	ca_country_tb.setValue("");
+	ca_telephone_tb.setValue("");
+	ca_fax_tb.setValue("");
+	ca_email_tb.setValue("");
+}
+
+// 11/6/2010: Populate cash-account popup's textboxes
+void populateCashAccountPopup(String ifolderno)
+{
+	clearCashAccountPopup_Textboxes();
+	
+	csrec = getCashSalesCustomerInfo_Rec(ifolderno);
+	if(csrec != null)
+	{
+	ca_customer_name_tb.setValue(csrec.get("customer_name"));
+	ca_contact_person1_tb.setValue(csrec.get("contact_person1"));
+	ca_address1_tb.setValue(csrec.get("address1"));
+	ca_address2_tb.setValue(csrec.get("address2"));
+	ca_city_tb.setValue(csrec.get("city"));
+	ca_zipcode_tb.setValue(csrec.get("zipcode"));
+	ca_state_tb.setValue(csrec.get("state"));
+	ca_country_tb.setValue(csrec.get("country"));
+	ca_telephone_tb.setValue(csrec.get("telephone"));
+	ca_fax_tb.setValue(csrec.get("fax"));
+	ca_email_tb.setValue(csrec.get("email"));
+	}
+}
+
+// 15/9/2010: send notification email to everyone if recv samples from black-listed customer
+void blacklisted_EmailNotification(Object icomprec)
+{
+	subjstr = "SAMPLE REGISTRATION NOTIFICATION: RECEIVED SAMPLES FROM BLACK-LISTED CUSTOMER";
+	topeople = convertStringArrayToString(blacklisted_notification);
+	
+	thecustomer = icomprec.get("customer_name");
+	tel = icomprec.get("telephone_no");
+	contact_person1 = icomprec.get("contact_person1");
+
+	salesman = icomprec.get("Salesman_code");
+	salesman = (salesman == null) ? "--UNDEFINED SALES PERSON--" : salesman;
+	salesman = (salesman.equals("0")) ? "--UNDEFINED SALES PERSON--" : salesman;
+
+	msgtext = "Customer: " + thecustomer + "\n";
+	msgtext += "Contact person: " + contact_person1 + "\n";
+	msgtext += "Telephone: " + tel + "\n";
+	msgtext += "Customer belongs to: " + salesman + "\n\n";
+	msgtext += "Samples are being held in sample-registration room.\n";
+	msgtext += "PLEASE TAKE NECESSARY ACTION ASAP";
+	msgtext += "\n\n------\nDO NOT print this notification - save some trees";
+
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+
+	//showMessageBox("BLACK-LISTED email notification sent..");
+}
+
+// Save folder metadata
+// 11/6/2010: would add checks for CASH ACCOUNT - need to enter cash client's info properly instead of using the Comment field.
+// 15/9/2010: check customer status - if black-listed, don't save..
+void updateFolderJob()
+{
+	// if no folder/job selected, return
+	kkk = whathuh.fj_origid_folderno.getValue();
+	if(kkk.equals("")) return;
+
+	// 2/2/2010: make sure folder is in DRAFT
+	if(!foldersamplesCRUD_Check()) return;
+
+	// check if ar_code = CASH (hardcoded as def in mysoft)
+	arcode = ar_code.getValue().toUpperCase(); // textbox def in UI
+	if(arcode.equals("CASH") || arcode.equals("CASH USD"))
+	{
+		global_cashsales_needrefresh = 1; // after saving folders, will refresh and clear everything
+		
+		populateCashAccountPopup(kkk);
+		cashaccount_details_Popup.open(savefolderinfo_btn);
+		return;
+	}
+
+	comprec = getCompanyRecord(arcode);
+
+	// not a valid ar_code, return lo
+	if(comprec == null)
+	{
+		showMessageBox("Invalid customer code..");
+		return; 
+	}
+
+	// 15/9/2010: check for black-listed
+	credit_period = comprec.get("credit_period");
+	if(credit_period != null)
+	{
+		if(credit_period.equals("BLACKLIST"))
+		{
+			whathuh.fj_ar_code.setValue(""); // clear the ar_code field - prevent registering new samples
+			showMessageBox("Customer is BLACK-LISTED - cannot register samples - please contact Credit-Control");
+			blacklisted_EmailNotification(comprec);
+			return;
+		}
+	}
+	reallySaveFolderInfo();	// actually saving the folder details
+}
+
+void editOnlyCashSales_Info()
+{
+	ifoldn = whathuh.fj_origid_folderno.getValue();
+	if(ifoldn.equals("")) return;
+	
+	// check if ar_code = CASH (hardcoded as def in mysoft)
+	arcode = ar_code.getValue().toUpperCase(); // textbox def in UI
+	if(arcode.equals("CASH") || arcode.equals("CASH USD"))
+	{
+		global_cashsales_needrefresh = 0;
+		populateCashAccountPopup(ifoldn);
+		cashaccount_details_Popup.open(savefolderinfo_btn);
+	}
+}
+
+// 11/6/2010: cash account popup - save details clicker
+void ca_save_Clicker()
+{
+	ifoldn = whathuh.fj_origid_folderno.getValue();
+	if(ifoldn.equals("")) return;
+
+	deleteCashSalesCustomerInfo_Rec(ifoldn); // del rec from cashsales_customerinfo before inserting new
+
+	// insert cashsales_customerinfo
+	icustomer_name = replaceSingleQuotes(ca_customer_name_tb.getValue());
+	icontact_person1 = replaceSingleQuotes(ca_contact_person1_tb.getValue());
+	iaddress1 = replaceSingleQuotes(ca_address1_tb.getValue());
+	iaddress2 = replaceSingleQuotes(ca_address2_tb.getValue());
+	icity = replaceSingleQuotes(ca_city_tb.getValue());
+	izipcode = replaceSingleQuotes(ca_zipcode_tb.getValue());
+	istate = replaceSingleQuotes(ca_state_tb.getValue());
+	icountry = replaceSingleQuotes(ca_country_tb.getValue());
+	itelephone = replaceSingleQuotes(ca_telephone_tb.getValue());
+	ifax = replaceSingleQuotes(ca_fax_tb.getValue());
+	iemail = replaceSingleQuotes(ca_email_tb.getValue());
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstm = "insert into CashSales_CustomerInfo (folderno_str,customer_name,address1,address2,city,zipcode,state,country,telephone,fax,email,contact_person1)" +
+	"values ('" + ifoldn + "','" + icustomer_name + "','" + iaddress1 + "','" + iaddress2 + "','" + icity + "','" + izipcode +
+	"','" + istate + "','" + icountry + "','" + itelephone + "','" + ifax + "','" + iemail + "','" + icontact_person1 + "')";
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	if(global_cashsales_needrefresh == 1) reallySaveFolderInfo(); // save other folder info
+
+	cashaccount_details_Popup.close();
+}
+
+// 12/8/2010: send an email to whoever needed notification on CASH or CASH USD used to register sample
+// cashacct_email_notification
+void cashAccount_EmailNotification(String ifoldnum)
+{
+	csrec = getCashSalesCustomerInfo_Rec(ifoldnum);
+	if(csrec == null) return;
+
+	subjstr = "SAMPLE REGISTRATION NOTIFICATION: NEW/CASH CUSTOMER";
+	topeople = convertStringArrayToString(cashacct_email_notification);
+
+	msgtext = "FOLDER#: " + csrec.get("folderno_str") + "\n\n";
+	msgtext += "A new customer's samples have been received. Customer info:\n\n";
+	msgtext += csrec.get("customer_name") + "\n";
+	msgtext += csrec.get("address1") + "\n";
+	msgtext += csrec.get("address2") + "\n";
+	msgtext += csrec.get("zipcode") + " " + csrec.get("city") + ", " + csrec.get("state") + "\n";
+	msgtext += csrec.get("country") + "\n";
+	msgtext += "Tel: " + csrec.get("telephone") + "  Fax:" + csrec.get("fax")  + "\n";
+	msgtext += "Contact person: " + csrec.get("contact_person1") + "\n";
+	msgtext += "Email: " + csrec.get("email") + "\n\n";
+	msgtext += "PLEASE TAKE NECESSARY ACTION ASAP";
+	msgtext += "\n\n------\nDO NOT print this notification - save some trees";
+
+	simpleSendEmail(SMTP_SERVER,ELABMAN_EMAIL,topeople,subjstr,msgtext);
+	showMessageBox("CASH account email notification sent..");
+
+} // end of cashAccount_EmailNotification(ifolds);
+
+// Change folder/job status to logged. once logged, only higher level user will be able to change the data
+void logFolderJob()
+{
+	ifolds = whathuh.fj_origid_folderno.getValue();
+	if(ifolds.equals("")) return;
+
+	ifstat = whathuh.fj_folderstatus;
+
+	// folder already logged or commited, need not proceed
+	if(ifstat.equals(FOLDERLOGGED) || ifstat.equals(FOLDERCOMMITED))
+		return;
+
+	if (Messagebox.show("Log-in job/folder " + ifolds + ". Once log-in, only HOD and senior supervisor be able to amend info." , "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		whathuh.fj_folderstatus = "LOGGED";
+		whathuh.saveDetails();
+		iar_code = whathuh.fj_ar_code.getValue();
+
+		// refresh listbox
+		startFolderJobsSearch(startdate,enddate);
+		whathuh.clearDetails();
+
+		// remove folder->samples lb
+		// if there's previously a listbox, remove before adding a new one.
+		Listbox oldlb = samples_div.getFellowIfAny("samples_lb");
+		if(oldlb != null) oldlb.setParent(null);
+		
+		// 12/8/2010: added email notification if CASH/CASH USD being used
+		if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+		{
+			cashAccount_EmailNotification(ifolds);
+		}
+	}
+}
+
+void printSRA_Wrapper()
+{
+	ifoldi = whathuh.fj_origid_folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	printSRA(ifoldi); // samplereg_funcs.zs
+	
+} // end of printSRA_Wrapper()
+
+void printSampleLabels_Wrapper()
+{
+	// see if we have any samples in listbox - hardcoded samples_lb
+	if(samples_lb.getItemCount() < 1) return;
+	
+	ifoldi = whathuh.fj_origid_folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	// 24/2/2010: save samples id full string eg. ALSM000010001 before printing.
+	// Previously depended on the onSelect event to kick this func, not totally saved the full-string
+	saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+	
+	// 24/2/2010: save also the folder info, BIRT cannot pickup the company-name by ar-code field
+	whathuh.saveDetails();
+	
+	printSampleLabels(ifoldi); // samplereg_funcs.zs
+	
+} // end of printSampleLabels_Wrapper()
+
+void playAssignCustomerWindow()
+{
+	// no folder/job selected, just return
+	if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+	
+	// 29/1/2010: if folder status is LOGGED - don't open window
+	jjk = whathuh.fj_folderstatus;
+	if(jjk.equals(FOLDERLOGGED) || jjk.equals(FOLDERCOMMITED)) return;
+	
+	uniqwindowid = "srhcust" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/customer_search_popup.zul", uniqwindowid, "getcust=1",useraccessobj);
+	windcounter++;
+}
+
+// onSelect listener for TAT dropdown .. will calc the TAT
+class TAT_DD_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// if no folder selected or TAT not selected, just return..
+		if(whathuh.fj_origid_folderno.getValue().equals("")) return;
+		// fj_due_date
+		ttd = tat_dd.getSelectedItem().getLabel();
+		tatdays = Integer.parseInt(ttd);
+		addDaysToDate(whathuh.fj_date_created,whathuh.fj_due_date,tatdays);
+
+		// 16/3/2010: check whether it's a saturday/sunday, if so, add more days. not going to release report on a weekend.
+		weekEndCheck(whathuh.fj_due_date);
+		/*
+		Calendar iduedatecheck = Calendar.getInstance();
+		iduedatecheck.setTime(whathuh.fj_due_date.getValue());
+		
+		iwday = iduedatecheck.get(iduedatecheck.DAY_OF_WEEK);
+		addupweekends = 0;
+		if(iwday == iduedatecheck.SUNDAY) addupweekends = 1;
+		if(iwday == iduedatecheck.SATURDAY) addupweekends = 2;
+		
+		addDaysToDate(whathuh.fj_due_date,whathuh.fj_due_date,addupweekends);
+		
+		// alert(iwday.toString() + " : " + mestr);
+		*/
+	}
+}
+
+]]>
+</zscript>
+
+<!-- cash account customer details popup -->
+<popup id="cashaccount_details_Popup">
+<groupbox width="300px">
+<caption id="cashacctdetail_lbl" label="Cash account - customer details" />
+	<vbox>
+		<hbox>
+			<label value="Cust.Name" style="font-size:9px" />
+			<separator width="10px" />
+			<textbox id="ca_customer_name_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Cont.Person" style="font-size:9px" />
+			<separator width="4px" />
+			<textbox id="ca_contact_person1_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Address1" style="font-size:9px" />
+			<separator width="17px" />
+			<textbox id="ca_address1_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Address2" style="font-size:9px" />
+			<separator width="17px" />
+			<textbox id="ca_address2_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="City" style="font-size:9px" />
+			<separator width="45px" />
+			<textbox id="ca_city_tb" width="70px" style="font-size:9px" />
+			
+			<label value="Zipcode" style="font-size:9px" />
+			<textbox id="ca_zipcode_tb" width="70px" style="font-size:9px" />
+		</hbox>
+
+		<hbox>
+			<label value="State" style="font-size:9px" />
+			<separator width="39px" />
+			<textbox id="ca_state_tb" width="70px" style="font-size:9px" />
+			
+			<label value="Country" style="font-size:9px" />
+			<textbox id="ca_country_tb" width="70px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Telephone" style="font-size:9px" />
+			<separator width="14px" />
+			<textbox id="ca_telephone_tb" width="70px" style="font-size:9px" />
+			
+			<label value="Fax" style="font-size:9px" />
+			<separator width="18px" />
+			<textbox id="ca_fax_tb" width="70px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="Email" style="font-size:9px" />
+			<separator width="38px" />
+			<textbox id="ca_email_tb" width="100px" style="font-size:9px" />
+		</hbox>
+		<separator height="3px" />
+		<hbox>
+			<button label="Save" style="font-size:9px" onClick="ca_save_Clicker()" />
+			<button label="Close" style="font-size:9px" onClick="cashaccount_details_Popup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<div width="1200px">
+<panel id="registernewsamples_panel" title="Samples Registration v.2" border="normal" collapsible="true" closable="true"  >
+<panelchildren>
+
+<div>
+<borderlayout height="830px">
+	<west title="Folders/Jobs" size="60%" splittable="true" collapsible="true">
+	<div>
+		<separator height="3px" />
+		
+		<hbox>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" />
+
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" />
+
+			<button id="search_btn" label="Refresh" style="font-size:9px" onClick="startFolderJobsSearch(startdate, enddate)" />
+
+			<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+			<!-- put in a drop-down to allow search for deleted folders , only admin account can see this one -->
+		</hbox>
+		
+		<separator height="3px" />
+
+		<div id="folderjobs_div" />
+
+		<separator height="3px" />
+
+		<hbox>
+			<separator width="3px" />
+			<button label="New folder/job" style="font-size:9px" onClick="createNewFolder_Wrapper(hiddendatebox)" />
+			<button label="Remove" style="font-size:9px" onClick="deleteFolderJob()" />
+			<button label="Log-in folder/job" style="font-size:9px" onClick="logFolderJob()" />
+			<button label="Print Sample Receipt Advice" style="font-size:9px" onClick="printSRA_Wrapper()" />
+		</hbox>
+
+		<separator height="3px" />
+
+		<!-- folder metadata -->
+		<groupbox id="gb_folderinformation" mold="3d" >
+			<caption id="folderinfo_title_lbl" label="Folder information" />
+
+			<div style="background:#AA77CC">
+				<hbox>
+					<separator width="3px" />
+					<label id="customername" style="font-size:14px;font-weight:bold;color:#FFFFFF;background:#AA77CC" />
+				</hbox>
+			</div>
+
+			<separator height="5px" />
+			
+			<groupbox>
+				<hbox>
+					<vbox>
+						<hbox>
+							<label value="FolderNo" style="font-size:9px" />
+							<separator width="13px" />
+							<textbox id="folderno" disabled="true" width="100px" style="font-size:12px;font-weight:bold" />
+						</hbox>
+
+						<hbox>
+							<label value="Cont.Person" style="font-size:9px" />
+							<textbox id="attention" />
+						</hbox>
+					</vbox>
+					
+					<vbox>
+						<hbox>
+							<label value="Cust.PO" style="font-size:9px" />
+							<separator width="4px" />
+							<textbox id="customer_po" />		
+						</hbox>
+						
+						<hbox>
+							<label value="Cust.COC" style="font-size:9px" />
+							<textbox id="customer_coc" />		
+						</hbox>
+					
+					</vbox>
+					
+					<vbox>
+						<hbox>
+							<label value="CustCode" style="font-size:9px" />
+							<textbox id="ar_code" width="80px" droppable="true" onDrop="dropAR_Code(event)" />
+							<button label="Reload" style="font-size:8px" onClick="refreshCustomerDetails_Clicker()" />
+						</hbox>
+						<hbox>
+							<separator width="30px" />
+							<button label="Assign customer" style="font-size:9px" onClick="playAssignCustomerWindow()" />
+						</hbox>
+					</vbox>
+
+				</hbox>
+			</groupbox>
+			
+			<groupbox>
+				<caption label="Dates" />
+				<hbox>
+					<label value="Date samples received" style="font-size:9px" />
+					<separator width="42px" />
+					<datebox id="date_created" format="yyyy-MM-dd" />
+					
+					<label value="Due date (working days)" style="font-size:9px" />
+					<separator width="10px" />
+					<datebox id="due_date" format="yyyy-MM-dd" disabled="true" />
+				</hbox>
+				<separator height="3px" />
+				<hbox>
+					<label value="Customer requested due date" style="font-size:9px" />
+					<separator width="9px" />
+					<datebox id="clientreq_duedate" format="yyyy-MM-dd" />
+
+					<label value="TAT" style="font-size:9px" />
+					<listbox id="tat_dd" mold="select" style="font-size:9px" />
+					<zscript>
+						populateDropdownListbox(tat_dd,desiredTAT);
+						// use this eventlistener to calc the TAT based on what's been selected
+						tat_dd.addEventListener("onSelect", new TAT_DD_Listener());
+					</zscript>
+					<label value=" day(s)" style="font-size:9px" />
+
+					<separator width="27px" />
+
+					<label value="Priority" style="font-size:9px" />
+					<listbox id="priority_dd" mold="select" style="font-size:9px" />
+					<zscript>
+						populateDropdownListbox(priority_dd,priorities);
+					</zscript>
+				</hbox>
+			</groupbox>
+
+			<groupbox>
+				<caption label="Delivery Details"/>
+				<hbox>
+					<vbox>
+						<checkbox id="allgoodorder" label="All samples and paperwork received in good order" style="font-size:9px" />
+						<checkbox id="paperworknot" label="No paperwork included. Get customer's requirement" style="font-size:9px" />
+						<checkbox id="paperworksamplesnot" label="Paperwork/Samples incomplete or ambigious. Please contact customer" style="font-size:9px" />
+						<checkbox id="samplesdamaged" label="Samples were damaged during transit. Please contact customer" style="font-size:9px" />
+					</vbox>
+
+					<separator width="5px" />
+
+					<groupbox width="240px">
+						<hbox>
+							<label value="Mode of delivery" style="font-size:9px" />
+							<separator width="20px" />
+							<listbox id="modeofdelivery" mold="select" style="font-size:9px" />
+							<zscript>
+								populateDropdownListbox(modeofdelivery,modeDelivery);
+							</zscript>
+						</hbox>
+						<separator height="3px" />
+						<hbox>
+							<label value="Security Seal" style="font-size:9px" />
+							<separator width="35px" />
+							<listbox id="securityseal" mold="select" style="font-size:9px" />
+							<zscript>
+								populateDropdownListbox(securityseal,securitySeals);
+							</zscript>
+						</hbox>
+						<separator height="3px" />
+						<hbox>
+							<label value="No. of Coolers/Boxes" style="font-size:9px" />
+							<textbox id="boxescount" width="50px" />
+						</hbox>
+						<separator height="3px" />
+						<hbox>
+							<label value="Temperature" style="font-size:9px" />
+							<separator width="37px" />
+						<textbox id="box_temperature" width="50px" />
+						</hbox>
+					</groupbox>
+				</hbox>
+			</groupbox>
+
+			<separator height="3px" />
+			<hbox>
+				<label value="Comments" style="font-size:9px" />
+				<textbox id="extranotes" multiline="true" height="80px" width="380px" style="font-size:9px" />
+
+				<vbox>
+					<button id="savefolderinfo_btn" label="Save folder info" style="font-size:9px" onClick="updateFolderJob()" />
+					<button id="editcashsales_info_btn" label="CASH customer info" style="font-size:9px" onClick="editOnlyCashSales_Info()" />
+					<!-- <button label="dddd" style="font-size:7px" onClick='cashAccount_EmailNotification("")' /> -->
+				</vbox>
+			</hbox>
+		</groupbox>
+		<!-- end of folder metadata -->
+	</div>
+	</west>
+
+	<center title="Samples">
+		<div>
+			<separator height="3px" />
+			<hbox>
+				<separator width="3px" />
+				<button label="Add samples" style="font-size:9px" onClick="createNewSampleEntry()" />
+				<button label="Remove samples" style="font-size:9px" onClick="removeSampleEntry()" />
+				<button label="Print labels" style="font-size:9px" onClick="printSampleLabels_Wrapper()" />
+			</hbox>
+			<separator height="3px" />
+
+			<div id="samples_div" />
+
+			<separator height="3px" />
+
+			<groupbox id="sampleinfo_gb">
+				<caption label="Sample information" />
+					<hbox>
+						<label value="SampleID" style="font-size:9px" />
+						<textbox id="sampleid_str" disabled="true" />
+					</hbox>
+					<hbox>
+						<separator width="7px" />
+						<label value="Marking" style="font-size:9px" />
+						<textbox id="samplemarking" width="280px" style="font-size:9px" />
+					</hbox>
+					<hbox>
+						<separator width="17px" />
+						<label value="Notes" style="font-size:9px" />
+						<textbox id="sample_extranotes" multiline="true" height="80px" width="280px" style="font-size:9px" />
+					</hbox>
+					<separator height="3px" />
+					<hbox>
+						<separator width="3px" />
+						<button label="Save sample info" style="font-size:9px" onClick="saveSampleMetadata()" />
+					</hbox>
+			</groupbox>
+		</div>
+		<!-- end of Samples Div -->
+	</center>
+</borderlayout>
+</div>
+
+<zscript>
+<![CDATA[
+
+if(can_access)
+{
+	// Set search today's date
+	setTodayDatebox(startdate);
+	setTodayDatebox(enddate);
+	setTodayDatebox(hiddendatebox);
+
+	startFolderJobsSearch(startdate, enddate);
+
+	// show empty samples listbox when loaded
+	startFolderSamplesSearch(folderno);
+
+	tfolderJobs = new folderJobObj(folderno, date_created, ar_code, customername, extranotes, tat_dd,
+		customer_po,customer_coc,clientreq_duedate,modeofdelivery,securityseal,boxescount,box_temperature,
+		allgoodorder,paperworknot,paperworksamplesnot,samplesdamaged
+	);
+
+	whathuh = tfolderJobs;
+	// manually set ui components, parameters passing hits the limit above
+	whathuh.fj_attention = attention;
+	whathuh.fj_due_date = due_date;
+	whathuh.fj_priority = priority_dd;
+
+	tfolderSamples = new sampleObj(sampleid_str,samplemarking,sample_extranotes);
+	whathuh_samples = tfolderSamples;
+}
+
+// search_btn.setDisabled(true);
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

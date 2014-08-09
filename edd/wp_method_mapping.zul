@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="wp_method_mapping_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Worley Parson EDD method mapping
+Written by: Victor Wong
+
+**NOTES**
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+Object[] wpmethods_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Anlyt.Mthd",true),
+	new listboxHeaderObj("Method name",true),
+	new listboxHeaderObj("ALS.Method",true),
+};
+
+void showWorleyParsonMethods()
+{
+	sqlstm = "select top 30 * from EQDD_ELB_Methods_Mapping";
+
+	wpm = replaceSingleQuotes(wp_method_name.getValue());
+	
+	if(!wpm.equals(""))
+		sqlstm = "select * from EQDD_ELB_Methods_Mapping where eqdd_analytic_method like '%" + wpm + "%' or eqdd_preferred_name like '%" + wpm + "%'";
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	wpmethds = sql.rows(sqlstm);
+	sql.close();
+
+	Listbox newlb = makeVWListbox(wp_methods_div, wpmethods_lb_headers, "wpmethods_lb", 20);
+
+	for(dpi : wpmethds)
+	{
+		ArrayList scmk = new ArrayList();
+		
+		scmk.add(dpi.get("origid").toString());
+		scmk.add(dpi.get("eqdd_analytic_method"));
+		scmk.add(dpi.get("eqdd_preferred_name"));
+		scmk.add(dpi.get("elb_method"));
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");	
+	}
+}
+
+Object[] alsmethods_lb_headers = {
+	new listboxHeaderObj("ALS Method",true),
+};
+
+// 20/8/2010: just take stockmasterdetails.description2 and item_type='Service item'
+void showALSMethods()
+{
+	sqlstm = "select top 30 description2 from stockmasterdetails where item_type='Service Item' and description2 is not null and description2<>''";
+	alsm = replaceSingleQuotes(als_method_name.getValue());
+
+	if(!alsm.equals(""))
+		sqlstm = "select distinct description2 from stockmasterdetails where item_type='Service Item' and description2 like '%" + alsm + "%'";
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	wpmethds = sql.rows(sqlstm);
+	sql.close();
+
+	Listbox newlb = makeVWListbox(als_methods_div, alsmethods_lb_headers, "alsmethods_lb", 20);
+
+	for(dpi : wpmethds)
+	{
+		ArrayList scmk = new ArrayList();
+		
+		kkb = trimListitemLabel(dpi.get("description2"),34);
+		kkb = checkNullString(kkb);
+
+		scmk.add(kkb);
+		strarray = convertArrayListToStringArray(scmk);
+		insertListItems(newlb,strarray,"false");	
+	}
+}
+
+// 20/8/2010: link warley-parson method to ALS rojak method
+void methodLinking_clicker()
+{
+	// nothing selected or no listbox, return lor
+	if(wp_methods_div.getFellowIfAny("wpmethods_lb") == null) return;
+	if(wpmethods_lb.getSelectedIndex() == -1) return;
+	if(als_methods_div.getFellowIfAny("alsmethods_lb") == null) return;
+	if(alsmethods_lb.getSelectedIndex() == -1) return;
+
+	wporigid = wpmethods_lb.getSelectedItem().getLabel(); // first col = origid
+	alsmethodstr = alsmethods_lb.getSelectedItem().getLabel(); // 1 col only.. haha
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update eqdd_elb_methods_mapping set elb_method='" + alsmethodstr + "' where origid=" + wporigid;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	showWorleyParsonMethods(); // refresh
+}
+
+// 20/8/2010: let user clear-off the ALS method linking to warley parksen one
+void wpMethodClear_clicker()
+{
+	if(wp_methods_div.getFellowIfAny("wpmethods_lb") == null) return;
+	if(wpmethods_lb.getSelectedIndex() == -1) return;
+
+	wporigid = wpmethods_lb.getSelectedItem().getLabel(); // first col = origid
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "update eqdd_elb_methods_mapping set elb_method='' where origid=" + wporigid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	showWorleyParsonMethods(); // refresh
+}
+
+]]>
+</zscript>
+
+<div width="1100px">
+<panel id="wp_method_map_panmee" title="Worley Parson -> ALS methods mapping" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div style="padding:3px">
+
+Anlyt.Mthd(Analytic Method) will be reported in the EQDD file - please link the methods correctly
+<separator height="3px" />
+
+<hbox>
+	<separator width="660px" />
+	<button id="clearmethod" label="Clear method" style="font-size:9px" onClick="wpMethodClear_clicker()" />
+	<button id="linkmethod_btn" label=".:: Link method" style="font-size:9px" onClick="methodLinking_clicker()" />
+</hbox>
+<separator height="5px" />
+<hbox>
+	<groupbox>
+		<caption label="Worley Parson methods" />
+		<hbox>
+			<label value="Look for" style="font-size:9px" />
+			<textbox id="wp_method_name" style="font-size:9px" />
+			<button id="wp_findmethod_btn" label="Search" style="font-size:9px" onClick="showWorleyParsonMethods()" />
+		</hbox>
+		<separator height="3px" />
+		<div id="wp_methods_div" />
+	</groupbox>
+	
+	<groupbox width="250px" >
+		<caption label="ALS methods" />
+		<hbox>
+			<label value="Look for" style="font-size:9px" />
+			<textbox id="als_method_name" style="font-size:9px" />
+			<button id="als_findmethod_btn" label="Search" style="font-size:9px" onClick="showALSMethods()" />
+		</hbox>
+		<separator height="3px" />
+		<div id="als_methods_div" />
+	</groupbox>
+</hbox>
+
+</div>
+</panelchildren>
+</panel>
+
+<zscript>
+<![CDATA[
+
+]]>
+</zscript>
+
+</div>
+</zk>

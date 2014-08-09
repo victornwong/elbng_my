@@ -1,0 +1,598 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="foldertracker_by_date_mod"?>
+<!--
+
+Title: Folders tracking by date - all sorta tracking information here
+Coding began date	:
+Developers			: Victor
+
+**NOTES**
+
+-->
+
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import java.util.ArrayList;
+import java.util.List;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+glob_mysoftcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,3);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+// global var for this module
+global_dateselected = "";
+previous_tree_folderno = "";
+
+void showmeparent(Component icompo)
+{
+	alert("parent=" + icompo.getParent());
+}
+
+// Populate tree with sampleID -> tests
+populateSamplesTestParameters(Tree itree, String ifolderno)
+{
+	// if previously loaded the same folderno.. need not reload, wasting bandwidth
+	if(previous_tree_folderno.equals(ifolderno)) return;
+
+	previous_tree_folderno = ifolderno;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+		
+	// get all sample IDs for folderno
+	// 4/3/2010: sql statement for admin login - can see even deleted samples
+
+	sqlstatem = "select * from JobSamples where jobfolders_id=" + ifolderno + " and deleted=0 order by sampleid_str asc";
+	
+	if(useraccessobj.accesslevel > 8)
+		sqlstatem = "select * from JobSamples where jobfolders_id=" + ifolderno + " order by sampleid_str asc";
+
+	allsampleids = sql.rows(sqlstatem);
+	
+	Treechildren tocheck = itree.getTreechildren();
+	if(tocheck != null)	tocheck.setParent(null);
+	
+	if(allsampleids != null && allsampleids.size() != 0)
+	{
+		// create a new treechildren for the tree
+		Treechildren mychildren = new Treechildren();
+		mychildren.setParent(itree);
+
+		String[] strarray = new String[2];				
+		
+		// loop through each sample IDs and get tests
+		for(eachsampleid : allsampleids)
+		{
+			sdelstr = (eachsampleid.get("deleted") == 1) ? " [del]" : "";
+
+			sampleidstr = eachsampleid.get("sampleid_str") + sdelstr;
+			sampleidno = eachsampleid.get("origid");
+			samplemark = eachsampleid.get("samplemarking");
+			
+			// if sample id str in table ain't set.. set it. old codes didn't update the sample id str properly
+			if(sampleidstr.equals(""))
+			{
+				sampleidstr = param_folderno + padZeros5(sampleidno); // param_folderno is global, def at top
+
+				// 27/2/2010: update sampleid_str field incase of old codes never do it
+				sqls3 = "update JobSamples set sampleid_str='" + sampleidstr + "' where origid=" + sampleidno.toString();
+				sql.execute(sqls3);
+			}
+			
+			Treeitem titem = insertTreeLeaf(mychildren, sampleidstr, "font-weight:bold; background:#898989; color:#ffffff");
+			
+			// get tests assigned for the sample-id
+
+			sqlstatem2 = "select * from JobTestParameters where jobsamples_id=" + sampleidno.toString();
+			teststosampleid = sql.rows(sqlstatem2);
+
+			if(teststosampleid != null)
+			{
+				Treechildren newone = new Treechildren();
+				newone.setParent(titem);
+
+				// insert sample marking as leaf if available
+				if(!samplemark.equals(""))
+					insertTreeLeaf(newone, "SM: " + samplemark, "font-size:9px; background:#4466bb; color:#ffffff");
+
+				// loop through all the tests assigned and put them as leafs
+				for(eacht2s : teststosampleid)
+				{
+					mysoftcode = eacht2s.get("mysoftcode");
+					
+					stockrec = getStockMasterDetails(mysoftcode.toString());
+					testdesc = "-Undefined-";
+					
+					if(stockrec != null)
+						testdesc = stockrec.get("Description") + " (" + stockrec.get("Description2") + ")" ;
+
+					// insertTreeLeaf(newone,testdesc,"font-size:9px");
+						strarray[0] = testdesc;
+						strarray[1] = "-WIP-";
+
+						insertTreeLeaf_Multi(newone, strarray, "font-size:9px");
+				}
+			}
+		}
+	}
+
+	sql.close();
+
+} // end of populateSamplesTestParameters()
+
+void clearFolderMetadata()
+{
+	metadata_customername.setValue("");
+	metadata_extranotes.setValue("");
+
+	metadata_date_created.setValue("");
+	metadata_due_date.setValue("");
+
+	metadata_folderstatus.setValue("");
+	metadata_labfolderstatus.setValue("");
+}
+
+void showFolderMetadata(String ifolderno)
+{
+	therec = getFolderJobRec(ifolderno);
+	
+	iar_code = therec.get("ar_code");
+	
+	if(!iar_code.equals(""))
+	{
+		icompname = getCompanyName(iar_code);
+		metadata_customername.setValue(icompname);
+	}
+	
+	metadata_extranotes.setValue(therec.get("extranotes"));
+	
+	metadata_date_created.setValue(therec.get("datecreated").toString().substring(0,10));
+	metadata_due_date.setValue(therec.get("duedate").toString().substring(0,10));
+	
+	metadata_folderstatus.setValue(therec.get("folderstatus"));
+	metadata_labfolderstatus.setValue(therec.get("labfolderstatus"));
+
+}
+
+class folderOnSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		ifoldern = getListcellItemLabel(lbitem,0);
+
+		folderno_str = Integer.parseInt(extractFolderNo(ifoldern)).toString();
+		populateSamplesTestParameters(sampletests_tree,folderno_str);
+		
+		// show also the folder metadata
+		showFolderMetadata(folderno_str);
+
+	}
+}
+
+/*
+Listbox makeFoldersListbox(Div mDiv, int totalrecs)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("folderjobs_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("folderjobs_lb");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new folderOnSelect_Listener());
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("FolderNo");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+	
+    Listheader hd5 = new Listheader();
+    hd5.setLabel("TAT");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+	
+    Listheader hd6 = new Listheader();
+    hd6.setLabel("DueDate");
+    hd6.setSort("auto");
+    hd6.setParent(newhead);
+	
+    Listheader hd8 = new Listheader();
+    hd8.setLabel("Samples");
+    hd8.setSort("auto");
+    hd8.setParent(newhead);
+	
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Customer");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+	Listheader hd9 = new Listheader();
+    hd9.setLabel("Status");
+    hd9.setSort("auto");
+    hd9.setParent(newhead);
+
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    Listfooter fd1 = new Listfooter();
+    fd1.setLabel("Found:");
+    fd1.setParent(newfooter);
+
+    Listfooter fd2 = new Listfooter();
+    fd2.setLabel(totalrecs.toString() + " folders");
+    fd2.setParent(newfooter);
+
+    newlb.setRows(30);
+
+    return newlb;
+
+} // end of makeFoldersListbox()
+*/
+
+Object[] folders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("TAT",true),
+	new listboxHeaderObj("DueDate",true),
+	new listboxHeaderObj("Samples",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true)
+};
+
+void startFolderJobsSearch_ByDate(String idateme, String ilabfolderstatus)
+{
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	// 29/3/2010: check branch
+	branch_str = "";
+	
+	ibranch = useraccessobj.branch;
+	if(!ibranch.equals("ALL")) // if admin login, should be able to see all folders else filter according to branch
+	{
+		branch_str = "and branch='" + ibranch + "' ";
+	}
+	
+	labfolderstat_str = "";
+	if(!ilabfolderstatus.equals("ALL")) // sort-by-status not equal to ALL, use whatever selected
+		labfolderstat_str = "and folderstatus='" + sortbystatus + "' ";
+
+	sqlstatem = "select top 510 * from JobFolders where datecreated='" + idateme + "' " + 
+	" and deleted=0 " + labfolderstat_str + branch_str + " order by datecreated asc";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	// create a new listbox and attach to searchdiv
+	//Listbox newlb = makeFoldersListbox(folders_div,reccount);
+
+	footstring = reccount.toString() + " recs";
+	Listbox newlb = makeVWListboxWithFooter(folders_div, folders_lb_headers, "folderjobs_lb", 30, footstring);
+	newlb.addEventListener("onSelect", new folderOnSelect_Listener());
+
+	if(tlist == null || tlist.size() == 0)
+	{
+		newlb.setRows(10);
+		return;
+	}
+	
+	String[] strarray = new String[6];
+	total_numsamples = 0;
+
+	for(ilist : tlist)
+	{
+		ifolderno = ilist.get("origid");
+
+		folderbranch = ilist.get("branch");
+		folderprefix = folderPrefixByBranch(folderbranch);
+
+		// 15/4/2010: set branch folders prefix
+		/*if(ibranch.equals("JB"))
+			folderprefix = JB_JOBFOLDERS_PREFIX;
+
+		if(ibranch.equals("KK"))
+			folderprefix = KK_JOBFOLDERS_PREFIX;
+		*/
+
+		strarray[0] = folderprefix + padZeros5(ifolderno);
+
+		strarray[1] = ilist.get("tat") + " day(s)";
+		strarray[2] = ilist.get("duedate").toString().substring(0,10);
+			
+		// 27/2/2010: get number of samples for this folder
+		numsamples = getNumberOfSamples_InFolder(ifolderno);
+		strarray[3] = numsamples.toString();
+
+		total_numsamples = total_numsamples + numsamples;
+
+		// get customer name from ar_code - will be slow if alot, scan 1 by 1
+		iar_code = ilist.get("ar_code");
+		icompanyname = "--UnD--";
+
+		if(!iar_code.equals(""))
+			icompanyname = trimListitemLabel(getCompanyName(iar_code), 35);
+
+		strarray[4] = icompanyname;
+
+		strarray[5] = ilist.get("labfolderstatus");
+
+		insertListItems(newlb,strarray,folderprefix);
+	}
+
+	// 8/3/2010: hardcoded numofsamples_lbl def in UI section. To show total number of samples collected
+	numofsamples_lbl.setValue("Total samples : " + total_numsamples.toString());
+
+} // end of startFolderJobsSearch_ByDate(String idateme, String ilabfolderstatus)
+
+void viewFolderDetails()
+{
+	if(folders_div.getFellowIfAny("folderjobs_lb") == null) return;
+	if(folderjobs_lb.getSelectedIndex() == -1) return;
+	
+	lbitem = folderjobs_lb.getSelectedItem();
+	ifoldern = getListcellItemLabel(lbitem,0);
+
+	// folderno_str = Integer.parseInt(extractFolderNo(ifoldern)).toString();
+	
+	theparam = "folderno=" + ifoldern;
+	uniqwindowid = makeRandomId("xxfoldxx");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+	
+	//populateSamplesTestParameters(sampletests_tree,folderno_str);
+		
+	// show also the folder metadata
+	//showFolderMetadata(folderno_str);
+
+
+}
+
+class uniqDateSelect_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		lbitem = event.getReference();
+		idate = getListcellItemLabel(lbitem,0);
+		
+		global_dateselected = idate;
+
+		labfoldstat = lb_foldersortbystatus.getSelectedItem().getLabel();
+		startFolderJobsSearch_ByDate(idate,labfoldstat);
+		
+		// clear folder-details tree
+		Treechildren tocheck = sampletests_tree.getTreechildren();
+		if(tocheck != null)	tocheck.setParent(null);
+
+		clearFolderMetadata();
+	}
+}
+
+Listbox makeUniqFolderDate_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("uniqfolderdate_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("uniqfolderdate_lb");
+    newlb.setVflex(true);
+	
+	// newlb.setDroppable("uniqtest");
+	
+	newlb.addEventListener("onSelect", new uniqDateSelect_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Date");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    newlb.setRows(34);
+
+    return newlb;
+
+} // end of makeUniqFolderDate_Listbox()
+
+void populateUniqFolderDate_Listbox(Div idiv)
+{
+	ibranch = useraccessobj.branch;
+	branch_str = "";
+
+	if(!ibranch.equals("ALL"))
+		branch_str = "and branch='" + ibranch + "' ";
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	// see if need to filter out those RELEASED folders
+	sqlst1 = "select distinct datecreated from JobFolders where deleted=0 " + branch_str + " order by datecreated asc";
+	uniqdates = sql.rows(sqlst1);
+	
+	sql.close();
+	
+	Listbox newlb = makeUniqFolderDate_Listbox(idiv);
+	
+	if(uniqdates == null || uniqdates.size() == 0)
+	{
+		newlb.setRows(10);
+		return;
+	}
+
+	String[] strarray = new String[1];
+
+	for(idateo : uniqdates)
+	{
+		strarray[0] = idateo.get("datecreated").toString().substring(0,10);
+		insertListItems(newlb, strarray, "false");
+	}
+}
+
+// to fresh folders listbox based on whatever labfolderstatus sort-by selected
+void refreshFolders_Listbox()
+{
+	labfoldstat = lb_foldersortbystatus.getSelectedItem().getLabel();
+	startFolderJobsSearch_ByDate(global_dateselected,labfoldstat);
+}
+
+
+]]>
+</zscript>
+
+<div width="1100px">
+<panel id="foldertracker_by_date_panel" title="Folder/Jobs Tracker by Date" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="550px">
+	<west title="Dates with folders" size="13%" splittable="true" collapsible="true">
+	<div>
+		<div id="trackdate_div" />
+	</div>
+	</west>
+	
+	<center>
+		<borderlayout height="550px">
+			<west title="Folders" size="56%" splittable="true" collapsible="true">
+			<div>
+				<hbox>
+					<label value="Lab status" />
+					<listbox id="lb_foldersortbystatus" mold="select" rows="1" style="font-size:9px" />
+					<button id="refreshsampleidlistbox_btn" label="Refresh" onClick="refreshFolders_Listbox()" style="font-size:9px" />
+
+					<separator width="5px" />
+					<label id="numofsamples_lbl" style="font-size:10px; font-weight:bold; background:#404040; color:#ffffff; padding: 3px 3px 3px 3px;" />
+					
+				</hbox>
+				
+				<hbox>
+					<button id="folderdet_btn" label="Folder details" style="font-size:9px" onClick="viewFolderDetails()" />
+					<button id="doctrail_btn" label="Document links" style="font-size:9px"  />
+				</hbox>
+
+				<separator height="3px" />
+
+				<div id="folders_div" />
+
+			</div>
+			</west>
+			
+			<center title="Folder details">
+				<div>
+					<tree id="sampletests_tree" zclass="z-dottree" rows="16" width="100%" >
+						<treecols>
+							<treecol label="SampleID/Sample Marking/Tests" />
+							<treecol label="Results" />
+						</treecols>
+					</tree>
+					
+				<groupbox>
+					<vbox>
+						<label id="metadata_customername" style="font-size:13px; font-weight:bold" />
+					
+						<hbox>
+							<label value="Date created" />
+							<label id="metadata_date_created" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+							
+							<label value="Due" />
+							<label id="metadata_due_date" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+						</hbox>
+						
+						<hbox>
+							<label value="FolderStat" />
+							<label id="metadata_folderstatus" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+							
+							<label value="LabStat" />
+							<label id="metadata_labfolderstatus" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" />
+						</hbox>
+					
+						<textbox id="metadata_extranotes" multiline="true" height="80px" width="350px" disabled="true" style="font-weight:bold" />
+						
+					</vbox>
+				</groupbox>
+					
+				</div>
+			</center>
+
+		</borderlayout>
+	</center>
+
+</borderlayout>
+
+</div>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+
+setTodayDatebox(hiddendatebox);
+
+populateUniqFolderDate_Listbox(trackdate_div);
+
+populateDropdownListbox(lb_foldersortbystatus, labfolderstatus_lookup);
+
+</zscript>
+
+</zk>
+

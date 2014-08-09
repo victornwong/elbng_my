@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="incidentmanager"?>
+<?page title="Incident Manager" ?>
+
+<zk>
+
+<window id="incidentmanagerwin" title="Incident Manager" closable="true" width="600px" height="400px" mode="overlapped" position="center"
+ onOK = "iw_onOK()" onCancel="closeMe()" onClose="closeMe()"
+>
+
+	<vbox>
+		<label value="thing thong incidents" id="tingtong" />
+		<separator />
+		<button id="thebutton" label="Changeme" onClick="tingtong.value = &quot; changeddd... &quot;" />
+		<button id="closebutton" label="Close window" onClick="closeMe()" />
+		
+	</vbox>
+	
+<zscript>
+
+void iw_onOK()
+	{
+		alert("onOK fire");
+	}
+
+void closeMe()
+{
+	// refering back to main page, hardcoded for now.
+	Div contdiv = Path.getComponent("//main/mainWindow/thecontent");
+	Include thiswin = contdiv.getFellow("incidentmanager");
+	
+	// just set the include source to empty, should remove this window
+	thiswin.setSrc("");
+}
+
+</zscript>
+	
+</window>
+	
+</zk>

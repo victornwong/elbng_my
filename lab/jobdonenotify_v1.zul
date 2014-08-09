@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="jobdonenotify_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.1";
+/*
+Title		: Notify whoever when job-folder tests is completed
+Written by	: Victor Wong
+Dated		: 04/05/2012
+
+Revisions:
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+lastload_type = 0;
+
+// itype: 1=tribology(jobfolders.share_sample='WEARCHECK')
+void loadFolders(int itype)
+{
+Object[] lfolders_headers = {
+	new listboxHeaderWidthObj("Dated",true,"100px"),
+	new listboxHeaderWidthObj("Folder",true,"70px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Notified",true,"100px"),
+	new listboxHeaderWidthObj("origid",false,""),
+};
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+    lastload_type = itype;
+
+    workarea.setVisible(true);
+
+sqlstm = "select jf.origid,jf.ar_code,jf.datecreated,jf.folderno_str,jf.testdonedate,cust.customer_name,csci.customer_name as cashcustomer,cust.category from jobfolders jf " +
+"left join customer cust on jf.ar_code = cust.ar_code " +
+"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+"where jf.share_sample='WEARCHECK' and jf.datecreated between '" + sdate + "' and '" + edate + "' order by jf.datecreated";
+
+	trecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(trecs == null) return;
+
+	newlb = lbhand.makeVWListbox_Width(folders_holder,lfolders_headers,"jobfolders_lb",20);
+	newlb.setCheckmark(true);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new itestClick());
+
+	for(dpi : trecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("folderno_str"));
+
+		custname = dpi.get("customer_name");
+		if(dpi.get("ar_code").equals("CASH") || dpi.get("ar_code").equals("300S-550")) custname = "Csh: " + dpi.get("cashcustomer");
+		kabom.add(custname);
+
+		kabom.add(kiboo.checkNullDate(dpi.get("testdonedate"),""));
+		kabom.add(dpi.get("origid").toString());
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		wik = lbhand.insertListItems(newlb,strarray,"","");
+
+		if(useraccessobj.accesslevel < 9)
+			if(dpi.get("testdonedate") != null) wik.setDisabled(true);
+	}
+
+}
+
+void sendTestDoneNoti()
+{
+	if(jobfolders_lb.getSelectedCount() == 0) return;
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	selitems = jobfolders_lb.getSelectedItems();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	
+	subjstr = "Re: [Tribology] Tests completed notification";
+
+	msgbody = "<html><head></head><body>";
+	msgbody += "<p>This is a notification email on tests already completed for these job-folder(s).</p>";
+	msgbody += "<table border=1><tr><th>Dated</th><th>Folder</th><th>Customer</th></tr>";
+	
+	for(dpi : selitems)
+	{
+		fori = lbhand.getListcellItemLabel(dpi,4);
+		sqlstm = "update jobfolders set testdonedate='" + todate + "' where origid=" + fori;
+		sql.execute(sqlstm);
+
+		fdated = lbhand.getListcellItemLabel(dpi,0);
+		fostr = lbhand.getListcellItemLabel(dpi,1);
+		fcustname = lbhand.getListcellItemLabel(dpi,2);
+		
+		msgbody += "<tr><td>" + fdated + "</td><td>" + fostr + "</td><td>" + fcustname + "</td></tr>";
+	}
+
+	sql.close();
+	loadFolders(lastload_type); // refresh
+
+	msgbody += "</table><p>*** AUTOMATED NOTIFICATION - NEED NOT REPLY ***</p></body>";
+
+//	lu_myparent = (glob_selected_courier.equals("NATIONWIDE")) ? "NATIONWIDE_EMAILS" : "CITYLINK_EMAILS";
+	// get notify emails from lookups
+	topeople22 = luhand.getLookupChildItems_StringArray("TRIBO_NOTIFY_EMAILS",2);
+	topeople = kiboo.convertStringArrayToString(topeople22);
+	simpleSendEmail_HTML(SMTP_SERVER,"elabman@alsglobal.com.my",topeople,subjstr,msgbody);
+
+	guihand.showMessageBox("Tests done notification email sent..");
+}
+
+void adminClearNotiDate()
+{
+	if(jobfolders_lb.getSelectedCount() == 0) return;
+	selitems = jobfolders_lb.getSelectedItems();
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	for(dpi : selitems)
+	{
+		fori = lbhand.getListcellItemLabel(dpi,4);
+		sqlstm = "update jobfolders set testdonedate=NULL where origid=" + fori;
+		sql.execute(sqlstm);
+	}
+	sql.close();
+	loadFolders(lastload_type); // refresh
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="jobdonenotify_panel" title="Tests done notification ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<groupbox mold="3d" width="500px">
+	<grid>
+		<rows>
+			<row>
+				<hbox>
+					<label value="Start date" style="font-size:9px" />
+					<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				</hbox>
+				<hbox>
+					<label value="End date" style="font-size:9px" />
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+				</hbox>
+				<hbox>
+					<button label="Load tribology folders" style="font-size:9px" onClick="loadFolders(1)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+	<div style="background:#a52a2a;padding:2px" id="adminstuff" visible="false">
+		<button label="Clear noti date" style="font-size:9px" onClick="adminClearNotiDate()" />
+	</div>
+</groupbox>
+<separator height="3px" />
+
+<groupbox mold="3d" id="workarea" visible="false">
+<hbox>
+<div id="folders_holder" width="600px" />
+<vbox>
+	<button label="Send tests-done notification email (Tribology)" style="font-size:9px" onClick="sendTestDoneNoti()" />
+</vbox>
+</hbox>
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

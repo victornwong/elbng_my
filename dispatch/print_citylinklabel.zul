@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="print_citylinklabel_win"?>
+<!--
+Title				: Print out draft template for chemist's result entry task
+Developers			: Victor
+-->
+
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_ar_code = Executions.getCurrent().getParameter("arcode");
+param_donum = Executions.getCurrent().getParameter("donum");
+param_attn = Executions.getCurrent().getParameter("attn");
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("550px");
+	
+	if(param_donum.equals("")) param_donum = "_";
+	if(param_attn.equals("")) param_attn = "_";
+
+	thesrc = BIRT_WEBVIEWER + BIRT_CITILINK_LABEL + "&the_arcode=" + param_ar_code + "&donumber_str=" + param_donum + "&attn_str=" + param_attn;
+
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_citylinklabel_box" width="550px" height="620px" title="Print Citylink Airway Bill" 
+position="center" mode="overlapped" border="normal" closable="true"
+onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+
+<div id="birt_div" />
+
+<zscript>
+doBIRT(birt_div);
+</zscript>
+
+<separator height="10px" />
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+
+</window>
+
+</zk>
+

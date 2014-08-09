@@ -1,0 +1,1050 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="runs_list_fun"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title				: Allow lab users to create run-list
+Developer			: Victor Wong
+
+**NOTES**
+
+Design notes:
+
+1. List uniq test-parameters from JobTestParameters table and show in listbox
+2. show all samples-id which have the test-parameter selected from above listbox
+3. make sure these samples-id is not already in a run-list
+4. show a blank listbox which allow user to select the samples-id and drop into
+5. save the run-list as new
+6. allow user to print out the run-list, this run-list must contain sample-id and the test to perform
+7. this run-list will be used for result-entry module later
+8. at the end, release folders, will make use of results done in result-entry module
+
+31/3/2010:
+Make use of uploadToLIMS field as indicator for sample already def in a run-list
+
+3/6/2010: version 2
+make new codebase for this module.. diff design
+
+29/10/2010: clean-ups and recode some sections
+
+*/
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+LISTBOX_SAMPLES_LIMIT = 200;
+
+glob_mysoftcode = "";
+
+global_selected_runorigid = "";
+global_selected_runstatus = "";
+global_runlist_notes_origid = "";
+
+ALS_stock_cat = "";
+ALS_groupcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+void playAssignSampleWindow(String irunorigid,String imysoftc, String irunstat)
+{
+	theparam = "runno=" + irunorigid + "&mysoftcode=" + imysoftc + "&runstat=" + irunstat;
+	uniqwindowid = makeRandomId("xrlasx");
+	globalActivateWindow("miscwindows","lab/runlistassign_samples.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// Enable/Disable RunListSamples buttons
+// iwhat : 1 = disable, 0 = enable
+void toggle_rls_buttons(int iwhat)
+{
+	buma = (iwhat == 1) ? true : false;
+	// rls_savelist_btn.setDisabled(buma);
+	rls_removesample_btn.setDisabled(buma);
+	// rls_printrunlist_btn.setDisabled(buma);
+}
+
+void toggleRunList_Buttons(boolean iwhat)
+{
+	arl_newrun_btn.setDisabled(iwhat);
+	arl_addnotes_btn.setDisabled(iwhat);
+	arl_commitrun_btn.setDisabled(iwhat);
+	arl_removerun_btn.setDisabled(iwhat);
+	arl_loadlist_btn.setDisabled(iwhat);
+}
+
+String showDateInGroupLabel(String prestr, int numdays)
+{
+	datess = getDateString(todayDate,sdf,numdays);
+	return prestr + " : " + datess;
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+
+		mysoftcode = getListcellItemLabel(selitem,0);
+		loadSamplesByTest_Clicker();
+		populateAllRunList(allrunlist_div,mysoftcode);
+
+		glob_mysoftcode = mysoftcode; // keep a global
+
+		// remove runlist->samples listbox if there's one, discarding any changes
+		if(runlistsamples_div.getFellowIfAny("runlistsamples_lb") != null)
+		{
+			rlsnamething_lbl.setValue(""); // clear anything about the selected run-list. start anew.
+			global_selected_runorigid = "";
+			runlistsamples_lb.setParent(null);
+		}
+	}
+}
+
+Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("No.Samples",true),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	if(istock_cat.equals("") || igroupcode.equals("")) return;
+
+sqlstatem = "select count(jobtestparameters.mysoftcode) as TestCounts, " +
+"jobtestparameters.uploadToLIMS, " +
+"stockmasterdetails.id, stockmasterdetails.description, stockmasterdetails.description2, " +
+"stockmasterdetails.stock_cat, stockmasterdetails.groupcode " +
+"from jobtestparameters " +
+"left join stockmasterdetails " +
+"on jobtestparameters.mysoftcode = stockmasterdetails.id " +
+"where stockmasterdetails.stock_cat='" + istock_cat + "' " +
+"and stockmasterdetails.groupcode='" + igroupcode + "' " +
+"and jobtestparameters.uploadToLIMS=0 " +
+"group by jobtestparameters.mysoftcode, jobtestparameters.uploadToLIMS, " +
+"stockmasterdetails.id, stockmasterdetails.description, stockmasterdetails.description2, " +
+"stockmasterdetails.stock_cat, stockmasterdetails.groupcode " +
+"order by stockmasterdetails.description";
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tlist.size() == 0) return;
+
+	Listbox newlb = makeVWListbox(iwhichdiv, testparameters_lb_headers, "tests_description_lb", 14);
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+	teststotal = 0;
+
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		ArrayList kabom = new ArrayList();
+		testcc = ilist.get("TestCounts");
+		kabom.add(ilist.get("id").toString());
+		kabom.add(testcc.toString());
+		kabom.add(ilist.get("description"));
+		kabom.add(ilist.get("description2"));
+		teststotal += testcc;
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"true");
+	}
+	// 6/7/2010: put in total samples of all tests found.. statistic thing
+	mothertotal_lbl.setValue("Total samples: " + teststotal.toString());
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = section_groupcode_lb.getSelectedItem().getLabel();
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+		ALS_groupcode = iwhat;
+		populateTestParametersColumn(testparameters_column,ALS_stock_cat,ALS_groupcode);
+	}
+}
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	Object[] alssectiondb_lb_headers = {
+	new dblb_HeaderObj("",true,"groupcode",1),
+	};
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+
+	sqlstm = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+
+	Listbox newlb = makeVWListbox_onDB(iwhichdiv,alssectiondb_lb_headers,"section_groupcode_lb",18,sql,sqlstm);
+	sql.close();
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	ALS_stock_cat = istock_cat;
+
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+		// populate section column
+		iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+		// alert("selected: " +  iwhat + " and code: " + iwhatcode);
+		populateSectionColumn(section_column,iwhatcode);
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		Listbox oldlb = testparameters_column.getFellowIfAny("tests_description_lb");
+		if(oldlb != null) oldlb.setParent(null);
+
+		//Listbox newlb = makeVWListbox(testparameters_column, testparameters_lb_headers, "tests_description_lb", 20);
+		if(testparameters_column.getFellowIfAny("tests_description_lb") != null) tests_description_lb.setParent(null);
+	}
+}
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+Object[] alsdivision_lb_headers = {
+	new listboxHeaderObj("",true)
+};
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	if(tlist.size() == 0) return;
+	Listbox newlb = makeVWListbox(iwhichdiv, alsdivision_lb_headers, "division_stockcat_lb", 18);
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+	String[] strarray = new String[1];
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateDivisionColumn()
+
+// populate listbox according to mysoftcode (test param) and sample-id
+// this listbox is for dudes to drag-drop samples into runlist
+void populateTestParam_SampleId(String imysoftc, String ibranch)
+{
+Object[] sampleid_lb_headers = {
+
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Folder.No",true),
+	new listboxHeaderObj("Sp.ID",true),
+	new listboxHeaderObj("Company",true),
+	new	listboxHeaderObj("Recv.Date",true),
+	new listboxHeaderObj("Due.Date",true),
+	new listboxHeaderObj("sampleidstr",false),
+	
+};
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	// now show all sample-ids which have this test-parameter and not already in a run-list
+
+	branch_str = "";
+
+	if(!ibranch.equals("ALL")) branch_str = "and JobFolders.branch='" + ibranch + "' ";
+
+	sqlst2 = "select JobTestParameters.jobsamples_id, JobSamples.origid,  JobSamples.sampleid_str, JobSamples.samplemarking, JobSamples.uploadToLIMS, " + 
+	"JobTestParameters.uploadToLIMS as jtp_uploadToLIMS, JobTestParameters.origid as jtp_origid, jobsamples.deleted, jobsamples.jobfolders_id, " +
+	"JobFolders.origid as jf_origid, JobFolders.datecreated, JobFolders.duedate, JobFolders.branch, JobFolders.ar_code, JobFolders.folderno_str " +
+	"from JobTestParameters " + 
+	"left join JobSamples on JobTestParameters.jobsamples_id=JobSamples.origid " +
+	"left join JobFolders on JobSamples.jobfolders_id=JobFolders.origid " +
+	//"where JobTestParameters.uploadToLIMS=0 and jobsamples.deleted=0 and " +
+	"where JobTestParameters.mysoftcode=" + imysoftc + " " + //" and JobTestParameters.mysoftcode != 0 " +
+	branch_str;
+
+	samples_recs = sql.rows(sqlst2);
+	sql.close();
+
+	if(samples_recs.size() == 0) return;
+
+	// show rows limit of listbox.. otherwise the browser will crash
+	if(samples_recs.size() > LISTBOX_SAMPLES_LIMIT)
+	{
+		showMessageBox("List limit reached: will show first " + LISTBOX_SAMPLES_LIMIT + " samples only");
+	}
+
+	Listbox newlb = makeVWListbox(sampleid_div, sampleid_lb_headers, "sampleid_lb", 20);
+	newlb.setMultiple(true);
+	samplimitcount = 0;
+
+	for(isamp : samples_recs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		folderstr = isamp.get("folderno_str");
+		kabom.add(isamp.get("jtp_origid").toString());
+
+		foldn = isamp.get("sampleid_str").substring(0,9);
+		kabom.add(foldn);
+
+		samplid = padZeros5(isamp.get("jobsamples_id"));
+		kabom.add(samplid);
+
+		iar_code = isamp.get("ar_code");
+		iar_code = iar_code.toUpperCase().trim();
+		icompanyname = "Undefined";
+
+		if(!iar_code.equals(""))
+		{
+			icompanyname = getCompanyName(iar_code);
+			// 11/6/2010: hardcode ar_code CASH and CASH USD in mysoft. Load customer info from table CashSales_CustomerInfo
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				csrec = getCashSalesCustomerInfo_Rec(folderstr); // get rec based on folder no
+				icompanyname = "CshAct: Undefined";
+				if(csrec != null) icompanyname = "CshAct: " + csrec.get("customer_name");
+			}
+		}
+
+		icompanyname = trimListitemLabel(icompanyname,25);
+		kabom.add(icompanyname);
+
+		kabom.add(isamp.get("datecreated").toString().substring(0,10));
+		kabom.add(isamp.get("duedate").toString().substring(0,10));
+		kabom.add(isamp.get("sampleid_str"));
+
+		uploadtolims = isamp.get("jtp_uploadToLIMS");
+
+		if(uploadtolims == 0)
+		{
+			strarray = convertArrayListToStringArray(kabom);
+			insertListItems_DragDrop(newlb, strarray,"runsampleid", 2);
+		}
+
+		samplimitcount++;
+		if(samplimitcount > LISTBOX_SAMPLES_LIMIT) break;
+	}
+}
+
+class uniqtestParams_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// Component lbox = event.getTarget();
+		// lbox.getSelectedItem().getLabel();
+
+		itest_mysoftc = event.getReference().getLabel();
+		branchname = branch_drd.getSelectedItem().getLabel();
+
+		populateTestParam_SampleId(itest_mysoftc,branchname);
+
+		// fill up the runs listbox too
+		populateAllRunList(allrunlist_div, itest_mysoftc);
+
+		glob_mysoftcode = itest_mysoftc; // keep a global
+	}
+}
+
+void populateUniqueTestParameters(Div idiv)
+{
+Object[] uniqtestparams_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("Parameters",true),
+};
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst1 = "select distinct top 10 mysoftcode from JobTestParameters where mysoftcode != 0";
+	testparams = sql.rows(sqlst1);
+	sql.close();
+
+	if(testparams.size() == 0) return;
+
+	Listbox newlb = makeVWListbox(idiv, uniqtestparams_lb_headers, "uniqtestparams_lb", 28);
+	newlb.addEventListener("onSelect", new uniqtestParams_Listener());
+
+	String[] strarray = new String[2];
+
+	for(itestp : testparams)
+	{
+		mysoftc = itestp.get("mysoftcode");
+		mysoftc_str = mysoftc.toString();
+		mysoft_stockdet = getStockMasterDetails(mysoftc_str);
+
+		if(mysoft_stockdet != null)
+		{
+			strarray[0] = mysoftc_str;
+			testdesc = mysoft_stockdet.get("Description");
+			testmethod = mysoft_stockdet.get("Description2");
+			strarray[1] = testdesc + " (" + testmethod + ") " + mysoftc_str;
+			insertListItems(newlb,strarray,"false");
+		}
+	}
+}
+
+// View folder details by extracting folder-num from sampleid_lb
+void viewSampleDetails()
+{
+	if(!check_ListboxExist_SelectItem(sampleid_div,"sampleid_lb")) return;
+	lbitm = sampleid_lb.getSelectedItem();
+	folderid = getListcellItemLabel(lbitm, 1);
+	folderno = extractFolderString_FromSampleID(folderid);
+
+	theparam = "folderno=" + folderno;
+	uniqwindowid = makeRandomId("vf");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+Object[] allrunlist_lb_headers = {
+
+	new listboxHeaderObj("Run#",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Owner",true),
+	new listboxHeaderObj("Notes",true),
+	new listboxHeaderObj("Done",true),
+	new listboxHeaderObj("#Smp",true),
+	new listboxHeaderObj("Brnch",true),
+};
+
+// Show all runs-list listbox
+// listbox id: allrunlist_lb
+void populateAllRunList(Div idiv, String imysoftcode)
+{
+	iusername = useraccessobj.username;
+	ibranch = useraccessobj.branch;
+
+	/*
+	masq_branch = branch_drd.getSelectedItem().getLabel();
+	branch_str = "";
+
+	if(!masq_branch.equals("ALL"))
+		branch_str = "and branch='" + masq_branch + "' ";
+	*/
+
+	runlistsamples_gb.setVisible(true);
+	runlist_gb.setVisible(true);
+
+	Listbox newlb = makeVWListbox(idiv, allrunlist_lb_headers, "allrunlist_lb", 8);
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "select origid,runstatus,datecreated,username,notes,datecompleted,branch from RunList where mysoftcode='" + imysoftcode + "'";
+	runs_recs = sql.rows(sqlst);
+	sql.close();
+
+	if(runs_recs.size() == 0) return;
+	newlb.setRows(10);
+
+	for(irun : runs_recs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		origid = irun.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(irun.get("runstatus"));
+		kabom.add(irun.get("datecreated").toString().substring(0,10));
+
+		kabom.add(irun.get("username"));
+
+		inotes = trimListitemLabel(irun.get("notes"), 30);
+		kabom.add(inotes);
+
+		kkk = irun.get("datecompleted").toString().substring(0,10);
+		if(kkk.equals("1900-01-01")) kkk = "-----";
+
+		kabom.add(kkk);
+
+		// show number of samples assigned to run-list
+		rlsampcount = getRunListItems_Count(origid);
+		kkb = (rlsampcount == 0) ? "---" : rlsampcount.toString();
+		kabom.add(kkb);
+
+		kabom.add(irun.get("branch"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Create a new runlist based on username,branch,mysoftcode
+void makeNewRun(Div idiv)
+{
+	// no test selected, return lor
+	if(!check_ListboxExist_SelectItem(testparameters_column,"tests_description_lb")) return;
+
+	// tests_description_lb
+	selitem = tests_description_lb.getSelectedItem();
+	imysoftcode = getListcellItemLabel(selitem, 0);
+	iusername = useraccessobj.username;
+	ibranch = useraccessobj.branch;
+
+	// if admin trying to create a run, default branch to SA
+	if(ibranch.equals("ALL")) ibranch = "SA";
+
+	idatecreated = getDateFromDatebox(hiddendatebox);
+
+	// 29/10/2010: updated to include field-names in insert
+	sqlstat = "insert into RunList (runlist_str,username,datecreated,datecompleted,approvedby,runstatus,EQID,notes,branch,mysoftcode,deleted) values (" + 
+	"'','" + iusername + "','" + idatecreated + "','','','DRAFT','','','" + ibranch + "'," + imysoftcode + ",0)";
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sql.execute(sqlstat);
+	sql.close();
+	populateAllRunList(idiv,imysoftcode); // refresh listbox
+}
+
+// Load the run-list sample-ids, let user assign samples to run-list, dragdrop fun.
+/*
+new listboxHeaderObj("Run#",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Create.Date",true),
+	new listboxHeaderObj("Owner",true),
+	new listboxHeaderObj("Done",true),
+	*/
+void loadSampleToRunList()
+{
+	if(!check_ListboxExist_SelectItem(allrunlist_div,"allrunlist_lb")) return;
+
+	selitem = allrunlist_lb.getSelectedItem();
+	runorigid = getListcellItemLabel(selitem,0);
+	runstatus = getListcellItemLabel(selitem,1);
+	runcreated = getListcellItemLabel(selitem,2);
+	runowner = getListcellItemLabel(selitem,3);
+	runbranch = getListcellItemLabel(selitem,7);
+
+	// must check run-list status, if it's already WIP, cannot assign anymore samples
+	// if user is the owner of the run-list, cannot assign samples
+	// if admin, can do everything.. muhahaha!!
+	
+	currentuser = useraccessobj.username;
+	
+	if(currentuser.equals(runowner) && runstatus.equals(RUNLIST_DRAFT))
+		toggle_rls_buttons(0);
+
+		/*
+	if(useraccessobj.accesslevel == 9) // admin.. do everything
+		toggle_rls_buttons(0);
+		*/
+	
+	global_selected_runorigid = runorigid; // save for later use.
+	global_selected_runstatus = runstatus;
+
+	//rlsnamething_lbl
+	// populate whatever info for this run-list->samples
+	rlsstr = "Run#: " + runorigid + " | Status: " + runstatus + " | Branch: " + runbranch + "\nOwner: " + runowner  + "\nCreated on: " + runcreated;
+	rlsnamething_lbl.setValue(rlsstr); // def in UI
+
+	loadSamplesByTest_Clicker(); // refresh the testparameter->sample-ids listbox, sampleid_lb
+	populate_RunListSamples_Listbox(runlistsamples_div,runorigid);
+
+	// activate Run-list CRUD buttons
+	//toggleRunList_Buttons(true);
+	
+}
+
+// Commit the run, set flag
+void commitRun()
+{
+	if(!check_ListboxExist_SelectItem(allrunlist_div,"allrunlist_lb")) return;
+	lbitm = allrunlist_lb.getSelectedItem();
+	runstatus = getListcellItemLabel(lbitm, 1);
+	runlist_origid = lbitm.getLabel();
+	runowner = getListcellItemLabel(lbitm,3);
+
+	// make sure run-list belongs to user before commiting
+	if(!runowner.equals(useraccessobj.username))
+	{
+		if(useraccessobj.accesslevel < 9) return; // user not admin.. must return
+	}
+
+	// 6/7/2010: a bit of constrain here
+	if(runstatus.equals(RUNLIST_WIP) && useraccessobj.accesslevel < 9)
+	{
+		showMessageBox("Only admin can un-commit a run..");
+		return;
+	}
+
+	runstat_str = RUNLIST_WIP;
+
+	if(runstatus.equals(RUNLIST_WIP)) runstat_str = RUNLIST_DRAFT;
+
+	if(runstatus.equals(RUNLIST_RELEASED))
+	{
+		showMessageBox("Run already released, cannot change anything");
+		return;
+	}
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlst = "update RunList set runstatus='" + runstat_str + "' where origid=" + runlist_origid;
+	sql.execute(sqlst);
+	sql.close();
+
+	populateAllRunList(allrunlist_div, glob_mysoftcode); // refresh
+
+	// remove runlist->samples listbox if there's one, discarding any changes
+	if(runlistsamples_div.getFellowIfAny("runlistsamples_lb") != null)
+	{
+		rlsnamething_lbl.setValue(""); // clear anything about the selected run-list. start anew.
+		global_selected_runorigid = "";
+		runlistsamples_lb.setParent(null);
+	}
+
+	toggle_rls_buttons(1); // disable RunListSamples CRUD buttons
+}
+
+// onClick func - can be used by others to refresh the Test-parameter->sample-ids listbox
+void loadSamplesByTest_Clicker()
+{
+	if(!check_ListboxExist_SelectItem(testparameters_column,"tests_description_lb")) return;
+	
+	selitem = tests_description_lb.getSelectedItem();
+	mysoftcode = getListcellItemLabel(selitem,0);
+	testdescription = getListcellItemLabel(selitem,2);
+	testmethod = getListcellItemLabel(selitem,3);
+	branchname = branch_drd.getSelectedItem().getLabel();
+
+	//testnamebranch_str = "Branch: " + branchname + "\nTest: " + testdescription + "\nMthd: " + testmethod;
+	//testnamething_lbl.setValue(testnamebranch_str);
+
+	branch_lbl.setValue(branchname);
+	testparameter_lbl.setValue(testdescription);
+	testmethod_lbl.setValue(testmethod);
+
+	// load samples based on mysoftcode now..
+	populateTestParam_SampleId(mysoftcode,branchname);
+}
+
+// Drop listener to get samples from Test-parameter->sample-ids to RunList->Sample-id
+class RunlistSample_drop implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// check run-list status, if WIP/RELEASED, don't drop any shit.
+		if(!global_selected_runstatus.equals(RUNLIST_DRAFT))
+		{
+			showMessageBox("Sorry, run-list already committed, no modification");
+			return;
+		}
+
+		dropped_items = sampleid_lb.getSelectedItems().toArray();
+		if(dropped_items.length == 0) return;
+
+		String[] strarray = new String[2];
+
+		sampleid_lb.clearSelection(); // to avoid ConcurrentModification error
+
+		for(i=0; i<dropped_items.length; i++)
+		{
+			ditem = dropped_items[i];
+			samptestorigid = getListcellItemLabel(ditem,0);
+			foldno = getListcellItemLabel(ditem,1);
+			sampleid = getListcellItemLabel(ditem,2);
+			//sampleidstr = getListcellItemLabel(ditem,6);
+			sampleidstr = foldno + sampleid;
+			
+			// alert(samptestorigid + "::" + sampleidstr + "::" + sampleid);
+
+			strarray[0] = samptestorigid;
+			strarray[1] = sampleidstr;
+
+			if(!ExistInListbox(runlistsamples_lb,sampleidstr,1))
+			{
+				//insertListItems(runlistsamples_lb,strarray,"false");
+				//removeItemFromListBox(sampleid_lb, samptestorigid, 0);
+
+				// do direct inject into RunList_Items and JobTestParameters - safer for concurrency
+				insertRunListItem_Rec(global_selected_runorigid,sampleid,sampleidstr,samptestorigid);
+				updateJTP_uploadtolims_flag(samptestorigid,1);
+			}
+		}
+
+		// refresh testparameters->count listbox to show some samples already assigned to run-list
+		populateTestParametersColumn(testparameters_column,ALS_stock_cat,ALS_groupcode);
+		runlistsamples_lb.setRows(20); // show 20 rows huh.. bigger. haha
+		populate_RunListSamples_Listbox(runlistsamples_div,global_selected_runorigid);
+	}
+}
+
+// Show samples in run-list listbox creator
+void populate_RunListSamples_Listbox(Div idiv, String runorigid)
+{
+	Object[] runlistsamples_lb_headers = {
+	new dblb_HeaderObj("jobtestparam_id",false,"jobtestparam_id",2),
+	new dblb_HeaderObj("SampleID",true,"sampleid_str",1),
+	new dblb_HeaderObj("rli_origid",false,"origid",2),
+	};
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select jobtestparam_id,sampleid_str,origid from runlist_items where runlist_id=" + runorigid;
+	Listbox newlb = makeVWListbox_onDB(idiv,runlistsamples_lb_headers,"runlistsamples_lb",10,sql,sqlstm);
+	sql.close();
+	if(newlb.getItemCount() > 10) newlb.setRows(20);
+	newlb.setMultiple(true);
+	newlb.setDroppable("runsampleid");
+	newlb.addEventListener("onDrop", new RunlistSample_drop());
+
+}
+
+// RunListSamples: save the run-list with samples dragged.
+void rls_SaveList_Clicker()
+{
+	if(runlistsamples_div.getFellowIfAny("runlistsamples_lb") == null) return;
+	
+	icc = runlistsamples_lb.getItemCount();
+	if(icc == 0) return; // nothing.. return
+	
+	// remove all samples in the run-list first, otherwise dups!!!
+	removeAll_RunlistItems(global_selected_runorigid);
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	for(i=0; i<icc; i++)
+	{
+		selitem = runlistsamples_lb.getItemAtIndex(i);
+		korigid = getListcellItemLabel(selitem, 0);	// get origid for JobTestParameters , column 1
+		ksd = getListcellItemLabel(selitem,1); // get sample-id, need to chop though
+		ksampid = Integer.parseInt(extractSampleNo(ksd)).toString();
+
+		sqlst = "insert into RunList_Items (runlist_id,sampleid,sampleid_str,jobtestparam_id,runitem_status) values (" + 
+			global_selected_runorigid + "," + ksampid + ",'" + ksd + "'," + korigid + ", 'WIP')" ;
+		sql.execute(sqlst);
+		
+		// set uploadtoLIMS flag
+		sqlst2 = "update JobTestParameters set uploadToLIMS=1 where origid=" + korigid;
+		sql.execute(sqlst2);
+	}
+
+	sql.close();
+
+	// refresh test-parameters lb to show samples reduction - samples got assigned to a runlist
+	populateTestParametersColumn(testparameters_column,ALS_stock_cat,ALS_groupcode);
+	showMessageBox("Run list saved");
+}
+
+// RunListSamples: to remove samples from the run-list
+void rls_RemoveSamples_Clicker()
+{
+	if(!check_ListboxExist_SelectItem(runlistsamples_div,"runlistsamples_lb")) return;
+
+	rls_selitems = runlistsamples_lb.getSelectedItems().toArray();
+	if(rls_selitems.length == 0) return;
+
+	String[] strarray = new String[2];
+
+	for(i=0; i<rls_selitems.length; i++)
+	{
+		ditem = rls_selitems[i];
+
+		samp_origid = getListcellItemLabel(ditem,0);
+		rli_origid = getListcellItemLabel(ditem,2);
+
+		// remove from run-list-samples lb
+		removeItemFromListBox(runlistsamples_lb, samp_origid, 0);
+		deleteRunListItem_Rec(rli_origid);
+		updateJTP_uploadtolims_flag(samp_origid,0);
+	}
+
+	runlistsamples_lb.clearSelection();
+	loadSamplesByTest_Clicker();
+	// refresh test-parameters lb to show samples increase - samples got deleted from run-list mah.
+	populateTestParametersColumn(testparameters_column,ALS_stock_cat,ALS_groupcode);
+	populate_RunListSamples_Listbox(runlistsamples_div,global_selected_runorigid);
+}
+
+// Allow user to add notes for run-list - eg. precaution handling the samples and whatever shit they wanna say
+// insert into RunList.notes
+void addRunListNotes_Clicker()
+{
+	if(!check_ListboxExist_SelectItem(allrunlist_div,"allrunlist_lb")) return;
+
+	global_runlist_notes_origid = allrunlist_lb.getSelectedItem().getLabel();
+	if(global_runlist_notes_origid.equals("")) return;
+
+	// put RunList.notes into textbox
+	runlistrec = getRunList_Rec(global_runlist_notes_origid);
+	runlist_notes_tb.setValue(runlistrec.get("notes"));
+
+	// show lil title too..
+	runlist_notes_title_lbl.setLabel("Notes for Run#: " + global_runlist_notes_origid);
+	runlistAddNotesPopup.open(arl_addnotes_btn);
+}
+
+// runlistAddNotesPopup: save notes button clicker
+void runlistSaveNotes_Clicker()
+{
+	kkk = replaceSingleQuotes(runlist_notes_tb.getValue());
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "update RunList set notes='" + kkk + "' where origid=" + global_runlist_notes_origid;
+	sql.execute(sqlstm);
+	sql.close();
+	
+	// clear 'em stuff.. wait for next clicker
+	runlistAddNotesPopup.close();
+	global_runlist_notes_origid = "";
+	allrunlist_lb.clearSelection();
+	
+	// refresh all run-list listbox
+	populateAllRunList(allrunlist_div, glob_mysoftcode);
+}
+
+// whatelse!!!
+void printRunList_Clicker()
+{
+	if(!check_ListboxExist_SelectItem(allrunlist_div,"allrunlist_lb")) return;
+
+	selitm = allrunlist_lb.getSelectedItem();
+	runnum = getListcellItemLabel(selitm,0);
+	runstatus = getListcellItemLabel(selitm,1);
+
+	// make sure the run-list is committed, else don't print
+	if(runstatus.equals(RUNLIST_DRAFT))
+	{
+		showMessageBox("Commit the run-list first");
+		return;
+	}
+
+	theparam = "runid=" + runnum;
+	uniqwindowid = makeRandomId("xprntrlistx");
+	globalActivateWindow("miscwindows","lab/print_runlist.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// Let owner remove run - if it's committed, cannot remove
+void removeRun_clicker()
+{
+	if(!check_ListboxExist_SelectItem(allrunlist_div,"allrunlist_lb")) return;
+
+	selitm = allrunlist_lb.getSelectedItem();
+	runnum = getListcellItemLabel(selitm,0);
+	runstatus = getListcellItemLabel(selitm,1);
+
+	// if run list already committed, cannot remove
+	if(runstatus.equals(RUNLIST_WIP))
+	{
+		showMessageBox("Run in progress, cannot remove..");
+		return;
+	}
+}
+
+]]>
+</zscript>
+
+<!-- RunList add-notes popup -->
+<popup id="runlistAddNotesPopup">
+<groupbox>
+<caption id="runlist_notes_title_lbl" label="Run-list notes" />
+	<vbox>
+		<textbox id="runlist_notes_tb" multiline="true" style="font-size:9px" height="200px" width="250px" />
+		<hbox>
+			<button label="Save notes" style="font-size:9px" onClick="runlistSaveNotes_Clicker()" />
+			<button label="Close" style="font-size:9px" onClick="runlistAddNotesPopup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of RunList add-notes popup -->
+
+<div width="1200px">
+<panel id="runs_list_panel" title="Runs List Manager" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div style="padding:2px">
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<button label="X Close panel" style="font-size:9px" onClick="runs_list_panel.setParent(null)" />
+<separator height="3px" />
+
+<hbox>
+<groupbox mold="3d" width="150px">
+	<caption label="Division" />
+	<div id="division_column" />
+</groupbox>
+
+<groupbox mold="3d" width="150px">
+	<caption label="Section" />
+	<div id="section_column" />
+</groupbox>
+
+<groupbox mold="3d">
+	<caption label="Test Parameters" />
+	<div id="testparameters_column" />
+	<separator height="5px" />
+	<hbox>
+		<label id="mothertotal_lbl" style="background:#667788;color:#ffffff" />
+		<separator width="20px" />
+		<label value="Branch" style="font-size:9px" />
+		<listbox id="branch_drd" mold="select" style="font-size:9px" />
+		<button id="loadsampleids_btn" label="Load samples" style="font-size:9px" onClick="loadSamplesByTest_Clicker()" />
+	</hbox>
+</groupbox>
+</hbox>
+<separator height="3px" />
+<hbox>
+<groupbox mold="3d" width="470px">
+	<caption label="Samples" />
+	<div style="padding:2px" >
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row>
+				<label value="Branch" style="font-size:9px" />
+				<label id="branch_lbl" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Test" style="font-size:9px" />
+				<label id="testparameter_lbl" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Method" style="font-size:9px" />
+				<label id="testmethod_lbl" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+	</div>
+	<div id="sampleid_div" />
+	<separator height="2px" />
+	<button id="viewfolder_butt" label="Folder details" style="font-size:9px" onClick="viewSampleDetails()" />
+</groupbox>
+
+<groupbox id="runlistsamples_gb" mold="3d" width="180px" visible="false" >
+	<caption label="Run list >> Samples" />
+	<div style="background:#66AA99;padding:2px">
+		<label id="rlsnamething_lbl" multiline="true" style="font-size:9px;font-weight:bold;background:#66AA99;" />
+	</div>
+	<div id="runlistsamples_div" />
+	<hbox>
+		<!--<button id="rls_savelist_btn" label="Save list" style="font-size:9px" disabled="true" onClick="rls_SaveList_Clicker()" /> -->
+		<button id="rls_removesample_btn" label="Remove samples" style="font-size:9px" disabled="true" onClick="rls_RemoveSamples_Clicker()" />
+		<!-- <button id="rls_refresh_btn" label="Refresh" style="font-size:9px" /> -->
+	</hbox>
+</groupbox>
+
+<groupbox id="runlist_gb" mold="3d" visible="false">
+	<caption label="Runs.." />
+	<div id="allrunlist_div" />
+	<separator height="3px" />
+	<hbox>
+		<button id="arl_loadlist_btn" label="Load run-list" style="font-size:9px" onClick="loadSampleToRunList()" />
+		<button id="arl_newrun_btn" label="New run" style="font-size:9px" onClick="makeNewRun(allrunlist_div)" />
+		<button id="arl_commitrun_btn" label="Un/Commit run" style="font-size:9px" onClick="commitRun()" />
+		<button id="rls_printrunlist_btn" label="Print run list" style="font-size:9px" onClick="printRunList_Clicker()" />
+		<button id="arl_removerun_btn" label="Remove run" style="font-size:9px" onClick="removeRun_clicker()"/>
+	</hbox>
+	<separator height="3px" />
+	<grid>
+		<columns>
+			<column label="" />
+			<column label="" />
+			<column label="" />
+			<column label="" />
+		</columns>
+		<rows>
+		<row>
+			<label value="Run#" style="font-size:9px" />
+			<label id="rl_runlist_str" style="font-size:9px" />
+			<label value="Owner" style="font-size:9px" />
+			<label id="rl_username" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="DOT" style="font-size:9px" tooltiptext="Date Of Test" />
+			<label id="rl_datecreated" style="font-size:9px" />
+			<label value="LDD" style="font-size:9px" tooltiptext="Lab Due Date" />
+			<datebox id="rl_labduedate" format="yyyy-MM-dd" style="font-size:9px" tooltiptext="Lab Due Date" />
+		</row>
+		<row>
+			<label value="Complete" style="font-size:9px" />
+			<datebox id="rl_datecompleted" format="yyyy-MM-dd" style="font-size:9px" />
+			<label value="Run.Stat" style="font-size:9px" />
+			<listbox id="rl_runstatus" mold="select" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Notes" style="font-size:9px" />
+			<textbox id="rl_notes" multiline="true" width="400px" height="40px" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button id="arl_updaterundetails_btn" label="Update.." style="font-size:9px" />
+		<button id="arl_addnotes_btn" label="Run-list notes" style="font-size:9px" onClick="addRunListNotes_Clicker()" />
+	</hbox>
+
+	<div id="runlist_div" />
+</groupbox>
+
+</hbox>
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+setTodayDatebox(hiddendatebox);
+setTodayDatebox(rl_labduedate);
+setTodayDatebox(rl_datecompleted);
+
+populateDropdownListbox(branch_drd, dd_branches);
+populateDropdownListbox(rl_runstatus,runliststatus_lookup);
+
+// admin login, show branch dropdrown
+if(useraccessobj.accesslevel == 9)
+{
+}
+
+populateDivisionColumn(division_column);
+
+//populateUniqueTestParameters(testparam_div);
+//makeVWListbox(sampleid_div, sampleid_lb_headers, "sampleid_lb", 32);
+//makeVWListbox(allrunlist_div, allrunlist_lb_headers, "allrunlist_lb", 20);
+// makeRunList_Listbox(runlist_div);
+
+</zscript>
+</zk>

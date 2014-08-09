@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="sendemailoutsource_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.2";
+/*
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+kiboo = new Generals();
+guihand = new GuiFuncs();
+
+hardcoded_from = "reception@alsmalaysia.com";
+hardcoded_to = "joekhoo@isislogistics.net,yongcz@isislogistics.net,finance@alsglobal.com.my";
+//hardcoded_to = "it@alsglobal.com.my,it@alsmalaysia.com";
+
+// hardcoded html-post parameter name: ar_code (set in customer_extra_address.zul -> playDocsDeliveryDetails()
+// the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+void sendEmailOut()
+{
+	subjstr = "[ADHOC-TASK] " + email_subject.getValue();
+	msgtxt = email_body.getValue();
+
+	msgtxt += "\n---\n";
+	msgtxt += "ALS | Malaysia - Indonesia\n9 Jalan Astaka U8/84, Bukit Jelutong\n40150 Shah Alam, Selangor\n\n";
+	msgtxt += "PHONE +60 3 7845 8257\nFAX +60 3 7845 8258\nEMAIL sales@alsglobal.com.my\n";
+	msgtxt += "WEB http://www.alsglobal.com\n\n-Please consider the environment before printing this email-";
+
+	simpleSendEmail(SMTP_SERVER,hardcoded_from,hardcoded_to,subjstr,msgtxt);
+	guihand.showMessageBox("E-mail sent..");
+	guihand.globalCloseWindow(mainPlayground,myincludeid);
+}
+
+]]>
+</zscript>
+
+<window id="sendemailoutsource_win" title="Send AD-HOC TASK email to ISIS ${MYVERSION}" width="590px" height="560px" 
+ position="center" mode="overlapped" border="normal" closable="true">
+<div style="padding:3px">
+<vbox>
+<grid>
+	<rows>
+		<row>
+			<label value="Date" />
+			<datebox id="hiddendatebox" format="yyyy-MM-dd" disabled="true" />
+		</row>
+		<row>
+			<label value="From" />
+			<label value="reception@alsmalaysia.com" />
+		</row>
+		<row>
+			<label value="To" />
+			<label value="joekhoo@isislogistics.net , yongcz@isislogistics.net" />
+		</row>
+		<row>
+			<label value="Subject:" />
+			<hbox>
+				<label value="[ADHOC-TASK]" />
+				<textbox id="email_subject" width="400px" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+
+<textbox id="email_body" multiline="true" height="380px" width="560px" />
+<button label="Send Email" onClick="sendEmailOut()" />
+</vbox>
+</div>
+
+<zscript>
+kiboo.setTodayDatebox(hiddendatebox);
+</zscript>
+
+</window>
+</zk>

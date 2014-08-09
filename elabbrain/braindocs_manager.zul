@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="elabbrain_docs_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+/*
+Title				: e-LabBrain Documents Manager
+Coding began date	: 12/7/2010
+Developers			: Victor
+*/
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+/*
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+ADDFOLD_CMD = "ADDFOLD";
+REMFOLD_CMD = "REMFOLD";
+ADDFILE_CMD = "ADDFILE";
+REMFILE_CMD = "REMFILE";
+EDTFILE_CMD = "EDTFILE";
+
+global_breadcrumb_pos1 = 1;
+global_breadcrumb_pos2 = 1;
+
+void makeButton(String btnid, String ilabel, String istyle, Component theparent)
+{
+	Button newbutton = new Button();
+	newbutton.setLabel(ilabel);
+	newbutton.setStyle(istyle);
+	newbutton.setId(btnid);
+	newbutton.addEventListener("onClick", new buttonClicker_Listener());
+	newbutton.setParent(theparent);
+}
+
+// Database func: get a rec from LabDocs_Rec based on origid
+// something new, if openedsql != null, will use the sql connection passed, else open a new one.
+Object getLabDocs_Rec(Sql openedsql, String iorigid)
+{
+	if(openedsql != null)
+		sql = openedsql;
+	else
+		sql = als_mysoftsql();
+
+	if(sql == null ) return;
+	
+	sqlstm = "select * from LabDocs_Tree where origid=" + iorigid;
+	retval = sql.firstRow(sqlstm);
+	
+	if(openedsql == null)
+		sql.close();
+
+	return retval;
+}
+
+class buttonClicker_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		compp = event.getTarget();
+		
+		btn_id = compp.getId();
+		btn_cmd = btn_id.substring(0,7);
+		btn_parentid = btn_id.substring(7);
+		alert("cmd: " + btn_cmd + " parentid: " + btn_parentid);
+
+	}
+}
+
+Object[] labdocs_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Title",true),
+	new listboxHeaderObj("Summary",true),
+};
+
+// Show branch and children in listbox - uses breadcrumb_box to hold everything in hbox style
+void showLabDocs_Branch(String iparent, Div idiv, String lb_id, Label parentlbl, Component hboxdiv )
+{
+	Listbox newlb = makeVWListbox(idiv, labdocs_lb_headers, lb_id, 5);
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select origid,title,summary from LabDocs_Tree where myparent=" + iparent + " order by title";
+	docsrec = sql.rows(sqlstm);
+
+	parentrec = getLabDocs_Rec(sql,iparent);
+	sql.close();
+
+	// add some crud buttons
+	makeButton(ADDFOLD_CMD + iparent, "Add folder", "font-size:9px", hboxdiv);
+	makeButton(REMFOLD_CMD + iparent, "Remove folder", "font-size:9px", hboxdiv);
+	makeButton(ADDFILE_CMD + iparent, "Add file", "font-size:9px", hboxdiv);
+	makeButton(REMFILE_CMD + iparent, "Remove file", "font-size:9px", hboxdiv);
+	makeButton(EDTFILE_CMD + iparent, "Edit file", "font-size:9px", hboxdiv);
+
+	if(docsrec.size() < 1) return;
+
+	newlb.setRows(15);
+
+	for(dpi : docsrec)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("title"));
+		kabom.add(dpi.get("summary"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+	
+	if(parentrec != null)
+	{
+		parentlbl.setValue(parentrec.get("title") + " :: " + parentrec.get("summary"));
+	}
+
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="elabbrain_docs_panel" title="e-LabBrain Documents Manager" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div style="padding:3px" >
+	<hbox id="breadcrumb_box">
+		<button label=".:PREV:." style="font-size:9px" />
+	
+		<vbox>
+			<div style="background:#887766;padding:3px">
+				<label id="crumb1_lbl" value="..." style="color:#ffffff" />
+			</div>
+			<div id="crumb1_div" width="400px" />
+			<hbox id="crumb1_hbox" />
+		</vbox>
+		
+		<vbox>
+			<div style="background:#887766;padding:3px">
+				<label id="crumb2_lbl" value="..." style="color:#ffffff" />
+			</div>
+			<div id="crumb2_div" width="400px" />
+		</vbox>
+	
+	</hbox>
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+// showLabDocs_Branch(String iparent, Div idiv, String lb_id)
+
+showLabDocs_Branch("1", crumb1_div, "docsbox1", crumb1_lbl, crumb1_hbox );
+
+//btn1.addEventListener("onClick", new buttonClicker_Listener());
+
+// Set search startdate and enddate to today's date
+//setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+
+</zk>
+

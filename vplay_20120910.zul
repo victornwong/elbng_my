@@ -1,0 +1,715 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="als_portal_main" ?>
+<?page title="Victor's Playground"?>
+<?link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<zscript src="alsglobal/alsglobal_birtreport.zs" />
+
+<style>
+.z-panel-header
+{
+	color:#eeeeee;
+	background:#737d28;
+}
+
+.z-menubar-hor, .z-menubar-ver { border: 2px solid #2e3436; }
+.content {overflow-x: hidden;overflow-y: scroll;}
+
+</style>
+
+<zscript>
+<![CDATA[
+MYVERSION = "v3.67.15";
+/*
+New dynamic-menu main screen thing
+Written by Victor Wong
+Dated: 08/10/2011
+
+03/04/2012: optimized and ported byte-compiled
+
+*/
+
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+
+Generals kiboo = new Generals();
+ListboxHandler lbhandler = new ListboxHandler();
+SqlFuncs sqlhand = new SqlFuncs();
+SecurityFuncs sechand = new SecurityFuncs();
+MenuFuncs menuhand = new MenuFuncs();
+GuiFuncs guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+// Get access obj set by login-page
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE); // no access obj, redirect back to login page
+
+ArrayList menuTreeModules;
+ArrayList menuBirtReports;
+ArrayList menuExternalBirtReports;
+
+mainProgramTitle = "ALS e-LABMAN " + MYVERSION;
+
+mainPlayground = "//als_portal_main/";
+theBirtViewer = "reporting/birtReportViewer_v2.zul";
+theExternalBirtViewer = "reporting/exBirtReportViewer_v1.zul";
+
+Object[] internalModules =
+{
+	new modulesObj(100,"menueditormod",9,GUI_PANEL,"adminmodules/menueditor_v1.zul",0, ""),
+	new modulesObj(101,"usercontrolmod",9,GUI_PANEL,"adminmodules/usercontroller.zul",0, ""),
+	new modulesObj(102,"foldermanager",9,GUI_PANEL,"adminmodules/folderjobs_dbman.zul",0, ""),
+	new modulesObj(103,"auditlogs",9,GUI_PANEL,"adminmodules/adminauditlogs.zul",0, ""),
+	new modulesObj(104,"lookupsedit",9,GUI_PANEL,"alsglobal/staticlookupman.zul",0,"lu=112&wt=General%20Lookups"),
+	new modulesObj(105,"subcontests",9,GUI_PANEL,"alsglobal/staticlookupman.zul",0,"lu=132&wt=Subcons%20Tests"),
+	new modulesObj(106,"lbldefs",9,GUI_PANEL,"adminmodules/lookupFieldsEditor_v1.zul",0,""),
+	new modulesObj(107,"cltempman",9,GUI_PANEL,"alsglobal/checkListTemplate_v1.zul",0,""),
+	new modulesObj(108,"ituserman",9,GUI_PANEL,"itest_mods/itest_users_v1.zul",0,""),
+	new modulesObj(109,"xmlformman",9,GUI_PANEL,"adminmodules/xmlformTemplate_v1.zul",0,""),
+};
+
+moduleCounter = 1;
+
+// Load external module into main program
+// recoded this globalActivateWindow() from alsglobal_guifuncs.zs with iplayg
+void activateModule(String iplayg, String parentdiv_name, String winfn, String windId, String uParams, Object uAO)
+{
+	Include newinclude = new Include();
+	newinclude.setId(windId);
+
+	includepath = winfn + "?myid=" + windId + "&" + uParams;
+	newinclude.setSrc(includepath);
+
+	sechand.setUserAccessObj(newinclude, uAO); // securityfuncs.zs
+
+	Div contdiv = Path.getComponent(iplayg + parentdiv_name);
+	newinclude.setParent(contdiv);
+
+} // activateModule()
+
+void runModule(Object apmod, String iprefix)
+{
+	//newid = makeRandomId(iprefix);
+	newid = iprefx + moduleCounter.toString();
+	moduleCounter++;
+
+	apfn = apmod.module_fn;
+	mydivname = (apmod.module_gui == GUI_PANEL) ? "workbox" : "miscwindows" ;
+	activateModule(mainPlayground,mydivname,apfn,newid,apmod.parameters,useraccessobj);
+}
+
+// Internal menu-items onClick processor
+class internalMenuItem_Clicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		theid = event.getTarget().getId();
+		menutype = theid.substring(0,2);
+		menuid = Integer.parseInt(theid.substring(2,theid.length()));
+
+		if(menutype.equals("IM")) // internal menu-items
+		{
+			for(i=0; i < internalModules.length; i++)
+			{
+				if(menuid == internalModules[i].module_num)
+				{
+					if(useraccessobj.accesslevel >= internalModules[i].accesslevel) runModule(internalModules[i],"imn");
+					//showAccessDenied_Box(useraccessobj);
+				}
+			}
+		}
+	}
+}
+
+class externalMenuItem_Clicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		theid = event.getTarget().getId();
+		menutype = theid.substring(0,2);
+		menuid = Integer.parseInt(theid.substring(2,theid.length()));
+
+		for(dpi : menuTreeModules)
+		{
+			 // match - run it
+			if(menuid == dpi.module_num) runModule(dpi,"emn");
+		}
+
+		// try BIRT reports
+		for(dpi : menuBirtReports)
+		{
+			if(menuid == dpi.module_num)
+			{
+				bid = dpi.module_num.toString();
+				rtit = dpi.module_name.replace(" ","%20");
+				wnid = kiboo.makeRandomId("brv");
+				params = "bid=" + bid + "&rti=" + rtit;
+				//alert("doing: " + bid + " :: " + rtit + " :: " + params);
+				activateModule(mainPlayground,"miscwindows",theBirtViewer,wnid,params,useraccessobj);
+			}
+		}
+
+		// 09/04/2012: do external BIRT reports
+		for(dpi : menuExternalBirtReports)
+		{
+			if(menuid == dpi.module_num)
+			{
+				bid = dpi.module_num.toString();
+				rtit = dpi.module_name.replace(" ","%20");
+				wnid = kiboo.makeRandomId("brv");
+				params = "bid=" + bid + "&rti=" + rtit;
+				//alert("doing: " + bid + " :: " + rtit + " :: " + params);
+				activateModule(mainPlayground,"miscwindows",theExternalBirtViewer,wnid,params,useraccessobj);
+			}
+		}
+	}
+}
+
+// the recursive func to drawout the menu
+void menuFiller(Sql isql, List imenurecs, int imenulevel, int parentid, Object iparent)
+{
+	if(imenurecs == null)
+	{
+		mparentid = parentid.toString();
+		sqlstm = "select * from elb_menutree where menuparent=" + mparentid + " order by position";
+		imenurecs = isql.rows(sqlstm);
+	}
+
+	if(imenurecs.size() == 0) return;
+
+	exmenuclicker = new externalMenuItem_Clicker();
+
+	for(dpi : imenurecs)
+	{
+		thisid = dpi.get("origid").toString();
+
+		thisguitype = (dpi.get("guitype") == null) ? "PANEL" : dpi.get("guitype");
+		if(thisguitype.equals("SEPARATOR"))
+		{
+			sepak = new Menuseparator();
+			sepak.setParent(iparent);
+			continue;
+		}
+
+		// check for sub-items within items
+		sqlstm2 = "select * from elb_menutree where menuparent=" + thisid + " order by position";
+		subrecs = isql.rows(sqlstm2);
+
+		menuitemdisable = true; // default menu item is always disable/hidden
+
+		// check if limited_users is def in table, user must be inside before showing the menu-item
+		limiteduser_flag = true;
+		if(dpi.get("limited_users") != null)
+		{
+			lmuserslist = dpi.get("limited_users").trim();
+			if(!lmuserslist.equals(""))
+			{
+				limiteduser_flag = false; // always set false when come into here - check
+
+				splito = lmuserslist.split(" ");
+				for(i=0; i<splito.length; i++)
+				{
+					lmuser = splito[i];
+					if(lmuser.equals(useraccessobj.username))
+					{
+						limiteduser_flag = true;
+						break;
+					}
+				}
+			}
+		}
+
+		// check accesslevel for menu-item
+		levelcheck = false;
+		if(useraccessobj.accesslevel >= dpi.get("accesslevel")) levelcheck = true;
+		
+		// usergroup check
+		usergroup_flag = false;
+		if(dpi.get("usergroup") != null)
+		{
+			theusergroup =  dpi.get("usergroup");
+
+			if(theusergroup.equals("")) // blank usergroup means everyone can access
+				usergroup_flag = true;
+			else
+			if(!theusergroup.equals("ALL"))
+			{
+				sqlstm = "select accesslevel from portalGroupAccess where user_origid=" + useraccessobj.origid.toString() + 
+				" and usergroup_code='" + dpi.get("usergroup") + "'";
+
+				ugchk = isql.firstRow(sqlstm);
+				if(ugchk != null)
+				{
+					if(dpi.get("usergrouplevel") != null)
+						if(ugchk.get("accesslevel") >= dpi.get("usergrouplevel")) usergroup_flag = true;
+				}
+			}
+			else
+				usergroup_flag = true;
+		}
+		else
+			usergroup_flag = true;
+
+		// all 3 flags must be true - then enable/show menu-item
+		if(limiteduser_flag && levelcheck && usergroup_flag) menuitemdisable = false;
+
+		// final - check if menu-item is disabled
+		xdisa = dpi.get("disabled");
+		if(xdisa) menuitemdisable = true;
+
+		// final - admin see all - don't care
+		if(useraccessobj.accesslevel == 9) menuitemdisable = false;
+
+		if(subrecs.size() > 0)
+		{
+			// if any sub-items for this, must create item as <menu> instead of <menuitem>,
+			// then attach <menupopup> to it for sub-items
+			
+			if(!menuitemdisable) // show sub-menu + items if authorized to
+			{
+				mtabid = "MT" + thisid;
+				menuhand.menuTabMaker(mtabid,dpi.get("menulabel"),kiboo.checkNullString(dpi.get("label_style")),iparent);
+				submenuparent = iparent.getFellowIfAny(mtabid);
+
+				mlistid = "ML" + thisid;
+				menuhand.menuListMaker(mlistid,submenuparent);
+
+				forsubmenuparent = submenuparent.getFellowIfAny(mlistid);
+				menuFiller(isql,subrecs,imenulevel+1,dpi.get("origid"),forsubmenuparent);
+			}
+		}
+		else
+		{
+			mitemid = "MI" + dpi.get("origid").toString();
+			mi = menuhand.menuItemMaker(mitemid,dpi.get("menulabel"), kiboo.checkNullString(dpi.get("label_style")), iparent, 2);
+			mi.addEventListener("onClick",exmenuclicker);
+
+			miobj = iparent.getFellowIfAny(mitemid);
+			miobj.setDisabled(menuitemdisable);
+
+			if(!menuitemdisable) // if menu-item is not disabled -- put into menuTreeModules lookup
+			{
+				imodule_num = dpi.get("origid");
+				imenulabel = dpi.get("menulabel");
+				iaccesslevel = dpi.get("accesslevel");
+				imodule_fn = (dpi.get("module_fn") == null) ? "" : dpi.get("module_fn");
+				imodal_flag = (dpi.get("modal_flag") == null) ? 0 : (dpi.get("modal_flag")) ? 1 : 0;
+				iparameters = (dpi.get("parameters") == null) ? "" : dpi.get("parameters");
+				iguitype = (dpi.get("guitype") == null) ? "PANEL" : dpi.get("guitype");
+
+				if(iguitype.equals("PANEL") || iguitype.equals("WINDOW"))
+				{
+					imodule_gui = (dpi.get("guitype").equals("PANEL")) ? GUI_PANEL : GUI_WINDOW;
+					if(!imodule_fn.equals(""))
+					{
+						wolly = new modulesObj(imodule_num,"",iaccesslevel,imodule_gui,imodule_fn,imodal_flag,iparameters);
+						menuTreeModules.add(wolly);
+					}
+				}
+
+				if(iguitype.equals("REPORT"))
+				{
+					wolly = new reportModulesObj(imodule_num,imenulabel,iaccesslevel,iparameters);
+					menuBirtReports.add(wolly);
+				}
+
+				if(iguitype.equals("REPORT_EXT"))
+				{
+					wolly = new reportModulesObj(imodule_num,imenulabel,iaccesslevel,iparameters);
+					menuExternalBirtReports.add(wolly);
+				}
+			}
+		}
+	}
+}
+
+// main func to get stuff from elb_menutree and draw 'em
+void drawMenuBar()
+{
+	// clear previous menu-bar
+	if(mainmenu_holder.getFellowIfAny("mainmenu") != null) mainmenu.setParent(null);
+
+	// create new ArrayList each time reload menu -- safer
+	menuTreeModules = new ArrayList();
+	menuBirtReports = new ArrayList();
+	menuExternalBirtReports = new ArrayList();
+
+	// create main-menu bar
+	menuhand.menuBarMaker("mainmenu","","",mainmenu_holder);
+
+	inmenuclicker = new internalMenuItem_Clicker();
+
+	if(useraccessobj.accesslevel == 9)
+	{
+		// create built-in menu-editor - admin can view this one only
+		menuhand.menuTabMaker("tab_menueditor","Admin","background:#F52707",mainmenu);
+		menuhand.menuListMaker("tab_menueditor_list",tab_menueditor);
+
+		// only padmin and toymaker can see menu-editor and user-controller
+		tusername = useraccessobj.username;
+		if(tusername.equals("padmin") || tusername.equals("toymaker"))
+		{
+			mi = menuhand.menuItemMaker("IM100","Edit menu items","",tab_menueditor_list,1);
+			mi.addEventListener("onClick",inmenuclicker);
+			mi = menuhand.menuItemMaker("IM101","User controller","",tab_menueditor_list,1);
+			mi.addEventListener("onClick",inmenuclicker);
+			mi = menuhand.menuItemMaker("IM108","i-TEST user controller","",tab_menueditor_list,1);
+			mi.addEventListener("onClick",inmenuclicker);
+			sepak = new Menuseparator();
+			sepak.setParent(tab_menueditor_list);
+
+			mi = menuhand.menuItemMaker("IM106","Lookup+Fields editor","",tab_menueditor_list,1);
+			mi.addEventListener("onClick",inmenuclicker);
+		}
+
+		mi = menuhand.menuItemMaker("IM102","Real folders manager","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+		mi = menuhand.menuItemMaker("IM109","VIC-XML form manager","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+		mi = menuhand.menuItemMaker("IM103","Audit logs","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+		sepak = new Menuseparator();
+		sepak.setParent(tab_menueditor_list);
+		mi = menuhand.menuItemMaker("IM104","Lookups","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+		mi = menuhand.menuItemMaker("IM105","Subcon-tests","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+		mi = menuhand.menuItemMaker("IM107","Check-list templates","",tab_menueditor_list,1);
+		mi.addEventListener("onClick",inmenuclicker);
+	}
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// get all menu-tabs
+	sqlstm = "select * from elb_menutree where menuname='MAINMENU' order by position";
+	menutabs = sql.rows(sqlstm);
+	if(menutabs.size() == 0) { sql.close(); return; }
+	
+	// get user's record
+	//sqlstm = "select * from " + TABLE_PORTALUSER + "  where username='" + useraccessobj.username + "'";
+	//userrec = sql.firstRow(sqlstm);
+
+	for(dpi : menutabs)
+	{
+		showmenutab = false;
+
+		// check main accesslevel
+		if(useraccessobj.accesslevel >= dpi.get("accesslevel")) showmenutab = true;
+
+		// check usergroup
+		if(dpi.get("usergroup") != null)
+		{
+			if(!dpi.get("usergroup").equals("ALL"))
+			{
+				sqlstm = "select accesslevel from portalGroupAccess where user_origid=" + useraccessobj.origid.toString() + 
+				" and usergroup_code='" + dpi.get("usergroup") + "'";
+			
+				ugchk = sql.firstRow(sqlstm);
+				if(ugchk != null)
+				{
+					if(dpi.get("usergrouplevel") != null)
+						if(ugchk.get("accesslevel") < dpi.get("usergrouplevel")) showmenutab = false;
+				}
+				else
+					showmenutab = false;
+			}
+		}
+
+		if(showmenutab)
+		{
+			menuorigid = dpi.get("origid").toString();
+			mtabid = "MT" + menuorigid;
+			menuhand.menuTabMaker(mtabid,dpi.get("menulabel"),kiboo.checkNullString(dpi.get("label_style")),mainmenu);
+
+			mlistid = "ML" + menuorigid;
+			listparent = mainmenu.getFellowIfAny(mtabid);
+			menuhand.menuListMaker(mlistid,listparent);
+			forsubmenuparent = listparent.getFellowIfAny(mlistid);
+
+			menuFiller(sql,null,1,dpi.get("origid"),forsubmenuparent);
+		}
+	}
+
+	sql.close();
+}
+
+// All general purpose stuff put here
+
+// Logout
+void logoutSystem()
+{
+	Window loginwindow = Path.getComponent("//als_portal_login/loginwin");
+	loginwindow.setVisible(true);
+	Include logininc = Path.getComponent("//als_portal_login/mainprogram");
+	logininc.setSrc("");
+	useraccessobj.clearAll();
+} // end of logoutSystem()
+
+void changePassword()
+{
+	wnid = kiboo.makeRandomId("badtaste");
+	activateModule(mainPlayground,"miscwindows","adminmodules/changepassword.zul", wnid, "chgpwd=1",useraccessobj);	
+}
+
+void showCustomerAddressSearchBox()
+{
+	wnid = kiboo.makeRandomId("badtaste");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","dispatch/customer_search_popup.zul", wnid, "getcust=1",useraccessobj);	
+}
+
+// allow admin to switch branch - easier, no need to relogin after updating user details
+void adminSwitchBranchClicker()
+{
+//switchbranch_holder
+	dubra = branch_drd.getSelectedItem().getLabel();
+	useraccessobj.branch = dubra;
+	// update the branch-label
+	branch_lbl.setValue("Branch: " + useraccessobj.branch);
+	admintukarbranch_popup.close();
+}
+
+void showUserGroup()
+{
+	Object[] sm_lb_headers = {
+		new dblb_HeaderObj("Usergroup",true,"usergroup_code",1),
+		new dblb_HeaderObj("Level",true,"accesslevel",2),
+	};
+
+	sql = sqlhand.als_mysoftsql();
+    if(sql == NULL) return;
+	sqlstm = "select usergroup_code,accesslevel from portalgroupaccess where user_origid=" + useraccessobj.origid.toString() + " order by usergroup_code";
+	Listbox newlb = lbhandler.makeVWListbox_onDB(usergroup_holder,sm_lb_headers,"ugroups_lb",5,sql,sqlstm);
+	sql.close();
+	newlb.setStyle("font-size:9px");
+	showusergroup_popup.open(usergroup_btn);
+}
+
+void changeTopBarColor(int itype)
+{
+	barcolor = "background:#F777B9;padding:2px";
+	switch(itype)
+	{
+		case 2:
+			barcolor = "background:#0A158C;padding:2px";
+			break;
+	}
+	topbar.setStyle(barcolor);
+}
+
+void showChangePIN()
+{
+	// load PIN from portaluser
+	/*
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+    sqlstm = "select relreportpin from portaluser where origid=" + useraccessobj.origid;
+    trec = sql.firstRow(sqlstm);
+    sql.close();
+    tpin = checkNullString_RetWat(trec.get("relreportpin"),"");
+    */
+}
+
+// 05/12/2011: allow user to change special PIN - release report and whatever if access-level permits.
+void changePIN()
+{
+	ggt = replaceSingleQuotes(pin_tb.getValue());
+	sql = sqlhand.als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "update portaluser set relreportpin='" + ggt + "' where origid=" + useraccessobj.origid;
+	sql.execute(sqlstm);
+	sql.close();
+	pin_tb.setValue("");
+    changerelpin_popup.close();
+    showMessageBox("User PIN updated..");
+}
+
+// 07/03/2012: for admin to play lookups
+// itype: 1=normal lookups(112), can be switch to do other lookups
+void activateLookupEditor(int itype)
+{
+	uniqwindowid = kiboo.makeRandomId("le");
+	runmestr = "alsglobal/staticlookupman.zul";
+	theparam = "lu=112&wt=General%20Lookups";
+	guihand.globalActivateWindow(mainPlayground,"miscwindows",runmestr, uniqwindowid, theparam, useraccessobj);
+}
+
+void debugsampledet()
+{
+	theparam = "folderno=44199";
+	uniqwindowid = kiboo.makeRandomId("ldx");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderdrill_v2.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// itype: 1=lookups editor
+// isubparam: anything which is meaningful to other modules
+void adminButtons(int itype, int isubparam)
+{
+	uniqwindowid = kiboo.makeRandomId("le");
+	runmestr = "alsglobal/staticlookupman.zul";
+	theparam = "lu=112&wt=General%20Lookups";
+
+	switch(itype)
+	{
+		case 2:
+			break;
+	}
+
+	guihand.globalActivateWindow(mainPlayground,"miscwindows",runmestr, uniqwindowid, theparam, useraccessobj);
+}
+
+void activateDashboard()
+{
+	activateModule(mainPlayground,"workbox","dashboard_v1.zul",kiboo.makeRandomId("dash"),"",useraccessobj);
+}
+
+]]>
+</zscript>
+
+<!-- popup to change release-report pin -->
+<popup id="changerelpin_popup">
+<groupbox>
+	<caption label="Change Release-Report PIN" />
+	<hbox>
+		<label value="PIN" style="font-size:9px" />
+		<textbox id="pin_tb" style="font-size:9px" />
+		<button label="Change" style="font-size:9px" onClick="changePIN()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<!-- popup show usergroup -->
+<popup id="showusergroup_popup">
+<groupbox mold="3d" width="300px">
+	<div id="usergroup_holder" />
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<!-- popup to change branch -->
+<popup id="admintukarbranch_popup">
+<groupbox>
+<caption label="Change lab branch" />
+	<hbox>
+		<label value="Branch" style="font-size:9px" />
+		<listbox id="branch_drd" mold="select" style="font-size:9px" />
+		<button label="Change" style="font-size:9px" onClick="adminSwitchBranchClicker()" />
+		<!-- <button label="Close" style="font-size:9px" onClick="admintukarbranch_popup.close()" /> -->
+	</hbox>
+</groupbox>
+</popup>
+<!-- end of popup -->
+<!--  style="background-image:url('alsimg/1331F960A12F-12D5.jpg')"  -->
+<div id="mainbox" width="1600px" >
+
+<textbox id="debugbox" multiline="true" width="100%" height="100px" visible="false" />
+<!-- <timer id="woptimer" delay="1000" repeats="true" onTimer="timerFuncs(); " /> -->
+
+<borderlayout width="100%" height="90000px">
+
+<north border="none">
+<div>
+	<div id="topbar" style="background:#4d4d4d;padding:2px" width="100%">
+	<hbox>
+		<grid width="530px">
+			<rows>
+				<row style="background:#ffa500">
+					<label id="program_title" style="font-weight:bold" />
+					<label id="username_lbl" style="font-size:9px;font-weight:bold" />
+					<label id="accesslevel_lbl" style="font-size:9px;font-weight:bold" />
+					<label id="branch_lbl" style="font-size:9px;font-weight:bold" />
+					<button id="usergroup_btn" label="Usergroup" style="font-size:9px" onClick="showUserGroup()" />
+				</row>
+			</rows>
+		</grid>
+
+		<div style="padding:2px">
+			<hbox>
+				<button label="Dashboard" style="font-size:9px" onClick="activateDashboard()" />
+				<button label="Change login password" style="font-size:9px" onClick="changePassword()" />
+				<!-- <button id="chgrelpin_btn" label="Change PIN" style="font-size:9px" onClick="changerelpin_popup.open(chgrelpin_btn)" /> -->
+				<button label="Search customer" style="font-size:9px" onClick="showCustomerAddressSearchBox()" />
+				<button id="switchbranch_btn" label="Switch branch" style="font-size:9px" onClick="admintukarbranch_popup.open(switchbranch_btn)" />
+				<button label="Logout" style="font-size:9px" onClick="logoutSystem()" />
+				<!--
+				<button label="I'm feeling pink" style="font-size:8px" onClick="changeTopBarColor(1)" />
+				<button label="The blues" style="font-size:8px" onClick="changeTopBarColor(2)" />
+				-->
+			</hbox>
+		</div>
+
+		<div id="adminBar" style="background:#f94343;padding:2px" visible="false">
+		<label id="adminmsg" style="font-size:9px" />
+		<button label="ReloadMenu" style="font-size:9px" onClick="drawMenuBar()" />
+		<button label="Lookups" style="font-size:9px" onClick="adminButtons(1,1)" />
+		<!-- <button label="Lookups" style="font-size:9px" onClick="activateLookupEditor(1)" /> -->
+		<!-- <button label="folderdet" style="font-size:9px" onClick="debugsampledet()" /> -->
+		</div>
+
+	</hbox>
+	</div>
+
+	<div id="mainmenu_holder" />
+</div>
+</north>
+
+<center style="background:#4d4d4d">
+<div>
+	<div id="workbox" />
+	<div id="worksandbox" />
+</div>
+</center>
+
+<south border="none">
+<div>
+    <div id="miscwindows" />
+</div>
+</south>
+
+</borderlayout>
+
+</div>
+
+<zscript>
+<![CDATA[
+
+void timerFuncs()
+{
+	sqlstm = "select count(jf.origid) as coauploadcount from jobfolders jf where (jf.coadate<>'1900-01-01' or jf.coadate is not null) and " +
+	"jf.datecreated > '2012-01-01'";
+	coaupl = sqlhand.gpSqlFirstRow(sqlstm);
+	wopmsg = "COA uploaded: " + coaupl.get("coauploadcount").toString();
+	debugbox.setValue(wopmsg);
+}
+
+if(useraccessobj.username.equals("padmin") || useraccessobj.username.equals("toymaker"))
+{
+	kio = Executions.getCurrent();
+	url = kio.getContextPath();
+	if(url.indexOf("elbd") != -1) adminmsg.setValue("(DEVELOPMENT VERSION)");
+
+	adminBar.setVisible(true);
+}
+
+drawMenuBar();
+
+//lbhandler.populateDropdownListbox(branch_drd, dd_branches);
+luhand.populateListbox_ByLookup(branch_drd,"dd_branches",2);
+
+// show some user details
+username_lbl.setValue("Your id: " + useraccessobj.username);
+aclvlstr = useraccessobj.accesslevel.toString();
+if(aclvlstr.equals("9")) aclvlstr = "ADMIN";
+accesslevel_lbl.setValue("Level: " + aclvlstr);
+branch_lbl.setValue("Branch: " + useraccessobj.branch);
+
+program_title.setValue(mainProgramTitle);
+
+if(!useraccessobj.username.equals("padmin")) activateDashboard();
+
+]]>
+</zscript>
+</zk>
+

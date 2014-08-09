@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="update_dispatch_manifest"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v0.1";
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+Update Dispatch Manifest - schedules status
+Coding began date	: 10/02/2010
+Written by			: Victor Wong
+
+02/04/2012: ported to byte-compl
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+// hardcoded html-post parameter name: ar_code (set in customer_extra_address.zul -> playDocsDeliveryDetails()
+// the_arcode = Executions.getCurrent().getParameter("ar_code");
+
+windcounter = 1;
+DISPATCHMANIFEST_TABLE = "DispatchManifest";
+Object whathuh;
+
+// to populate makeDispatchScheduleListbox - dispatchschedule2 with recs
+// imanif_origid = which manifest id to search for
+void populateDispatchScheduleListbox(String imanif_origid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	maniforig = kiboo.strip_PrefixID(imanif_origid);
+	sqlstatem = "select * from DispatchScheduleDetails where manifest_id=" + maniforig;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	if(tlist == null) return;
+	String[] strarray = new String[4];
+	for(ilist : tlist)
+	{
+		strarray[0] = SCHEDULEID_PREFIX + ilist.get("origid").toString();
+		strarray[1] = ilist.get("schedule_date").toString().substring(0,10);
+		icompanyname = sqlhand.getCompanyName(ilist.get("ar_code"));
+		strarray[2] = icompanyname;
+		icompleted = ilist.get("completed");
+		icompstr = (icompleted == 1) ? "Completed" : "Incomplete";
+		strarray[3] = icompstr;
+		// dispatchschedule2 hardcoded as in makeDispatchScheduleListbox()
+		lbhand.insertListItems(dispatchschedule2,strarray,SCHEDULEID_PREFIX,"");
+	}
+}
+
+Listbox makeDispatchScheduleListbox(Div mDiv)
+{
+	// clear prev listbox if any
+	Listbox oldlb = mDiv.getFellowIfAny("dispatchschedule2");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("dispatchschedule2");
+    newlb.setVflex(true);
+
+    // newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+
+	newlb.setDroppable(SCHEDULEID_PREFIX);
+	// newlb.addEventListener("onDrop", new MyDropListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SchID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Date");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Customer");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+	Listheader hd4 = new Listheader();
+    hd4.setLabel("Completed");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+
+    newlb.setRows(15);
+
+    return newlb;
+
+} // end of makeDispatchScheduleListbox()
+
+// Show manifest destinations status
+void getManifest_Destinations(String imanfid)
+{
+	if(imanfid.equals("")) return;
+	manifid_int = Integer.parseInt(kiboo.strip_PrefixID(imanfid));
+	if(manifid_int < 1) return;
+	// clear dispatch destination listbox first
+	makeDispatchScheduleListbox(dispschedule_div);
+	populateDispatchScheduleListbox(imanfid);
+}
+
+// Toggle the destination status
+void updateDestinationStatus(String ischid)
+{
+	if(ischid.equals("")) return;
+
+	// get schedule destination rec
+	disprec = getDispatchScheduleRec(SCHEDULEID_PREFIX + ischid);
+	if(disprec == null) return;
+	toggler = (disprec.get("completed") == 0) ? 1 : 0;
+	sql = sqlhand.als_mysoftsql();
+    if(sql == null) return;
+	sqlstatem = "update DispatchScheduleDetails set completed=" + toggler.toString() + " where origid=" + ischid;
+	sql.execute(sqlstatem);
+	sql.close();
+	// refresh the listbox
+	makeDispatchScheduleListbox(dispschedule_div);
+	populateDispatchScheduleListbox(dispatchmanf_id.getValue());
+}
+
+]]>
+</zscript>
+
+<window id="dispatch_updatestat" title="Dispatch/Sampling Manifest Update Status ${MYVERSION}" width="700px" height="640px" position="center"
+ mode="overlapped" border="normal" closable="true">
+<div>
+<groupbox mold="3d" width="100%">
+	<caption label="Manifest" />
+	<hbox>
+		<label value="Dispatch manifest ID" />
+		<textbox id="dispatchmanf_id" />
+		<separator width="10px" />
+		<button label="Get manifest" onClick="getManifest_Destinations(dispatchmanf_id.getValue())" />
+	</hbox>
+</groupbox>
+
+<groupbox mold="3d" width="100%">
+	<caption label="Destinations" />
+	<div id="dispschedule_div" />
+	<separator height="5px" />
+	<hbox>
+		<label value="SchdID : DSPSCH" />
+		<textbox id="schdid_input" />
+		<separator width="10px" />
+		<button label="Update" onClick="updateDestinationStatus(schdid_input.getValue())" />
+	</hbox>
+	<separator height="5px" />
+	<hbox>
+		Please use the barcode scanner to scan the SchdID from the dispatch manifest
+	</hbox>
+</groupbox>
+<button label="Close window" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<zscript>
+<![CDATA[
+
+makeDispatchScheduleListbox(dispschedule_div);
+
+]]>
+</zscript>
+</div>
+</window>
+</zk>
+

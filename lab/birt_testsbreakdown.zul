@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="birt_testsbreakdown_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+
+<zscript>
+<![CDATA[
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+/*
+param_branch = Executions.getCurrent().getParameter("mybranch");
+param_startdate = Executions.getCurrent().getParameter("startdate");
+param_enddate = Executions.getCurrent().getParameter("enddate");
+*/
+
+void doBIRT(Div iparentdiv, Datebox isdate, Datebox iedate)
+{
+	sdate = getDateFromDatebox(isdate);
+    edate = getDateFromDatebox(iedate);
+	
+	selitem = divisiondropdown_lb.getSelectedItem();
+	divcode = getListcellItemLabel(selitem,1);
+
+	parameters_makeme = "&stardate=" + sdate + "&enddate=" + edate + "&labdivision=" + divcode;
+
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("550px");
+	newiframe.setId("birtframe");
+	thesrc = BIRT_WEBVIEWER + BIRT_TESTSBREAKDOWN_FILENAME + parameters_makeme;
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+void generateReportClicker()
+{
+	if(birt_div.getFellowIfAny("birtframe") != null)
+		birtframe.setParent(null);
+	
+	doBIRT(birt_div,startdate,enddate);
+}
+
+
+Object[] division_dropdown_headers = {
+	new listboxHeaderObj("Division",true),
+	new listboxHeaderObj("thecode",false),
+};
+
+
+]]>
+</zscript>
+
+<window id="birt_testsbreakdown_win" width="900px" height="630px" title="Lab Report :: Tests Breakdown"
+	position="center" mode="overlapped" border="normal" closable="true"
+    onClose="globalCloseWindow(myincludeid)" onCancel="globalCloseWindow(myincludeid)" onOk="globalCloseWindow(myincludeid)">
+
+<hbox>
+	<label value="Start date" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+	<separator width="10px"/>
+	<label value="End date" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	<separator width="5px" />
+	<div id="division_lb_div" />
+	<button id="generatereport_btn" label="Generate" onClick="generateReportClicker()" />
+	<separator width="10px" />
+	<button label="X Close window" style="font-size:9px" onClick="globalCloseWindow(myincludeid)" />
+</hbox>
+
+<separator height="3px" />
+<div id="birt_div" />
+
+<zscript>
+<![CDATA[
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+
+Listbox newlb = makeVWListbox(division_lb_div,division_dropdown_headers,"divisiondropdown_lb", 1);
+String[] strarray = new String[2];
+
+for(i=0;i<als_divisions.length;i++)
+{
+	strarray[0] = als_divisions[i].thelongname;
+	strarray[1] = als_divisions[i].thecode;
+	insertListItems(newlb,strarray,"false");
+}
+
+newlb.setMold("select");
+
+//populateDropdownListbox(branch_drd, dd_branches);
+]]>
+</zscript>
+
+</window>
+
+</zk>
+

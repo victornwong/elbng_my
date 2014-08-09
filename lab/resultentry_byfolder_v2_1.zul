@@ -1,0 +1,873 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="resultentryfolder2_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Result Entry";
+MYVERSION = "v2.2";
+/*
+Title		: lab result entry by folder
+Written by	: Victor Wong
+
+29/09/2011: total overhaul 
+26/03/2012: use byte-compiled funcs
+04/04/2012: moved combounits and usualresults into lookups - easier maintenance instead of hardcoded here
+25/05/2012: adding HPLC calculation things for easy result entry
+11/06/2012: adding results duplicating funcs - requested by SuAnn+Sitiaisha
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+public class jtpObject
+{
+	public String jsorigid;
+	public String jtporigid;
+	public String mysoftcode;
+	public String testname;
+	public String method_name;
+	public String casnumber;
+	public Combobox result;
+	public Combobox units;
+}
+
+LEVEL_TOBEABLETO_UPDATE = 4;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+luhand = new LookupFuncs();
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+last_loadtype = 0;
+selected_folderno = "";
+selected_sampleid = "";
+
+global_selected_arcode = "";
+
+global_folderstatus = "";
+global_labfolderstatus = "";
+selected_resultbox = null;
+
+ArrayList mainEntryList;
+
+/* moved to lookups table
+String[] combounits = {
+"mg/L","mg/100g","g/100g","g/100ml","mg/kg","mg/100ul","mg/100ml","ml/100ml","Percent","cfu/ml","cfu/100ml",
+"MPN/100ml","Absent/Present","Eu/ml","cfu/m3","cfu/cm2","cfu/hand","cfu/device","Eu/device",
+"Growth/No growth observed","cfu/g","MPN/g","PN/g",
+"Absent/Present in 1g","Absent/Present in 10g","Absent/Present in 25g"
+ };
+
+String[] usualresults = {
+"Absent", "<1" , "<10", "<0.3", "<3","ND (< 0.5)","ND (< 1)","ND (< 0.5)","ND (< 1)","ND (< 0.05)",
+"ND (< 0.1)","ND(<10)","ND(<5)","ND(<0.2)","ND(<2)","ND(<0.05)","ND (<3)","ND (<0.3)"
+};
+*/
+
+String[] combounits;
+String[] usualresults;
+
+void showFolderMetadata(String ifolderno)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select jf.datecreated,jf.duedate,jf.folderno_str,jf.ar_code,jf.folderstatus,jf.labfolderstatus," +
+	"customer.customer_name,cashsales_customerinfo.customer_name as cs_customer " +
+	"from jobfolders jf left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo on cashsales_customerinfo.folderno_str = jf.folderno_str " +
+	"where jf.folderno_str='" + ifolderno + "'";
+	jrc = sql.firstRow(sqlstm);
+	sql.close();
+
+	if(jrc != null)
+	{
+		folderno_lbl.setValue(jrc.get("folderno_str"));
+		customername_lbl.setValue(jrc.get("customer_name"));
+		datecreated_lbl.setValue(jrc.get("datecreated").toString().substring(0,10));
+		duedate_lbl.setValue(jrc.get("duedate").toString().substring(0,10));
+
+		folderstatus_lbl.setValue(jrc.get("folderstatus"));
+		labfolderstatus_lbl.setValue(jrc.get("labfolderstatus"));
+
+		global_labfolderstatus = jrc.get("labfolderstatus");
+		
+		if(global_labfolderstatus.equals("RELEASED"))
+			labfolderstatus_div.setStyle("padding:2px;background:#11ff00");
+		else
+			labfolderstatus_div.setStyle("padding:2px;background:#ff1100");
+
+		global_selected_arcode = jrc.get("ar_code");
+		foldermetadata_gb.setVisible(true);
+	}
+}
+
+// Sample-marking update button onClick
+class smUpdateOnClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		theid = event.getTarget().getId();
+		selected_sampleid = theid.substring(2,theid.length());
+		//alert(theid);
+		
+		// get sample-marking and notes
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+		sqlstm = "select samplemarking,extranotes,asma_id,asma_station from jobsamples where origid=" + selected_sampleid;
+		trec = sql.firstRow(sqlstm);
+
+		if(trec != null)
+		{
+			sampmark_tb.setValue(trec.get("samplemarking"));
+			exnotes = trec.get("extranotes");
+			if(exnotes.equals(""))
+			{
+				exnotes = "One sample";
+				// do a quick update for default words
+				sqlstm = "update jobsamples set extranotes='One sample' where origid=" + selected_sampleid;
+				sql.execute(sqlstm);
+			}
+
+			sampnotes_tb.setValue(exnotes);
+
+			sampmark_tb.setDisabled(false);
+			sampnotes_tb.setDisabled(false);
+			updatesamplemarking_btn.setDisabled(false);
+			asma_id.setDisabled(false);
+			asma_station.setDisabled(false);
+
+			// disable samplemarking and extranotes textbox if folder released
+			if(global_labfolderstatus.equals("RELEASED") && useraccessobj.accesslevel != 9)
+			{
+				sampmark_tb.setDisabled(true);
+				sampnotes_tb.setDisabled(true);
+				updatesamplemarking_btn.setDisabled(true);
+
+				asma_id.setDisabled(true);
+				asma_station.setDisabled(true);
+			}
+			
+			// 11/10/2011: ASMA sample-id and station
+			asmastuff.setVisible(false);
+			asma_id.setValue("");
+			asma_station.setValue("");
+
+			if(global_selected_arcode.equals("300A/008"))
+			{
+				asmid = kiboo.checkNullString(trec.get("asma_id"));
+				asmstat = kiboo.checkNullString(trec.get("asma_station"));
+
+				asma_id.setValue(asmid);
+				asma_station.setValue(asmstat);
+				asmastuff.setVisible(true);
+			}
+
+			udpateSampleMarking_popup.open(event.getTarget());
+		}
+
+		sql.close();
+	}
+}
+
+// 25/05/2012: onSelect for the result-entry combobox
+class resEntryOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selected_resultbox = event.getTarget(); // save for later usage
+	}
+}
+
+// itype: 1=by folder, 2=by sampleid
+void loadFolderTests(int itype)
+{
+	last_loadtype = itype;
+
+	// clear vars
+	selected_sampleid = "";
+	selected_folderno = "";
+	selected_resultbox = null;
+
+	foldernum = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+
+	// dev purposes - no need to type
+	if(foldernum.equals("") && useraccessobj.accesslevel==9) foldernum = "ALSM32082";
+
+	if(itype == 1 && foldernum.equals("")) return;
+	if(itype == 2 && sampid.equals("")) return;
+
+	// remove previous grid
+	if(testparams_holder.getFellowIfAny("samplesgrid") != null) samplesgrid.setParent(null);
+
+	foldermetadata_gb.setVisible(false); // hide boxes
+	testentry_controls.setVisible(false);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	if(itype == 2)
+	{
+		sqlstm = "select jf.folderno_str " +
+		"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+		"where js.origid=" + sampid + " and " +
+		"jf.deleted = 0 and js.deleted = 0";
+
+		fifold = sql.firstRow(sqlstm);
+		if(fifold == null) {sql.close(); return;}
+
+		foldernum = fifold.get("folderno_str");
+	}
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, js.asma_id, js.asma_station, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.folderno_str = '" + foldernum + "' and " +
+	"jf.deleted = 0 and js.deleted = 0";
+
+	// grab samples + marking
+	therows = sql.rows(sqlstm);
+
+	if(therows.size() == 0) {sql.close(); return;}
+
+	showFolderMetadata(foldernum);
+
+	// create the grid
+	thegrid = new Grid();
+	thegrid.setId("samplesgrid");
+
+	gridrows = new Rows();
+	gridrows.setParent(thegrid);
+
+	testgrid_count = 1;
+
+	mainEntryList = new ArrayList();
+	
+	resentryonclickobj = new resEntryOnSelect();
+
+	for(dpi : therows)
+	{
+		sampleid_row = gridhand.gridMakeRow("","background-color:#333333","",gridrows);
+		
+		gridhand.makeLabelToParent(testgrid_count.toString() + ".","color:#ffffff",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("js_origid").toString(),"color:#ffffff;font-weight:bold",sampleid_row);
+		gridhand.makeLabelToParent(dpi.get("sampleid_str"),"color:#ffffff;font-weight:bold",sampleid_row);
+
+		smbutton = new Button();
+		smbutton.setStyle("font-size:9px");
+		smbutton.setLabel("Sample marking");
+		smbutton.setId("SM" + dpi.get("js_origid").toString());
+		smbutton.setParent(sampleid_row);
+		smbutton.addEventListener("onClick", new smUpdateOnClick());
+
+		samplemarking_row = gridhand.gridMakeRow("","",",3",gridrows);
+		gridhand.makeLabelToParent("Sample marking","",samplemarking_row);
+
+		// 13/10/2011: if ASMA samples, show sample-id and station
+		asmaextrainfo = "";
+		if(global_selected_arcode.equals("300A/008"))
+			asmaextrainfo = " [ ASMA-ID: " + kiboo.checkNullString(dpi.get("asma_id")) + " Station: " + kiboo.checkNullString(dpi.get("asma_station")) + " ]";
+
+		samplemarkcell = new Label();
+		samplemarkcell.setValue(dpi.get("samplemarking") + asmaextrainfo);
+		samplemarkcell.setId("SMLBL" + dpi.get("js_origid").toString());
+		samplemarkcell.setStyle("font-size:9px");
+		samplemarkcell.setParent(samplemarking_row);
+
+		// show tests for sample-id
+		testsrow = gridhand.gridMakeRow("","","4",gridrows);
+
+		testsgrid = new Grid();
+		testsgrid.setId("testgrid" + testgrid_count.toString()); // set ID for later usage
+		testsgrid.setParent(testsrow);
+
+		sqlstm2 = "select jtp.origid as jtp_origid, jtp.mysoftcode, smd.description, smd.description2, smd.newfield7, " +
+			"jtp.releasedby, jtp.releaseddate " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where js.origid=" + dpi.get("js_origid").toString();
+
+		testrecs = sql.rows(sqlstm2);
+
+		if(testrecs.size() != 0)
+		{
+			testgridrows = gridhand.gridMakeRows("","",testsgrid);
+			headrow = gridhand.gridMakeRow("","background:#FAD541","3,4,2",testgridrows);
+
+			gridhand.makeLabelToParent("Test - results etnry","",headrow);
+			gridhand.makeLabelToParent("Previous results by","",headrow);
+			gridhand.makeLabelToParent("Released","",headrow);
+
+			for(kpi : testrecs)
+			{
+				if(kpi.get("mysoftcode") != 0)
+				{
+					// save for save-results usage
+					indj_jtp = new jtpObject();
+					indj_jtp.jsorigid = dpi.get("js_origid").toString();
+					indj_jtp.jtporigid = kpi.get("jtp_origid").toString();
+					indj_jtp.mysoftcode = kpi.get("mysoftcode").toString();
+					indj_jtp.testname = kiboo.checkNullString(kpi.get("description"));
+					indj_jtp.method_name = kiboo.checkNullString(kpi.get("description2"));
+					indj_jtp.casnumber = (kpi.get("newfield7") == null) ? "" : kpi.get("newfield7");
+
+					// 31/10/2011: add in test-method, stockmasterdetails.description2
+					method_row = gridhand.gridMakeRow("","background:#999999","9",testgridrows);
+					gridhand.makeLabelToParent("Method: " + kiboo.checkNullString(kpi.get("description2")),"",method_row);
+
+					tprow = gridhand.gridMakeRow("","","",testgridrows);
+
+					gridhand.makeLabelToParent(kiboo.checkNullString(kpi.get("description")),"",tprow);
+
+					// result textbox
+					indj_jtp.result = new Combobox();
+					gridhand.makeComboitem(indj_jtp.result,usualresults);
+					indj_jtp.result.setId("R" + kpi.get("jtp_origid").toString());
+					indj_jtp.result.setStyle("font-size:9px");
+					indj_jtp.result.addEventListener("onFocus",resentryonclickobj);
+					indj_jtp.result.setParent(tprow);
+
+					// units combobox
+					indj_jtp.units = new Combobox();
+					gridhand.makeComboitem(indj_jtp.units,combounits);
+					indj_jtp.units.setStyle("font-size:9px");
+					indj_jtp.units.setParent(tprow);
+					indj_jtp.units.setId("U" + kpi.get("jtp_origid").toString());
+
+					mainEntryList.add(indj_jtp);
+
+					// IMPORTANT - if lab-folderstatus = released, cannot enter results no more
+					/* 31/10/2011: disable for now
+					if(global_labfolderstatus.equals("RELEASED") && useraccessobj.accesslevel != 9)
+					{
+						indj_jtp.result.setDisabled(true);
+						indj_jtp.units.setDisabled(true);
+					}
+					*/
+
+					// get last result-entered/units if any
+					sqlstm3 = "select top 1 result_unit,final,username,analysed_date from elb_chemistry_results " +
+					"where jobtestparameter_id=" + kpi.get("jtp_origid").toString() + " and mysoftcode=" + kpi.get("mysoftcode").toString() + 
+					"order by origid desc";
+
+					prevrec = sql.firstRow(sqlstm3);
+
+					if(prevrec != null)
+					{
+						oldres = (prevrec.get("final") == null) ? "" : prevrec.get("final");
+						oldunit = (prevrec.get("result_unit") == null) ? "" : prevrec.get("result_unit");
+
+						gridhand.makeLabelToParent(oldres,"",tprow);
+						gridhand.makeLabelToParent(oldunit,"",tprow);
+						gridhand.makeLabelToParent(prevrec.get("username"),"",tprow);
+						gridhand.makeLabelToParent(prevrec.get("analysed_date").toString().substring(0,10),"",tprow);
+					}
+					else // blank previous results labels
+					{
+						gridhand.grid_makeBlankColumn(tprow,4);
+					}
+				
+					// if individual tests have been released, cannot enter result as well
+					if(kpi.get("releasedby") != null || kpi.get("releaseddate") != null)
+					{
+						indj_jtp.result.setDisabled(true);
+						indj_jtp.units.setDisabled(true);
+						tprow.setStyle("background:#00AA00");
+					
+						gridhand.makeLabelToParent(kpi.get("releasedby"),"",tprow);
+						gridhand.makeLabelToParent(kpi.get("releaseddate").toString().substring(0,10),"",tprow);
+					}
+					else
+					{
+						gridhand.grid_makeBlankColumn(tprow,2);
+					}
+				}
+			}
+		}
+
+		testgrid_count++;
+		selected_folderno = dpi.get("folderno_str");
+	}
+
+	sql.close();
+	thegrid.setParent(testparams_holder);
+	testparams_holder.setVisible(true);
+
+	showDocumentsList(selected_folderno);
+//	showJobNotes(selected_folderno);
+
+	testentry_controls.setVisible(true);
+}
+
+// jtp: jobtestparameters, js: jobsamples
+void saveResults()
+{
+	//kks = "";
+	String[] resultarray = new String[16];
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	
+	savedcount = 0;
+
+	for(dpi : mainEntryList)
+	{
+		restb = kiboo.replaceSingleQuotes(dpi.result.getValue());
+		unitstb = kiboo.replaceSingleQuotes(dpi.units.getValue());
+
+		// save only textbox with results - else don't save
+		if(!restb.equals(""))
+		{
+			resultarray[0] = selected_folderno;
+			resultarray[1] = dpi.jsorigid;
+			resultarray[2] = dpi.casnumber;
+			resultarray[3] = restb;
+			resultarray[4] = unitstb;
+			resultarray[5] = restb; // finalresult using the same as result for now 19/4/2010
+			resultarray[6] = dpi.method_name;
+			resultarray[7] = todaydate;
+
+			resultarray[8] = "";
+			resultarray[9] = "0";
+			resultarray[10] = useraccessobj.username;
+			resultarray[11] = "RESULT";
+			resultarray[12] = dpi.jtporigid;
+			resultarray[13] = "1";
+			resultarray[14] = dpi.mysoftcode;
+			resultarray[15] = dpi.testname;
+
+			sqlhand.insertChemistryResult(resultarray);
+			savedcount++;
+
+			//kks += convertStringArrayToString(resultarray);
+		}
+	}
+	//alert(kks);
+
+	// after save results, hide everything, else accidentally insert multi-times same stuff
+	// if nothing entered, no need to hide everything
+	if(savedcount > 0)
+	{
+		guihand.showMessageBox(savedcount.toString() + " results saved");
+		// remove previous grid
+		if(testparams_holder.getFellowIfAny("samplesgrid") != null) samplesgrid.setParent(null);
+		foldermetadata_gb.setVisible(false); // hide boxes
+		testentry_controls.setVisible(false);
+	}
+}
+
+// show results trail - call external window to show results trails
+void showResultsTrail()
+{
+	theparam = "folderno=" + ifolderno;
+	uniqwindowid = makeRandomId("rx");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","lab/results_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// Update sample marking and extra notes - chopped from ver 1
+void updateSampleMarking(Textbox isampmark, Textbox isampnotes)
+{
+	if(selected_sampleid.equals("")) return;
+
+	isampm = kiboo.replaceSingleQuotes(isampmark.getValue());
+	isampn = kiboo.replaceSingleQuotes(isampnotes.getValue());
+
+	// 11/10/2011: for asma station
+	asmid = kiboo.replaceSingleQuotes(asma_id.getValue());
+	asmstat = kiboo.replaceSingleQuotes(asma_station.getValue());
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstatem = "update jobsamples set samplemarking='" + isampm + "',extranotes='" + isampn + "', " + 
+	"asma_id='" + asmid + "', asma_station='" + asmstat + "' where origid=" + selected_sampleid;
+	sql.execute(sqlstatem);
+	sql.close();
+
+
+	// refresh samplemarking label
+	theid = "SMLBL" + selected_sampleid;
+	wokit = testparams_holder.getFellowIfAny(theid);
+	if(wokit != null) wokit.setValue(isampm);
+
+	udpateSampleMarking_popup.close();
+
+} // end of updateSampleMarking()
+
+// 25/05/2012: HPLC results entry things
+
+void fillMW_dropdown()
+{
+Object[] mwlb_headers = {
+	new listboxHeaderObj("",true),
+	new listboxHeaderObj("",false),
+};
+
+	mws = luhand.getLookups_ByParent("MOLECULAR_WEIGHT_THING"); // TODO: HARDCODED!!!
+	if(mws == null) return;
+
+	Listbox newlb = lbhand.makeVWListbox(mwdd_holder, mwlb_headers, "hplc_mw_lb", 1);
+	newlb.setMold("select");
+	newlb.setStyle("font-size:9px");
+
+	for(dpi : mws)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("disptext") + " : " + dpi.get("value1"));
+		kabom.add(dpi.get("value1"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void doHPLC_entry()
+{
+	if(selected_resultbox == null) return;
+	hplc_calc_popup.open(selected_resultbox);
+}
+
+// MW of Benzoic Acid: 122.11
+// MW of Sodium benzoate: 144.11
+// MW of sorbic acid: 112.13
+// MW of potasium sorbate: 150.22
+void hplc_calculate()
+{
+	try
+	{
+		concv = hplc_conc_tb.getValue().floatValue();
+		weight = hplc_weight_tb.getValue().floatValue();
+		dilution = hplc_dilution_tb.getValue().floatValue();
+		finalvol = hplc_finalvol_tb.getValue().floatValue();
+		if(concv == null || weight == null || dilution == null || finalvol == null) return;
+
+		float calcresult = ((concv * dilution) * finalvol) / weight;
+		convbenzoicresult = (calcresult * 122.11) / 144.11;
+		convsorbicresult = (calcresult * 112.13) / 150.22;
+
+		NumberFormat nf = new DecimalFormat("####.#");
+
+		hplc_result_tb.setValue(nf.format(calcresult));
+		hplc_conresult_tb.setValue(nf.format(convbenzoicresult));
+		hplc_consorbic_tb.setValue(nf.format(convsorbicresult));
+	}
+	catch (ArithmeticException e) {}
+	catch (NullPointerException e) {}
+	
+//hplc_conresult_tb
+}
+
+// itype: 1=normal result, 2=benzoic converted, 3=sorbic converted
+void HPLC_insertValue(int itype)
+{
+	nres = "";
+
+	switch(itype)
+	{
+		case 1:
+			nres = hplc_result_tb.getValue();
+			break;
+
+		case 2:
+			nres = hplc_conresult_tb.getValue();
+			break;
+
+		case 3:
+			nres = hplc_consorbic_tb.getValue();
+			break;
+	}
+
+	selected_resultbox.setValue(nres);
+	hplc_calc_popup.close();
+}
+
+// 11/06/2012: duplicate results - only for same test in samples of folder.
+void doDuplicateResults()
+{
+	kchk = selected_resultbox.getId();
+	theval = selected_resultbox.getValue();
+	if(theval.equals("")) return;
+
+	fndmys = "";
+	fndunit = "";
+
+	for(dpi : mainEntryList)
+	{
+		mchk = dpi.result.getId();
+		if(mchk.equals(kchk))
+		{
+			fndmys = dpi.mysoftcode;
+			fndunit = dpi.units.getValue();
+			break;
+		}
+	}
+
+	if(fndmys.equals("")) return;
+
+	for(dpi : mainEntryList)
+	{
+		kmys = dpi.mysoftcode;
+		if(kmys.equals(fndmys))
+		{
+			dpi.result.setValue(theval);
+			dpi.units.setValue(fndunit);
+		}
+	}
+
+}
+
+]]>
+</zscript>
+
+<!-- HPLC result calc popup -->
+<popup id="hplc_calc_popup">
+<groupbox mold="3d">
+	<caption label="HPLC result calcution" style="font-size:9px" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Conc, mg/L" style="font-size:9px" />
+				<decimalbox id="hplc_conc_tb" style="font-size:9px" />
+				<label value="Weight, g" style="font-size:9px" />
+				<decimalbox id="hplc_weight_tb" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Dilution factor" style="font-size:9px" />
+				<decimalbox id="hplc_dilution_tb" value="1" style="font-size:9px" />
+				<label value="Final volume (mL)" style="font-size:9px" />
+				<decimalbox id="hplc_finalvol_tb" value="50" style="font-size:9px" />
+			</row>
+			<row spans=",2,">
+				<label value="Molecular weight" style="font-size:9px" />
+				<div id="mwdd_holder" />
+				<button label="Calculate" style="font-size:9px" onClick="hplc_calculate()" />
+			</row>
+			<row>
+				<label value="Result" style="font-size:9px" />
+				<textbox id="hplc_result_tb" style="font-size:9px" />
+				<label value="Conv.benzoic result" style="font-size:9px" />
+				<textbox id="hplc_conresult_tb" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Conv.sorbic result" style="font-size:9px" />
+				<textbox id="hplc_consorbic_tb" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<hbox>
+		<button label="Insert result" style="font-size:9px" onClick="HPLC_insertValue(1)" />
+		<button label="Insert conv.benzoic.result" style="font-size:9px" onClick="HPLC_insertValue(2)" />
+		<button label="Insert conv.sorbic.result" style="font-size:9px" onClick="HPLC_insertValue(3)" />
+		<button label="Close" style="font-size:9px" onClick="hplc_calc_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- ENDOF HPLC result calc popup -->
+
+<!-- Linking documents popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- ENDOF Linking documents popup -->
+
+<!-- Job notes related popup -->
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" style="font-size:9px" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+<!-- end of Job notes related popup -->
+
+<popup id="udpateSampleMarking_popup" >
+<groupbox>
+<caption label="Update sample marking" />
+<vbox>
+	<label value="Sample marking" style="font-size:9px" />
+	<textbox id="sampmark_tb" multiline="true" width="350px" height="30px" style="font-size:9px" />
+	<label value="Sample description" style="font-size:9px" />
+	<textbox id="sampnotes_tb" multiline="true" height="40px" width="350px" style="font-size:9px" />
+	<div id="asmastuff" visible="false">
+	<hbox>
+		<label value="ASMA-ID" style="font-size:9px" />
+		<textbox id="asma_id" style="font-size:9px" width="50px" />
+		<label value="Station" style="font-size:9px" />
+		<textbox id="asma_station" style="font-size:9px" width="50px" />
+	</hbox>
+	</div>
+	<hbox>
+		<button id="updatesamplemarking_btn" label="Update" onClick="updateSampleMarking(sampmark_tb,sampnotes_tb)" style="font-size:9px" />
+		<button label="Close" onClick="udpateSampleMarking_popup.close()" style="font-size:9px" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+
+<div width="1200px">
+<panel id="resultentry_byfolder_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<separator height="2px" />
+<hbox>
+<vbox>
+<grid width="410px">
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px" />
+			<button label="by folder" style="font-size:9px" onClick="loadFolderTests(1)" />
+		</row>
+		<row>
+			<label value="Sample-ID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="by sample-id" style="font-size:9px" onClick="loadFolderTests(2)" />
+		</row>
+	</rows>
+</grid>
+
+<div id="foldermetadata_gb" visible="false">
+<grid>
+	<rows>
+		<row spans=",3">
+			<label value="Folder" style="font-size:9px" />
+			<div style="background:#333333;padding:2px">
+			<label id="folderno_lbl" style="color:#ffffff" />
+			</div>
+		</row>
+		<row spans=",3">
+			<label value="Customer" style="font-size:9px" />
+			<div style="background:#333333;padding:2px">
+			<label id="customername_lbl" style="color:#ffffff" />
+			</div>
+		</row>
+		<row>
+			<label value="Dated" style="font-size:9px" />
+			<label id="datecreated_lbl" style="font-size:9px" />
+			<label value="Due date" style="font-size:9px" />
+			<label id="duedate_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Status" style="font-size:9px" />
+			<label id="folderstatus_lbl" style="font-size:9px" />
+			<label value="Lab status" style="font-size:9px" />
+			<div id="labfolderstatus_div">
+				<label id="labfolderstatus_lbl" style="font-weight:bold" />
+			</div>
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+
+<!-- documents box -->
+<div id="doculist_holder" width="410px" />
+<separator height="3px" />
+<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+
+<separator height="3px" />
+
+<div id="jobnotes_found_div" />
+<separator height="3px" />
+<grid>
+	<rows>
+		<row>
+		<label value="Job notes" style="font-size:9px" />
+		<textbox id="jobnotes_tb" style="font-size:9px" multiline="true" width="350px" height="70px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<hbox>
+<button label="Save notes" style="font-size:9px" onClick="saveUpdateJobNotes()" />
+<button id="noteshistory_btn" label="Notes history" style="font-size:9px" onClick="jobNotesHistory_clicker()" />
+</hbox>
+
+
+</div>
+
+</vbox>
+
+<vbox>
+	<div id="testentry_controls" visible="false">
+		<button label="SAVE RESULTS" onClick="saveResults()" />
+		<label style="font-size:8px">
+(Empty results will NOT be saved) / GREEN-BAR = released results, you cannot enter new result once it is been released
+		</label>
+		<!--<button label="Results trails" style="font-size:9px" onClick="showResultsTrail()" />-->
+		<separator height="3px" />
+		<hbox>
+			<button label="HPLC calculated entry" style="font-size:9px" onClick="doHPLC_entry()" />
+			<button label="Duplicate results" style="font-size:9px" onClick="doDuplicateResults()" />
+		</hbox>
+	</div>
+
+	<div id="testparams_holder" height="600px" width="760px" style="border:1px solid gray;overflow:auto;padding:2px;" visible="false" />
+</vbox>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+kiboo.setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+combounits = luhand.getLookupChildItems_StringArray("dd_combounits",2);
+usualresults = luhand.getLookupChildItems_StringArray("dd_usualresults",2);
+
+fillMW_dropdown();
+
+/*documentLinkProp.document_idprefix = "WSHT";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+*/
+
+// admin stuff
+if(useraccessobj.accesslevel == 9)
+{
+	folderno_tb.setValue("alsm10000");
+
+}
+
+
+</zscript>
+</zk>

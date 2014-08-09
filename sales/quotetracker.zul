@@ -1,0 +1,760 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="quotation_tracker_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/divisiongroup_funcs.zs" />
+<zscript src="../alsglobal/quotation_funcs.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript src="./quotetracker_funcs.zs" />
+<zscript src="./quotemaker_funcs/quotemaker_funcs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v1.2";
+/*
+Title: Quotation Tracker
+Written by: Victor Wong
+Date started: 14/1/2011
+
+**NOTES**
+14/01/2011: Basic CRM coded
+02/04/2012: ported byte-compl
+05/06/2012: change quote-status dropdown to lookups instead of hardcoded - status as given by Chong
+06/06/2014: optimize and recode some shitt
+*/
+
+import java.util.*;
+import java.text.*;
+import java.math.BigDecimal;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+quotehand = new QuotationFuncs();
+luhand = new LookupFuncs();
+
+global_loaded_quote = global_quote_status = global_quote_curcode = global_quote_owner = "";
+global_selected_folder = global_selected_mysoftcode = global_selected_quoteitem = global_selected_feedback = "";
+
+last_loadtype = old_show_quote = 0;
+selected_quotestring = "";
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+Object[] quotations_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ar_code",false),
+	new listboxHeaderObj("Q#",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Sales",true),
+	new listboxHeaderObj("Q.Stat",true),
+	new listboxHeaderObj("WinLose",true),
+};
+
+// onSelect for showQuotations_Listbox()
+class quotes_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quotations_lb.getSelectedItem();
+		loadQuotation_clicker();
+	}
+}
+qtlbcliker = new quotes_lb_Listener();
+
+// itype: 0=previous, 1=show owner's by date, 2=load all by date, 3=load all by date and searchstring
+// 4=by QT number, 5=by salesman
+void showQuotations_Listbox(int itype)
+{
+	Listbox newlb = lbhand.makeVWListbox(quotes_div, quotations_lb_headers, "quotations_lb", 25);
+
+	last_loadtype = itype;
+	showtype = itype;
+	if(itype == 0) showtype = old_show_quote;
+	else old_show_quote = itype;
+
+	srchstr = kiboo.replaceSingleQuotes(quote_search.getValue());
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	qtnum = kiboo.replaceSingleQuotes(qtnumber_search.getValue());
+	bysalidx = by_salesperson.getSelectedItem();
+	tbysales = lbhand.getListcellItemLabel(bysalidx,1);
+
+	basesql = "select top 200 origid,ar_code,customer_name,datecreated,username," + 
+	"qstatus,deleted,winloseflag,salesperson from elb_Quotations ";
+	sufsql = " order by datecreated desc";
+	othercheck = " where username='" + useraccessobj.username + "' and deleted=0 ";
+	sqlstm = basesql;
+
+	switch(showtype)
+	{
+		case 1:
+			sqlstm += othercheck + " and datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 2:
+			sqlstm += "where datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 3:
+			sqlstm += "where (customer_name like '%" + srchstr + "%' or address1 like '%" + srchstr + "%' or " +
+			"address2 like '%" + srchstr + "%' or contact_person1 like '%" + srchstr + "%') " +
+			"and datecreated between '" + sdate + "' and '" + edate + "' " + sufsql;
+			break;
+		case 4:
+			try {
+				wodi = Integer.parseInt(qtnum);
+			} catch (NumberFormatException e)
+			{
+				return;
+			}
+			sqlstm += "where origid=" + wodi.toString();
+			break;
+		case 5:
+			sqlstm += "where datecreated between '" + sdate + "' and '" + edate + "' and salesperson='" + tbysales+ "' " + sufsql;
+			break;
+	}
+	//if(useraccessobj.accesslevel > 8) sqlstm = basesql + sufsql;
+
+	qtrows = sqlhand.gpSqlGetRows(sqlstm);
+	if(qtrows.size() == 0) return;
+	newlb.addEventListener("onSelect", qtlbcliker);
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "customername", "datecreated", "username", "salesperson", "qstatus", "winloseflag" };
+	for(dpi : qtrows)
+	{
+		origid = dpi.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(dpi.get("ar_code"));
+		// text-decoration: line-through
+		delstr = (dpi.get("deleted") == 1) ? "[DEL] " : "";
+		qcode = delstr + QUOTE_PREFIX + origid;
+		kabom.add(qcode);
+
+		popuListitems_Data(kabom,fl,dpi);
+/*
+		customername = kiboo.checkEmptyString(lbhand.trimListitemLabel(dpi.get("customer_name"),30));
+		kabom.add(customername);
+		datecreated = dpi.get("datecreated").toString().substring(0,10);
+		if(datecreated.equals("1900-01-01")) datecreated = "---";
+		kabom.add(datecreated);
+		kabom.add(kiboo.checkNullString(dpi.get("username")));
+		kabom.add(kiboo.checkNullString(dpi.get("salesperson")));
+		kabom.add(kiboo.checkNullString(dpi.get("qstatus")));
+		kabom.add(kiboo.checkNullString(dpi.get("winloseflag")));
+*/
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+	/*
+		lastup = "---";
+		lastupdate = dpi.get("lastupdate");
+
+		if(lastupdate != null)
+		{
+			kkx = lastupdate.toString().substring(0,10);
+			if(!kkx.equals("1900-01-01")) lastup = kkx;
+		}
+
+		kabom.add(lastup);
+*/
+} // end showQuotations_Listbox()
+
+
+/*void showQuotations_Listbox()
+{
+	Listbox newlb = lbhand.makeVWListbox(quotes_div, quotations_lb_headers, "quotations_lb", 10);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+
+	delcheck = "and deleted=0";
+	if(useraccessobj.accesslevel > 8) delcheck = "";
+	sqlstm = "select top 200 origid,ar_code,customer_name,datecreated,lastupdate,username,qstatus,deleted,winloseflag from elb_Quotations " +
+	"where qstatus='" + QTSTAT_COMMIT + "' " + delcheck + " order by datecreated desc";
+	qtrows = sql.rows(sqlstm);
+	sql.close();
+
+	if(qtrows.size() == 0) return;
+	newlb.addEventListener("onSelect", new quotes_lb_Listener());
+
+	for(dpi : qtrows)
+	{
+		ArrayList kabom = new ArrayList();
+
+		origid = dpi.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(dpi.get("ar_code"));
+
+		// text-decoration: line-through
+		delstr = (dpi.get("deleted") == 1) ? "[DEL] " : "";
+		qcode = delstr + QUOTE_PREFIX + origid;
+		kabom.add(qcode);
+
+		customername = kiboo.checkEmptyString(lbhand.trimListitemLabel(dpi.get("customer_name"),30));
+		kabom.add(customername);
+
+		datecreated = dpi.get("datecreated").toString().substring(0,10);
+		if(datecreated.equals("1900-01-01")) datecreated = "----------";
+
+		kabom.add(datecreated);
+
+		lastup = "----------";
+		lastupdate = dpi.get("lastupdate");
+
+		if(lastupdate != null)
+		{
+			kkx = lastupdate.toString().substring(0,10);
+			if(!kkx.equals("1900-01-01")) lastup = kkx;
+		}
+
+		kabom.add(lastup);
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("qstatus"));
+
+		wlflag = dpi.get("winloseflag");
+		if(wlflag == null) wlflag = "WAIT";
+		kabom.add(wlflag);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false");
+	}
+} // end showQuotations_Listbox()
+*/
+
+// Load and show quotation's metadata
+void loadQuotation_clicker()
+{
+//tab1 quotes_div, quotations_lb_headers, "quotations_lb" QUOTE_PREFIX
+	if(!lbhand.check_ListboxExist_SelectItem(quotes_div, "quotations_lb")) return;
+
+	qtid = quotations_lb.getSelectedItem().getLabel(); // 1st col is elb_Quotations.origid
+	qtrec = quotehand.getQuotation_Rec(qtid);
+
+	tab1.setLabel("Quotation: " + QUOTE_PREFIX + qtid + " :: " + qtrec.get("customer_name"));
+	quote_metadata_div.setVisible(true);
+
+	if(qtrec == null) return;
+
+	Object[] jkl = { qt_ar_code, qt_customer_name, qt_address1, qt_address2, qt_city, qt_zipcode, qt_state, qt_country,
+		qt_telephone, qt_fax, qt_contact_person1, qt_email, qt_notes, qt_exchangerate, qt_curcode, quote_winloseflag, qt_terms };
+
+	String[] fl = { "ar_code", "customer_name", "address1", "address2", "city", "zipcode", "state", "country",
+		"telephone", "fax", "contact_person1", "email", "notes", "exchangerate", "curcode", "winloseflag", "terms" };
+
+	populateUI_Data(jkl,fl,qtrec);
+
+	global_loaded_quote = qtrec.get("origid").toString();
+	global_quote_curcode = qtrec.get("curcode");
+	global_quote_status = qtrec.get("qstatus");
+	global_quote_owner = qtrec.get("username");
+
+	kk = (!qtrec.get("ar_code").equals("")) ? true : false;
+	qt_customer_name.setDisabled(kk); // if this quote is based on client in system - disable the customer-name box
+	/*
+	qt_ar_code.setValue(qtarcode);
+	qt_customer_name.setValue(qtrec.get("customer_name"));
+	qt_address1.setValue(kiboo.checkNullString(qtrec.get("address1")));
+	qt_address2.setValue(kiboo.checkNullString(qtrec.get("address2")));
+	qt_city.setValue(kiboo.checkNullString(qtrec.get("city")));
+	qt_zipcode.setValue(kiboo.checkNullString(qtrec.get("zipcode")));
+	qt_state.setValue(kiboo.checkNullString(qtrec.get("state")));
+	qt_country.setValue(kiboo.checkNullString(qtrec.get("country")));
+	qt_telephone.setValue(kiboo.checkNullString(qtrec.get("telephone")));
+	qt_fax.setValue(kiboo.checkNullString(qtrec.get("fax")));
+	qt_contact_person1.setValue(kiboo.checkNullString(qtrec.get("contact_person1")));
+	qt_email.setValue(kiboo.checkNullString(qtrec.get("email")));
+	qt_notes.setValue(kiboo.checkNullString(qtrec.get("notes")));
+	lbhand.matchListboxItems(qt_curcode,global_quote_curcode);
+	// 14/1/2011: show win/lose flag
+	lbhand.matchListboxItems(quote_winloseflag,qtrec.get("winloseflag"));
+
+	doexh = qtrec.get("exchangerate");
+	exhrate = new BigDecimal(1);
+	if(doexh != null) exhrate = new BigDecimal(doexh);
+	qt_exchangerate.setValue(exhrate);
+
+	terms = (qtrec.get("terms") == null) ? "" : qtrec.get("terms");
+	lbhand.matchListboxItemsColumn(qt_terms,terms,0);
+	*/
+
+	salesm = (qtrec.get("salesperson") == null) ? "" : qtrec.get("salesperson");
+	lbhand.matchListboxItemsColumn(qt_salesperson,salesm,1);
+
+	showQuoteItems();
+	showFeedbacks();
+
+	// 15/05/2011: show supporting documents
+	selected_quotestring = QUOTE_PREFIX + global_loaded_quote;
+	showDocumentsList(selected_quotestring);
+}
+
+void showQuoteItems_Metadata()
+{
+	qirec = quotehand.getQuoteItem_Rec(global_selected_quoteitem);
+	if(qirec == null) return;
+
+	Object[] jkl = { qi_description, qi_description2, qi_unitprice, qi_quantity, qi_discount, qi_lor };
+	String[] fl = { "description", "description2", "unitprice", "quantity", "discount", "lor" };
+
+	populateUI_Data(jkl,fl,qirec);
+/*
+	qi_description.setValue(qirec.get("description"));
+	qi_description2.setValue(qirec.get("description2"));
+	qi_unitprice.setValue(qirec.get("unitprice").toString());
+	qi_quantity.setValue(qirec.get("quantity").toString());
+	qi_discount.setValue(qirec.get("discount").toString());
+	qi_lor.setValue(qirec.get("lor"));
+*/
+	//editquoteitem_btn.setLabel("Update..");
+}
+
+// onSelect listener for showQuoteItems()
+class quote_items_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quote_items_lb.getSelectedItem();
+		mysoftc = lbhand.getListcellItemLabel(selitem,1);
+		global_selected_quoteitem = lbhand.getListcellItemLabel(selitem,0);
+		//autoAssignTestParametersBox(mysoftc);
+		showQuoteItems_Metadata();
+	}
+}
+qtlbitmscliker = new quote_items_lb_Listener();
+
+// quote_items_div quote_items_lb global_loaded_quote global_quote_status
+void showQuoteItems()
+{
+Object[] quote_items_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Tests",true),
+	new listboxHeaderObj("Method.Ref",true),
+	new listboxHeaderObj("Stk",true),
+	new listboxHeaderObj("LOR",true),
+	new listboxHeaderObj("U.P",true),
+	new listboxHeaderObj("Qty",true),
+	new listboxHeaderObj("Dsct",true),
+	new listboxHeaderObj("Gross",true),
+	new listboxHeaderObj("Nett",true),
+};
+	if(global_loaded_quote.equals("")) return;
+
+	Listbox newlb = lbhand.makeVWListbox(quote_items_div, quote_items_lb_headers, "quote_items_lb", 5);
+	quoteitems_meta_div.setVisible(true);
+
+	sqlstm = "select origid,mysoftcode,description,description2,LOR,unitprice,quantity,discount,total_gross,total_net from elb_Quotation_Items " +
+	"where quote_parent=" + global_loaded_quote + " order by origid";
+	qitems = sqlhand.gpSqlGetRows(sqlstm);
+
+	if(qitems.size() == 0) return;
+	grandtotal = 0.0;
+	rowcounter = 1;
+	newlb.addEventListener("onSelect", qtlbitmscliker );
+	newlb.setRows(21);
+	ArrayList kabom = new ArrayList();
+	for(dpi : qitems)
+	{
+		mysc = dpi.get("mysoftcode").toString();
+
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(mysc);
+		kabom.add(rowcounter.toString() + ".");
+		kabom.add(lbhand.trimListitemLabel(dpi.get("description"),25));
+		kabom.add(lbhand.trimListitemLabel(dpi.get("description2"),25));
+
+		stkitem = (mysc.equals("") || mysc.equals("0")) ? "---" : "-Y-";
+		kabom.add(stkitem);
+
+		thelor = (dpi.get("LOR").equals("")) ? "---" : dpi.get("LOR");
+		kabom.add(thelor);
+		// float thing need to format abit, show 2 decimal places only
+		kabom.add(nf2.format(dpi.get("unitprice")));
+		kabom.add(dpi.get("quantity").toString());
+		discstr = (dpi.get("discount") == 0) ? "-----" : dpi.get("discount").toString();
+		kabom.add(discstr);
+		kabom.add(nf2.format(dpi.get("total_gross")));
+
+		total_net = dpi.get("total_net");
+		grandtotal += total_net;
+		kabom.add(nf2.format(total_net));
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		rowcounter++;
+		kabom.clear();
+	}
+	quoteitems_grandtotal_lbl.setValue("Grand total: " + global_quote_curcode + " " + nf2.format(grandtotal));
+	/*
+	deletequoteitem_btn.setDisabled(false);
+	editquoteitem_btn.setDisabled(false);
+
+	if(!global_quote_status.equals(QTSTAT_NEW))
+	{
+		deletequoteitem_btn.setDisabled(true);
+		editquoteitem_btn.setDisabled(true);
+	}
+	*/
+}
+
+//--- Documents attachment funcs --- knockoff from quotemaker_v2_develop.zul
+
+void showDocumentsList(String iquotenum)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + iquotenum;
+
+	ds_sql = sqlhand.als_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can see everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = lbhand.makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+	if(newlb.getItemCount() > 5) newlb.setRows(10);
+}
+
+void viewDocument()
+{
+	if(!lbhand.check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = kiboo.makeRandomId("vd");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","qc/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+// 15/05/2011: modded for quotation-module
+void doViewDoculinkPopup()
+{
+//quotes_div, quotations_lb_headers, "quotations_lb",
+	if(!lbhand.check_ListboxExist_SelectItem(quotes_div,"quotations_lb")) return;
+	selitem = quotations_lb.getSelectedItem();
+	quoteid = QUOTE_PREFIX + lbhand.getListcellItemLabel(selitem,0);
+
+	documentLinkProp.global_eq_origid = quoteid;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+//--- ENDOF documents attachement funcs ---
+
+]]>
+</zscript>
+
+<!-- documents management popup - modded for quotation maker -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_quotestring); doculink_popup.close()" sclass="k9" />
+</hbox>
+</div>
+</popup>
+<!-- end of documents management popup -->
+
+<style src="/real-world.css" />
+
+<div width="1200px">
+<panel id="quotetracker_panel" title="Quotation Tracker ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="kiboo.setTodayDatebox(self)" />
+<!-- <button label="Print quote tracks" sclass="k9" onClick="printQuoteTracks()" /> -->
+<separator height="3px" />
+<hbox>
+<groupbox mold="3d" width="600px">
+<div style="background:#ffa500;spacing:2px">
+Quotations
+</div>
+	<grid>
+		<rows>
+			<row>
+				<hbox>
+					<label value="Start" sclass="k9" />
+					<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+					<label value="End" sclass="k9" />
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+				</hbox>
+				<hbox>
+					<button label="Load my quotes by date" sclass="k9" onClick="showQuotations_Listbox(1)" />
+					<button label="Load all quotes by date" sclass="k9" onClick="showQuotations_Listbox(2)" />				
+				</hbox>
+			</row>
+			<row>
+				<hbox>
+					<label value="Search" sclass="k9" />
+					<textbox id="quote_search" sclass="k9" />
+					<button label="Dig quotes" sclass="k9" onClick="showQuotations_Listbox(3)" />
+				</hbox>
+				<hbox>
+					<label value="QT" sclass="k9" />
+					<textbox id="qtnumber_search" sclass="k9" />
+					<button label="by number" sclass="k9" onClick="showQuotations_Listbox(4)" />
+				</hbox>
+			</row>
+			<row spans="2">
+				<hbox>
+					<div id="bysalesman_holder" />
+					<button label="by salesman" sclass="k9" onClick="showQuotations_Listbox(5)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<div id="quotes_div" />
+</groupbox>
+
+<div>
+<!-- tabbox and stuff for the quotation -->			
+<tabbox mold="accordion">
+<tabs>
+	<tab id="tab1" label="Customer + other details" />
+	<tab id="tab2" label="Quote items" />
+	<tab id="tab4" label="Supporting documents" />
+	<tab id="tab3" label="Customer feedback / Win-Lose result" />
+</tabs>
+<tabpanels>
+
+<tabpanel> <!-- quote metadata -->
+<div id="quote_metadata_div" style="padding:3px" visible="false">
+<grid>
+	<rows>
+	<row>
+		<label value="AR.Code" sclass="k9" />
+		<hbox>
+			<textbox id="qt_ar_code" width="60px" sclass="k9" /> <!-- droppable="true" onDrop="dropAR_Code(event)" /> -->
+			<!-- <button id="assign_customer_btn" label="Get customer" sclass="k9" onClick="playAssignCustomerWindow()" /> -->
+			<label id="cfind_holder" />
+		</hbox>
+		<label value="Customer.Name" sclass="k9" />
+		<textbox id="qt_customer_name" width="270px" sclass="k9" />
+	</row>
+	</rows>
+</grid>
+<div id="qtmetaform_holder" />
+</div>
+</tabpanel>
+
+<tabpanel> <!-- actual quote items -->
+<div id="quoteitems_meta_div" style="padding:3px" visible="false">
+	<div id="quote_items_div" style="padding:2px" />
+	<div style="background:#EE8866;padding:3px">
+	<hbox>
+		<separator width="300px" />
+		<label id="quoteitems_grandtotal_lbl" style="font-size:12px;font-weight:bold" />
+	</hbox>
+	</div>
+	<separator height="3px" />
+	<grid>
+		<rows>
+		<row spans=",3">
+			<label value="Item.Name" sclass="k9" />
+			<textbox id="qi_description" width="300px" sclass="k9" />
+		</row>
+		<row spans=",3">
+			<label value="Method/Notes" sclass="k9" />
+			<textbox id="qi_description2" multiline="true" height="60px" width="300px" sclass="k9" />
+		</row>
+		<row>
+			<label id="qi_uprice_lbl" value="Unit price" sclass="k9" />
+			<textbox id="qi_unitprice" sclass="k9" />
+			<label value="Quantity" sclass="k9" />
+			<textbox id="qi_quantity" width="50px" sclass="k9" value="1" />
+		</row>
+		<row>
+			<label id="qi_discount_lbl" value="Discount" sclass="k9" />
+			<textbox id="qi_discount" sclass="k9" />
+			<label value="LOR" sclass="k9" />
+			<textbox id="qi_lor" sclass="k9" />
+		</row>
+		</rows>
+	</grid>
+	<label value="(View only)" sclass="k9" />
+	<!--
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear fields" sclass="k9" onClick="clearQuoteItem_inputs()" />
+		<button id="editquoteitem_btn" label="New.." sclass="k9" onClick="updateQuoteItem_clicker()" />
+		<button id="deletequoteitem_btn" label="Delete" sclass="k9" onClick="deleteQuoteItem_clicker()" />
+	</hbox>
+	-->
+</div>
+</tabpanel>
+
+<!-- quotation other documents attachment -->
+<tabpanel>
+<div style="padding:2px">
+	<div id="doculist_holder" />
+	<separator height="3px" />
+	<hbox>
+		<button label="View document" sclass="k9" onClick="viewDocument()" />
+		<button id="viewdoculinks_btn" label="Upload supporting documents" onClick="doViewDoculinkPopup()" sclass="k9" />
+	</hbox>
+</div>
+</tabpanel>
+
+<!-- customer feedback / winlose stuff -->
+<tabpanel>
+<div id="feedbacks_div" visible="false">
+	<groupbox>
+	<hbox>
+		<label value="Quotation win/lose" sclass="k9" />
+		<separator width="5px" />
+		<listbox id="quote_winloseflag" mold="select" sclass="k9" />
+		<separator width="5px" />
+		<button label="Update win-lose flag" sclass="k9" onClick="updateWinLoseFlag_clicker()" />
+	</hbox>
+	</groupbox>
+
+	<div id="feedback_holder" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Dated" sclass="k9" />
+			<datebox id="feedback_date" format="yyyy-MM-dd" disabled="true" onCreate="kiboo.setTodayDatebox(self)" />
+		</row>
+		<row>
+			<label value="Feedback" sclass="k9" />
+			<textbox id="feedback" sclass="k9" multiline="true" width="480px" height="80px" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" sclass="k9" onClick="clearQuoteFeedback_fields()" />
+		<button label="Save feedback" sclass="k9" onClick="saveQuoteFeedback_clicker()" />
+	</hbox>
+
+</div>
+</tabpanel>
+
+</tabpanels>
+</tabbox>
+<!-- end of tabbox for quotation -->
+
+</div>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+qtmetaform = dynamicForm(qtmetaform_holder, "qtmetaform_grid", "21");
+
+// 30/01/2012: for the by-salesman search
+populateSalesman_dropdown(bysalesman_holder,"by_salesperson");
+
+//showQuotations_Listbox();
+populateSalesman_dropdown(salesman_holder,"qt_salesperson");
+populateTerms_dropdown(terms_holder,"qt_terms");
+
+luhand.populateListbox_ByLookup(quote_winloseflag, "QUOTE_WINLOSE_FLAGS",2);
+//lbhand.populateDropdownListbox(quote_winloseflag, quoteWinLoseFlags);
+quote_winloseflag.setSelectedIndex(0);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+// Admin only stuff to show else hidden
+if(useraccessobj.accesslevel > 8)
+{
+
+}
+
+/*
+	<row>
+		<label value="Contact.Person" sclass="k9" />
+		<textbox id="qt_contact_person1" width="200px" sclass="k9" />
+		<label value="Email" sclass="k9" />
+		<textbox id="qt_email" width="200px" sclass="k9" />	
+	</row>
+	<row spans=",3">
+		<label value="Address 1" sclass="k9" />
+		<textbox id="qt_address1" width="350px" sclass="k9" />
+	</row>
+	<row spans=",3">
+		<label value="Address 2" sclass="k9" />
+		<textbox id="qt_address2" width="350px" sclass="k9" />
+	</row>
+	<row>
+		<label value="Zip" sclass="k9" />
+		<textbox id="qt_zipcode" width="180px" sclass="k9" />
+		<label value="City" sclass="k9" />
+		<textbox id="qt_city" width="180px" sclass="k9" />
+	</row>
+	<row>
+		<label value="State" sclass="k9" />
+		<textbox id="qt_state" width="180px" sclass="k9" />
+		<label value="Country" sclass="k9" />
+		<textbox id="qt_country" width="180px" sclass="k9" />	
+	</row>
+	<row>
+		<label value="Telephone" sclass="k9" />
+		<textbox id="qt_telephone" width="180px" sclass="k9" />
+		<label value="Fax" sclass="k9" />
+		<textbox id="qt_fax" width="180px" sclass="k9" />	
+	</row>
+	<row spans=",3">
+		<label value="Notes" sclass="k9" />
+		<textbox id="qt_notes" multiline="true" width="400px" height="80px" sclass="k9" />	
+	</row>
+	<row>
+		<label value="Currency" sclass="k9" />
+		<listbox id="qt_curcode" mold="select" sclass="k9" />
+		<zscript>
+			lbhand.populateDropdownListbox(qt_curcode,currencycode);
+		</zscript>	
+		<label value="Exch.Rate" sclass="k9" />
+		<decimalbox id="qt_exchangerate" format="#.#" sclass="k9" value="1" />
+	</row>
+	<row>
+		<label value="Terms" sclass="k9" />
+		<div id="terms_holder" />
+		<label value="Salesman" sclass="k9" />
+		<div id="salesman_holder" />
+	</row>
+	</rows>
+</grid>
+*/
+]]>
+</zscript>
+</zk>

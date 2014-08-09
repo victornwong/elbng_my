@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="today_destinations_panel"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript>
+<![CDATA[
+/*
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+Show today's destinations like a big time-table kinda setup
+Written by: Victor Wong
+
+02/04/2012: ported to byte-compl
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+
+// to count open invoice-details window
+windcounter = 1;
+
+Object whathuh;
+
+Listbox makeManifestDetailsListbox(Groupbox iparent, String myid)
+{
+	Listbox newlb = new Listbox();
+
+	newlb.setId(myid);
+	newlb.setVflex(true);
+	
+	// newlb.setContext("dispatchSchedulingContext");
+	// newlb.setPopup("testmypop");
+		//newlb.addEventListener("onSelect", new MyDispatchManifest_Listener());
+
+	newlb.setParent(iparent);
+
+	Listhead newhead = new Listhead();
+	newhead.setSizable(true);
+	newhead.setParent(newlb);
+	
+	Listheader hd2 = new Listheader();
+	hd2.setLabel("Destination");
+	hd2.setSort("auto");
+	hd2.setParent(newhead);
+
+	Listheader hd3 = new Listheader();
+	hd3.setLabel("Address");
+	hd3.setSort("auto");
+	hd3.setParent(newhead);
+	
+		Listheader hd5 = new Listheader();
+	hd5.setLabel("Reason");
+	hd5.setSort("auto");
+	hd5.setParent(newhead);
+	
+	Listheader hd4 = new Listheader();
+	hd4.setLabel("Status");
+	hd4.setSort("auto");
+	hd4.setParent(newhead);
+
+	newlb.setRows(8);
+
+	return newlb;
+
+} // end of makeManifestDetailsListbox()
+
+void showTodayDestinations(Div idiv, Datebox itodaydate)
+{
+	// if there's previously a hbox, remove before adding a new one.
+	Vbox oldhbox = idiv.getFellowIfAny("lilhbox");
+	if(oldhbox != null) oldhbox.setParent(null);
+
+	itodayd = kiboo.getDateFromDatebox(itodaydate);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select * from DispatchManifest where schedule_date='" + itodayd + "'";
+	tlist = sql.rows(sqlstatem);
+
+	Vbox myhbox = new Vbox();
+
+	myhbox.setId("lilhbox");
+	myhbox.setParent(idiv);
+
+	if(tlist != null)
+	{
+		for(ilist : tlist)
+		{
+			manifi = ilist.get("origid"); // get each manifest origid
+			manifda = ilist.get("schedule_date").toString().substring(0,10);
+			
+			Groupbox itgroup = new Groupbox();
+			Caption itcaption = new Caption("Dispatch Manifest : " + DISPATCHMANIFEST_PREFIX + manifi + " / " + manifda);
+			itcaption.setParent(itgroup);
+			
+			Hbox mhb1 = new Hbox();
+			
+			mhb1.setParent(itgroup);
+
+			// get dispatch name from DispatcherDetails
+			dispname = "Unknown";
+			disptel = "No phone";
+			
+			dsprec = getDispatcherRec(ilist.get("dispatcher_id"));
+			
+			if(dsprec != null)
+			{
+				dispname = dsprec.get("dispatcher_name");
+				
+				dpt = dsprec.get("primaryphone");
+				if(!dpt.equals("")) disptel = dpt;
+			}
+			
+			Label dispname = new Label("[ Dispatcher: " + dispname + " ]");
+			dispname.setStyle("font-weight:bold");
+			dispname.setParent(mhb1);
+			
+			Separator hsp1 = new Separator("horizontal");
+			hsp1.setSpacing("10px");
+			hsp1.setParent(mhb1);
+			
+			// put dispatcher phone too, just incase someone need to call him
+			Label disphone = new Label("[ Phone: " + disptel + " ]");
+			disphone.setStyle("font-weight:bold");
+			disphone.setParent(mhb1);
+			
+			Separator hsp1 = new Separator("horizontal");
+			hsp1.setSpacing("10px");
+			hsp1.setParent(mhb1);
+			
+			// show mode of transportation
+			Label transport = new Label("Transportation: " + ilist.get("transportation"));
+			transport.setParent(mhb1);
+			
+			itgroup.setParent(myhbox);
+			
+			uniqlbid = "dmlb" + manifi;
+			makeManifestDetailsListbox(itgroup,uniqlbid);
+
+			// now drill-in for each manifest and show the destination schedule
+			sqlstatem2 = "select * from DispatchScheduleDetails where manifest_id=" + manifi;
+			recs2 = sql.rows(sqlstatem2);
+		
+			if(recs2 != null)
+			{
+				String[] strarray = new String[4];
+				
+				for(mafdl : recs2)
+				{
+					icompanyname = sqlhand.getCompanyName(mafdl.get("ar_code"));
+					strarray[0] = icompanyname;
+					
+					strarray[1] = mafdl.get("address_1") + ", " + mafdl.get("address_2") + ", " + mafdl.get("city");
+					
+					strarray[2] = mafdl.get("reasonnotes");
+					
+					icompleted = mafdl.get("completed");
+					icompstr = (icompleted == 1) ? "Completed" : "Incomplete";
+					strarray[3] = icompstr;
+					
+					lbhand.insertListItems(itgroup.getFellow(uniqlbid) , strarray, "true", "");
+				}
+			}
+		}
+	}
+
+	sql.close();
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="todaydestinations_panmee" title="Today Destinations" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+	<groupbox>
+	<caption label="Select date to view - default today" />
+	<hbox>
+	<datebox id="todaydate" format="yyyy-MM-dd" />
+	<button id="reffs" label="View" onClick="showTodayDestinations(manifests_div, todaydate)" />
+	</hbox>
+	</groupbox>
+
+	<div id="manifests_div" />
+
+</div>
+</panelchildren>
+</panel>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(todaydate);
+
+]]>
+</zscript>
+
+</div>
+
+</zk>
+

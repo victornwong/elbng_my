@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="collab_messages_module"?>
+<!--
+
+Version				: Messages
+Coding began date	: 22/6/2010
+Developers			: Nurul
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+void playNewMessage()
+{
+	uniqwindowid = myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","collab/write_messages.zul", uniqwindowid,"0",useraccessobj);
+	windcounter++;
+}
+
+]]>
+</zscript>
+
+<window id="collab_messages_win" width="500px" height="430px" title="Messages" position="center" mode="overlapped" border="normal" closable="true">
+
+<div width="450px">
+<panel id="collab_messages" title="Button" border="normal">
+
+<panelchildren>
+<div>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="350px">
+	<west title="" size="35%" splittable="true">
+	<div>
+		<panel width="100%" border="normal" title="">
+				<panelchildren style="padding:5px;">
+					<vbox>
+						<toolbarbutton label="Inbox"/>
+						<toolbarbutton label="Sent"/>	
+					</vbox>
+					<separator height="5px" />
+					<hbox>
+						<button label="Create message" onClick="playNewMessage()" />
+					</hbox>
+				</panelchildren>
+		</panel>
+	</div>
+	</west>
+	
+	<center>
+		<borderlayout height="500px">
+			<west title="" size="100%">
+			<div>
+				<label id="collab_messages_lbl" />
+				<separator height="5px" />
+				
+				<div id="collab_messages" />
+			</div>
+			</west>
+		</borderlayout>
+	</center>
+
+</borderlayout>
+
+</div>
+
+</panelchildren>
+</panel>
+
+</div>
+</window>
+
+</zk>

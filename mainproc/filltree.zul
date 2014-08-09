@@ -1,0 +1,53 @@
+
+<!---
+
+Fillup tree
+
+-->
+
+<zscript language="groovy">
+
+import groovy.sql.Sql;
+
+public void filltree(Treechildren thetree, List prolist)
+{
+	dbconn = Sql.newInstance("jdbc:mysql://localhost:3306/miris", "mirisproj", "kingkong", "org.gjt.mm.mysql.Driver");
+
+	for (opis in prolist)
+	{
+	Treeitem titem = new Treeitem();
+	Treerow newrow = new Treerow();
+	Treecell newcell1 = new Treecell();
+	Treecell newcell2 = new Treecell();
+	
+	List subchild = dbconn.rows("select * from lookups where myparent='${opis[2]}'");
+	if(subchild.size() > 0)
+	{
+		Treechildren newone = new Treechildren();
+		newone.setParent(titem);
+		filltree(newone,subchild);
+		
+		//newcell1.setLabel("${subchild.size()} ${opis[2]}");
+		newcell1.setLabel("${opis[2]}");
+	}
+	else
+	{
+	newcell1.setLabel("${opis[2]}");
+	}
+	
+	newcell2.setLabel("${opis[3]}");
+	
+	//showval.setValue("${opis[2]}");
+	
+	newcell1.setParent(newrow);
+	newcell2.setParent(newrow);
+	newrow.setParent(titem);
+	
+	//titem.setId("${opis[2]}");
+	
+	titem.setParent(thetree);
+	
+	}
+}
+
+</zscript>

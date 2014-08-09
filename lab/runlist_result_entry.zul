@@ -1,0 +1,730 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="runlist_resultentry_fun"?>
+<!--
+
+Title				: Result entry by run-list
+Coding began date	: 12/6/2010
+Developers			: Victor
+
+**NOTES**
+
+Design notes:
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+THIS_MODULE_VERSION = "v.1";
+
+LISTBOX_SAMPLES_LIMIT = 200;
+
+glob_mysoftcode = "";
+
+global_selected_runorigid = "";
+global_selected_runstatus = "";
+global_runlist_notes_origid = "";
+global_runlist_test = "";
+global_runlist_method = "";
+
+global_selected_sampleid = "";
+global_selected_mysoftcode = "";
+global_selected_testorigid = "";
+global_folderno = "";
+
+ALS_stock_cat = "";
+ALS_groupcode = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// TimeZone zone=TimeZone.getTimeZone("GMT+09");
+Date currentDate=new Date();
+DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+String DATE_FORMAT = "yyyy-MM-dd";
+SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT);
+
+Calendar todayDate = Calendar.getInstance();
+todayDate.setTime(currentDate);
+
+Object[] runlistsamples_lb_headers = {
+
+	new listboxHeaderObj("jobtestparam_id",false),
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("rli_origid",false),
+};
+
+// Show samples in run-list
+void populate_RunListSamples_Listbox(Div idiv, String runorigid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlsta = "select * from RunList_Items where RunList_id=" + runorigid;
+	runitem_recs = sql.rows(sqlsta);
+	sql.close();
+
+	//Listbox newlb = makeRunList_Listbox(idiv);
+	Listbox newlb = makeVWListbox(idiv, runlistsamples_lb_headers, "runlistsamples_lb", 10);
+	// newlb.setMultiple(true);
+	// newlb.setDroppable("runsampleid");
+	// newlb.addEventListener("onDrop", new RunlistSample_drop());
+
+	if(runitem_recs.size() == 0) return;
+
+	newlb.setRows(20);
+
+	String[] strarray = new String[3];
+
+	for(ritm : runitem_recs)
+	{
+		strarray[0] = ritm.get("jobtestparam_id").toString();
+		strarray[1] = ritm.get("sampleid_str");
+		strarray[2] = ritm.get("origid").toString();
+
+		insertListItems(newlb,strarray,"false"); // runlistsamples_lb def above
+	}
+}
+
+// Load run-list from db - uses runlist_find_tb for runlist number
+void loadRunList_Clicker(String iwhatrun)
+{
+	if(iwhatrun.equals("")) return;
+	
+	runlistrec = getRunList_Rec(iwhatrun);
+	if(runlistrec == null)
+	{
+		showMessageBox("Invalid run-list number..");
+		return;
+	}
+	
+	// show run-list details
+	
+	runtitle = "Run #: " + runlistrec.get("origid").toString();
+	runlist_title_lbl.setValue(runtitle);
+	
+	mysoftc = runlistrec.get("mysoftcode").toString();
+	stockrec = getStockMasterDetails(mysoftc);
+	
+	global_selected_mysoftcode = mysoftc;
+	global_runlist_test = stockrec.get("Description"); // save a copy for later use
+	global_runlist_method = stockrec.get("Description2");
+	
+	runlist_testname_lbl.setValue("Test: " + global_runlist_test);
+	runlist_testmethod_lbl.setValue("Method: " + global_runlist_method);
+	
+	crtdate = runlistrec.get("datecreated").toString().substring(0,10);
+	runlist_datecreated_lbl.setValue("Date created: " + crtdate);
+	
+	ownerbranch = "Owner: " + runlistrec.get("username") + " | Branch: " + runlistrec.get("branch");
+	
+	runlist_owner_branch_lbl.setValue(ownerbranch);
+	
+	runlist_notes_lbl.setValue(runlistrec.get("notes"));
+	runlist_status_lbl.setValue("Run status: " + runlistrec.get("runstatus"));
+	
+	populate_RunListSamples_Listbox(runlistsamples_div,iwhatrun);
+}
+
+Object[] rl_picker_lb_headers = {
+	new listboxHeaderObj("Run#",true),
+	new listboxHeaderObj("Test",true),
+	new listboxHeaderObj("Method",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Owner",true),
+	new listboxHeaderObj("Notes",true),
+	new listboxHeaderObj("#Smp",true),
+};
+
+// List all runs that're in WIP - user can pick one.. haha
+void populateRunListPicker()
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+
+	sqlst = "select * from RunList where runstatus='" + FOLDERWIP + "'"; // FOLDERWIP def in alsglobaldefs.zs
+	runs_recs = sql.rows(sqlst);
+	
+	sql.close();
+	
+	if(runs_recs == null) return;
+
+	Listbox newlb = makeVWListbox(rlpicker_div, rl_picker_lb_headers, "allrunlist_lb", 20);
+	if(runs_recs.size() == 0) allrunlist_lb.setRows(10);
+	
+	for(irun : runs_recs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		runorigid = irun.get("origid").toString();
+		
+		kabom.add(runorigid);
+	
+		mysoftc = irun.get("mysoftcode").toString();
+		stockrec = getStockMasterDetails(mysoftc);
+
+		kabom.add(stockrec.get("Description"));
+		kabom.add(stockrec.get("Description2"));
+		
+		kabom.add(irun.get("datecreated").toString().substring(0,10));
+		kabom.add(irun.get("username"));
+		
+		inotes = trimListitemLabel(irun.get("notes"), 30);
+		kabom.add(inotes);
+		
+		// show number of samples assigned to run-list
+		rlsampcount = getRunListItems_Count(runorigid);
+		wopme = (rlsampcount == 0) ? "---" : rlsampcount.toString();
+		kabom.add(wopme);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+}
+
+// Show run-list popup - user will select from the WIP runs
+void runlistpicker_Clicker()
+{
+	populateRunListPicker();
+	
+	runlist_find_tb.setValue(""); // clear run-find input box
+	
+	runlistpickerPopup.open(runlist_picker_btn);
+}
+
+// User pick a run-list .. load the stuff
+void runlistpicker_Pickme()
+{
+	if(allrunlist_lb.getSelectedIndex() == -1) return;
+	
+	pickrunno = allrunlist_lb.getSelectedItem().getLabel();
+	loadRunList_Clicker(pickrunno);
+	
+	runlistpickerPopup.close();
+}
+
+Object[] resulttrails_lb_headers = {
+
+	new listboxHeaderObj("chemresult_origid",false),
+	new listboxHeaderObj("#",true),
+	new listboxHeaderObj("Analyte",true),
+	new listboxHeaderObj("Result",true),
+	new listboxHeaderObj("Rpt",true),
+	new listboxHeaderObj("QC",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Date",true)
+};
+
+// Populate result-trails listbox.. whatelse
+// result_trails_div
+void populateResultTrails(String isampleid, String imysoftcode)
+{
+	Listbox newlb = makeVWListbox(result_trails_div, resulttrails_lb_headers, "resulttrails_lb", 8);
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstatem = "select * from " + CHEMISTRY_RESULTS_TABLE + " where SampleCode='" + isampleid + 
+	"' and (deleted=0 or deleted is null) and mysoftcode=" + imysoftcode +
+	" order by origid desc";
+	resrows = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(resrows == null || resrows.size() == 0)
+	{
+		newlb.setRows(4);
+		return;
+	}
+	
+	//newlb.addEventListener("onSelect", new resulttrails_lb_onSelect_Listener()); // do the onSelect listener
+	
+	String[] strarray = new String[8];
+	
+	numcount = 1;
+	
+	for(resrec : resrows)
+	{
+		strarray[0] = resrec.get("origid").toString();
+		strarray[1] = numcount.toString();
+		strarray[2] = resrec.get("ChemCode");
+		strarray[3] = resrec.get("Final") + " " + resrec.get("Result_Unit");
+		strarray[4] = (resrec.get("reported") == 1) ? "YES" : "NO";
+		strarray[5] = (resrec.get("QA_Flag").equals("1")) ? "QC" : "--";
+
+		strarray[6] = resrec.get("username");
+		strarray[7] = resrec.get("Analysed_Date").toString().substring(0,10);
+		
+		numcount++;
+
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Show result entry boxes for the selected sample
+void showResultEntryBox_Clicker()
+{
+	if(runlistsamples_div.getFellowIfAny("runlistsamples_lb") == null) return;
+	if(runlistsamples_lb.getSelectedIndex() == -1) return;
+	
+	selitem = runlistsamples_lb.getSelectedItem();
+	
+	global_selected_testorigid = getListcellItemLabel(selitem,0);
+	global_selected_sampleid = getListcellItemLabel(selitem,1);
+	
+	folderno_str = Integer.parseInt(extractFolderNo(global_selected_sampleid)).toString();
+	therec = getFolderJobRec(folderno_str);
+	
+	global_folderno = therec.get("folderno_str");
+	
+	sampleid_holder_lbl.setValue("Sample ID: " + global_selected_sampleid);
+	
+	analyte_tb.setValue(global_runlist_test);
+	
+	populateResultTrails(global_selected_sampleid,global_selected_mysoftcode);
+	
+	saveresult_btn.setVisible(true);
+	
+}
+
+// save result entry into Chemistry_Results
+void saveResult()
+{
+	// check if everything inplace
+	if(global_selected_testorigid.equals("")) return;
+	if(global_selected_mysoftcode.equals("")) return;
+	
+	tanalyte = analyte_tb.getValue();
+	tresult = result_tb.getValue();
+	tunits = units_tb.getValue();
+	
+	treported = (reported_check.isChecked()) ? "1" : "0";
+	tqaflag = (qa_flag_check.isChecked()) ? "1" : "0";
+
+	stockrec = getStockMasterDetails(global_selected_mysoftcode);
+	
+	tmethod = stockrec.get("Description2");
+	
+	// if analyte is empty, use back the old analyte name
+	if(tanalyte.equals(""))
+	{
+		tanalyte = stockrec.get("Description");
+	}
+	
+	equipname = "-nada-";
+	
+	String[] resultarray = new String[15];
+	
+	todaydate = getDateFromDatebox(hiddendatebox);
+	
+	resultarray[0] = global_folderno;
+	resultarray[1] = global_selected_sampleid;
+	resultarray[2] = tanalyte;
+	resultarray[3] = tresult;
+	resultarray[4] = tunits;
+	resultarray[5] = tresult; // finalresult using the same as result for now 19/4/2010
+	resultarray[6] = tmethod;
+	resultarray[7] = todaydate;
+	
+	resultarray[8] = equipname;
+	resultarray[9] = tqaflag;
+	resultarray[10] = useraccessobj.username;
+	resultarray[11] = "RESULT";
+	resultarray[12] = global_selected_testorigid;
+	resultarray[13] = treported;
+	resultarray[14] = global_selected_mysoftcode;
+
+	insertChemistryResult(resultarray);
+
+	populateResultTrails(global_selected_sampleid,global_selected_mysoftcode);
+}
+
+// Get result-trail rec and update the popup's inputs
+void ownerModifyResult()
+{
+	if(result_trails_div.getFellowIfAny("resulttrails_lb") == null) return;
+	
+	if(resulttrails_lb.getSelectedIndex() == -1) return;
+	
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	
+	resrec = getChemResult_Rec(iori);
+
+	if(resrec != null)
+	{
+		modres_origid.setValue(iori);
+		
+		modres_analyte_tb.setValue(resrec.get("ChemCode"));
+		modres_result_tb.setValue(resrec.get("Final"));
+		modres_units_tb.setValue(resrec.get("Result_Unit"));
+		
+		qaflg = Integer.parseInt(resrec.get("QA_Flag"));
+		repflg = resrec.get("reported");
+		
+		modres_reported_check.setChecked((repflg==1) ? true : false);
+		modres_qa_flag_check.setChecked((qaflg==1) ? true : false);
+		
+		modres_user_tb.setValue(resrec.get("username"));
+		
+		modifyResult_popup.open(popupholder);
+	}
+}
+
+void modifyTheResult()
+{
+	tryuser = modres_user_tb.getValue();
+	
+	if(tryuser.equals("")) return;
+	
+	if(!tryuser.equals(useraccessobj.username))
+	{
+		showMessageBox("You're not the owner of this result entry");
+		return;
+	}
+	
+	String[] resultarray = new String[7];
+
+	resultarray[0] = modres_analyte_tb.getValue();
+	resultarray[1] = modres_result_tb.getValue();
+	resultarray[2] = modres_units_tb.getValue();
+
+	resultarray[3] = (modres_qa_flag_check.isChecked()) ? "1" : "0";	
+	resultarray[4] = (modres_reported_check.isChecked()) ? "1" : "0";
+	
+	resultarray[5] = getDateFromDatebox(hiddendatebox);
+
+	resultarray[6] = modres_origid.getValue();
+	
+	updateResultTrail(resultarray);
+	
+	//alert("result modified...");
+	
+	// AUDIT
+	
+	populateResultTrails(global_selected_sampleid,global_selected_mysoftcode); // refresh result trails
+	modifyResult_popup.close(); // close the popup
+
+}
+
+// Allow owner to remove result-trail - keep audit-trail when it's done
+void ownerRemoveResult()
+{
+	if(result_trails_div.getFellowIfAny("resulttrails_lb") == null) return;
+	
+	if(resulttrails_lb.getSelectedIndex() == -1) return;
+
+	iori = resulttrails_lb.getSelectedItem().getLabel();
+	resrec = getChemResult_Rec(iori);
+
+	remok = false;
+
+	if(resrec != null)
+	{
+		resowner = resrec.get("username");
+
+		// if it's owner of the result-trail, allow removal
+		if(resowner.equals(useraccessobj.username))
+			remok = true;
+
+		// if it's admin.. allow removal too
+		if(useraccessobj.accesslevel == 9)
+			remok = true;
+
+		// set the delete flag
+		if(remok)
+		{
+			if (Messagebox.show("Remove this result..", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+					return;
+
+			sql = als_mysoftsql();
+			if(sql == null) return;
+
+			sqlst = "update " + CHEMISTRY_RESULTS_TABLE + " set deleted=1 where origid=" + iori;
+			sql.execute(sqlst);
+			sql.close();
+
+			// AUDIT
+
+			// refresh result-trails listbox
+			populateResultTrails(global_selected_sampleid,global_selected_mysoftcode);
+
+		}
+		else
+			showMessageBox("Not owner.. cannot remove result trail");
+	}
+}
+
+
+
+]]>
+</zscript>
+
+<!-- allow owner of results to modify result -->
+<popup id="modifyResult_popup">
+<groupbox>
+	<caption label="Modify result" />
+	
+	<textbox id="modres_user_tb" visible="false" />
+	<textbox id="modres_origid" visible="false" />
+
+	<hbox>
+		<label value="Analyte" style="font-size:9px"/>
+		<textbox id="modres_analyte_tb" width="320px" />
+	</hbox>
+
+	<hbox>
+		<label value="Result" style="font-size:9px"/>
+		<textbox id="modres_result_tb" />
+
+		<label value="Units" style="font-size:9px"/>
+		<textbox id="modres_units_tb" />
+	</hbox>
+
+	<checkbox id="modres_reported_check" label="Reported" style="font-size:9px" />
+	<checkbox id="modres_qa_flag_check" label="Is QC" style="font-size:9px" />
+	
+	<separator height="5px" />
+	<hbox>
+		<button label="Mod" onClick="modifyTheResult()" />
+		<button label="Close" onClick="modifyResult_popup.close()" />
+	</hbox>
+
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<!-- RunList picker popup -->
+<popup id="runlistpickerPopup">
+<groupbox width="550px">
+<caption id="runlist_notes_title_lbl" label="All WIP Runs" />
+	<vbox>
+		<div id="rlpicker_div" />
+		<hbox>
+			<button label="Pick" style="font-size:9px" onClick="runlistpicker_Pickme()" />
+			<button label="Close" style="font-size:9px" onClick="runlistpickerPopup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of RunList picker popup -->
+
+<div width="1200px">
+<panel id="runlist_resultentry_panel" title="Run List Result Entry v.1" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<div>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<borderlayout height="550px">
+	<north height="180px" splittable="true" collapsible="true">
+		<div>
+			<borderlayout height="180px">
+				<west title="Load run list" width="30%" splittable="true" collapsible="true" style="background:#E0A044" >
+					<!-- placer for run-list loading -->
+					<div >
+						<separator height="3px" />
+						<hbox>
+							<separator width="3px" />
+							<label value="Run list #" style="font-size:9px" />
+							<textbox id="runlist_find_tb" width="50px" style="font-size:9px" />
+							
+							<separator width="3px" />
+							<vbox>
+								<button id="loadrunlist_btn" label="Load" style="font-size:9px" onClick="loadRunList_Clicker(runlist_find_tb.getValue())" />
+								<button id="runlist_picker_btn" label="Select run list" style="font-size:9px" onClick="runlistpicker_Clicker()" />
+							</vbox>
+							
+						</hbox>
+						<hbox>
+							
+						</hbox>
+					</div>
+				</west>
+				
+				<!-- placer for run-list details -->
+				<center>
+					<div>
+						<div style="background:#AAAAAA">
+							<hbox>
+								<separator width="3px" />
+								<label id="runlist_title_lbl" style="font-size:14px;font-weight:bold;background:#AAAAAA;color:#FFFFFF" value="Run #:" />
+							</hbox>
+							<hbox>
+								<separator width="3px" />
+								<label id="runlist_testname_lbl" style="font-size:14px;font-weight:bold;background:#AAAAAA;color:#FFFFFF" value="Test:" />
+							</hbox>
+							<hbox>
+								<separator width="3px" />
+								<label id="runlist_testmethod_lbl" style="font-size:14px;font-weight:bold;background:#AAAAAA;color:#FFFFFF" value="Method:" />
+							</hbox>
+						</div>
+						<separator height="5px" />
+						<hbox>
+							<separator width="3px" />
+							<vbox>
+								<label id="runlist_datecreated_lbl" style="font-size:9px" />
+
+								<div style="background:#AAAAAA;padding:5px">
+									<label id="runlist_owner_branch_lbl" style="font-size:9px;background:#AAAAAA;color:#FFFFFF" />
+								</div>
+
+								<hbox>
+									<label style="font-size:9px" value="Notes:" />
+
+									<div style="background:#44A0BB;padding:5px">
+										<label id="runlist_notes_lbl" multiline="true" width="200px" height="100px" style="background:#44A0BB;color:#FFFFFF" />
+									</div>
+
+								</hbox>
+
+								<div style="background:#AAAAAA;padding:5px">
+									<label id="runlist_status_lbl" style="font-size:9px;background:#AAAAAA;color:#FFFFFF" />
+								</div>
+
+							</vbox>
+						</hbox>
+					</div>
+				</center>
+			</borderlayout>
+		</div>
+	</north>
+	
+	<center>
+		<borderlayout>
+			<!-- placer for items in run-list LB -->
+			<west title="The run list" width="30%" splittable="true" collapsible="true" >
+				<div>
+					<div id="runlistsamples_div" />
+					
+					<separator height="3px" />
+					
+					<hbox>
+						<separator width="3px" />
+						<button id="loadsample_resultbox_btn" label="Enter result" style="font-size:9px" onClick="showResultEntryBox_Clicker()" />
+					</hbox>
+				
+				</div>
+			</west>
+
+			<center>
+				<div>
+					<div style="background:#404040;padding:5px" >
+						<hbox>
+							<separator width="3px" />
+							<label id="sampleid_holder_lbl" style="font-size:12px; font-weight:bold; background:#404040; color:#ffffff" value="Sample ID:" />
+						</hbox>
+					</div>
+					<separator height="5px" />
+					
+					<groupbox>
+						<hbox>
+							<vbox>
+								<hbox>
+									<label value="Analyte" style="font-size:9px"/>
+									<textbox id="analyte_tb" width="320px" />
+								</hbox>
+
+								<hbox>
+									<label value="Result" style="font-size:9px"/>
+									<separator width="3px" />
+									<textbox id="result_tb" />
+
+									<label value="Units" style="font-size:9px"/>
+									<textbox id="units_tb" />
+								</hbox>
+							</vbox>
+							
+							<vbox>
+								<checkbox id="reported_check" label="Reported" style="font-size:9px" />
+								<checkbox id="qa_flag_check" label="Is QC" style="font-size:9px" />
+							</vbox>
+							
+							<separator width="20px" />
+							
+							<vbox>
+								<button id="saveresult_btn" label="Insert new result" visible="false" style="font-size:9px" onClick="saveResult()" />									
+							</vbox>
+
+						</hbox>
+					</groupbox>
+
+					<separator height="10px" />
+
+					<groupbox>
+						<caption label="Result trails" />
+						<div id="result_trails_div" />
+						<separator height="3px" />
+									
+						<label value="*NOTES* Latest result with Rpt=YES will be reported in the COA" style="font-size:9px;font-weight:bold" />
+						<separator height="5px" />
+						
+						<hbox>
+						<separator width="3px" />
+						<button id="res_trails_mod_btn" label="Modify" style="font-size:9px" onClick="ownerModifyResult()" />
+						<button id="res_trails_rem_btn" label="Remove" style="font-size:9px" onClick="ownerRemoveResult()" />
+						</hbox>
+						
+						<label id="popupholder" />
+					</groupbox>
+					
+				</div>
+			</center>
+
+		</borderlayout>
+	</center>
+	
+</borderlayout>
+
+</div>
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+setTodayDatebox(hiddendatebox);
+
+// admin login, show branch dropdrown
+if(useraccessobj.accesslevel == 9)
+{
+}
+
+
+]]>
+</zscript>
+
+</zk>

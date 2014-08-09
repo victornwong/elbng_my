@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="foodgeneralcoa_win"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_birtreport.zs" />
+<zscript>
+<![CDATA[
+/*
+Title : BIRT generate portrait COA single-sample / page
+Written by: Victor Wong
+
+**NOTES**
+Knock-off from the main module - just change the rpt filename and some stuff
+
+06/05/2011: add 2nd signator paramater - param_signator2
+27/05/2011: knockoff from print_potraitsingle_coa.zul to show coa template with lil-methods-refs
+20/02/2012: knockoff to output FOOD general COA template
+28/03/2012: ported to byte-compiled
+*/
+
+import org.victor.*;
+guihand = new GuiFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+param_jobfolder_id = Executions.getCurrent().getParameter("folder_no");
+param_signator = Executions.getCurrent().getParameter("signator");
+param_signator2 = Executions.getCurrent().getParameter("signator2");
+param_logono = Executions.getCurrent().getParameter("logo");
+param_ity = Executions.getCurrent().getParameter("ity");
+param_prefix = Executions.getCurrent().getParameter("prf"); // 04/07/2014: folder prefix for addr selection
+
+TEMPLATE_FILE = "coatemplates/coapot_v6_font11_d1.rptdesign";
+TEMPLATE_FILE2 = "coatemplates/coapot_v6_font11_d1_nologo.rptdesign";
+TEMPLATE_FILE3 = "coatemplates/coapot_v6_font11_d1_nolor.rptdesign";
+TEMPLATE_FILE4 = "coatemplates/coapot_v6_font11_d1_nologo_nolor.rptdesign";
+TEMPLATE_FILE5 = "coatemplates/coapot_v6_BS.rptdesign";
+
+void doBIRT(Div iparentdiv)
+{
+	Iframe newiframe = new Iframe();
+	newiframe.setWidth("100%");
+	newiframe.setHeight("600px");
+
+	templatefn = TEMPLATE_FILE;
+
+	if(param_ity.equals("2")) templatefn = TEMPLATE_FILE2;
+	if(param_ity.equals("3")) templatefn = TEMPLATE_FILE3;
+	if(param_ity.equals("4")) templatefn = TEMPLATE_FILE4;
+	if(param_ity.equals("5")) templatefn = TEMPLATE_FILE5;
+
+	thesrc = BIRT_WEBVIEWER + templatefn + "&folderjob_id=" + param_jobfolder_id + 
+	"&signator=" + param_signator + "&signator2=" + param_signator2 + "&fprefix=" + param_prefix;
+
+	newiframe.setSrc(thesrc);
+	newiframe.setParent(iparentdiv);
+}
+
+]]>
+</zscript>
+
+<window id="print_potlilref_box" width="900px" height="700px" title="Certificate Of Analysis : General template" 
+position="center" mode="overlapped" border="normal" closable="true" sizable="true">
+
+<button label="Close window" style="font-size:9px" onClick="guihand.globalCloseWindow(mainPlayground,myincludeid)" />
+<separator height="3px" />
+<label id="coa_type_lbl" style="font-size:13px;font-weight:bold" />
+<div id="birt_div" />
+<zscript>
+doBIRT(birt_div);
+</zscript>
+</window>
+</zk>

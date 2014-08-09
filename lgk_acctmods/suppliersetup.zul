@@ -1,0 +1,499 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="supplier_setup_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Suppliers setup
+Written by: Victor Wong
+
+**NOTES**
+Work on : SupplierDetail table
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+supplier_searchstring = "";
+selected_supplier_id = "";
+selected_supplier_apcode = "";
+selected_supplier_name = "";
+last_refreshtype = 1;
+
+// Enable all sorta buttons / fields for admin
+void adminEnableAll()
+{
+	if(useraccessobj.accesslevel != 9) return;
+
+	//sup_apcode.setDisabled(false); 
+	//updatesuppdetails_btn.setDisabled(false);
+
+}
+
+// Clear all supplier metadata inputboxes --
+void clearSupplierInputs_clicker()
+{
+	selected_supplier_id = "";
+	selected_supplier_apcode = "";
+	selected_supplier_name = "";
+
+	sup_apcode.setValue("");
+	sup_suppliername.setValue("");
+	sup_supadd1.setValue("");
+	sup_supadd2.setValue("");
+	sup_supadd3.setValue("");
+	sup_phone.setValue("");
+	sup_fax.setValue("");
+	sup_cperson1.setValue("");
+	sup_email.setValue("");
+
+	sup_apcode.setDisabled(false); // enable for new supplier entry
+	newsupp_btn.setDisabled(false);
+
+	updatesuppdetails_btn.setDisabled(true); // update detail button
+
+	adminEnableAll();
+}
+
+// Retrieve and show supplier details
+void showSupplier_Metadata()
+{
+	if(selected_supplier_id.equals("")) return;
+	supprec = getSupplier_Rec(selected_supplier_id);
+	if(supprec == null)
+	{
+		showMessageBox("[ERROR] Cannot retrieve supplier details..");
+		return;
+	}
+
+	sup_apcode.setDisabled(true); // don't let user change the AP code
+	sup_apcode.setValue(checkNullString(supprec.get("APCode")));
+
+	sup_suppliername.setValue(checkNullString(supprec.get("SupplierName")));
+	sup_supadd1.setValue(checkNullString(supprec.get("Supadd1")));
+	sup_supadd2.setValue(checkNullString(supprec.get("Supadd2")));
+	sup_supadd3.setValue(checkNullString(supprec.get("SupAdd3")));
+
+	sup_phone.setValue(checkNullString(supprec.get("Phone")));
+	sup_fax.setValue(checkNullString(supprec.get("Fax")));
+	sup_cperson1.setValue(checkNullString(supprec.get("CPerson1")));
+	sup_email.setValue(checkNullString(supprec.get("Email")));
+
+	thecat = checkNullString(supprec.get("Category"));
+	matchListboxItemsColumn(sup_category,thecat,1);
+
+	updatesuppdetails_btn.setDisabled(false); // update detail button
+	newsupp_btn.setDisabled(true); // disable new-supplier button
+
+	adminEnableAll();
+}
+
+// onSelect for searchSupplier_clicker()
+class supplierslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_supplier_id = getListcellItemLabel(selitem,0);
+		selected_supplier_apcode = getListcellItemLabel(selitem,1);
+		selected_supplier_name = getListcellItemLabel(selitem,2);
+		
+		showSupplier_Metadata();
+		showDocumentsList(selected_supplier_apcode);
+	}
+}
+
+// Search SupplierDetail and populate lb accordingly - uses supplier_search_tb for search string
+// searchtype : 1=normal , 2=by supplierdetail.startdate (used when create new supplier to show latest)
+void searchSupplier_clicker(int searchtype)
+{
+Object[] supplierpicker_lb_headers = {
+
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("APCode",true),
+	new listboxHeaderObj("Supplier.Name",true),
+	new listboxHeaderObj("Cont.person",true),
+	new listboxHeaderObj("Phone",true),
+	new listboxHeaderObj("Fax",true),
+};
+	searchstring = supplier_search_tb.getValue();
+	if(searchstring.equals("")) return;
+
+	last_refreshtype = searchtype;
+
+	sqlstm = "select top 100 ID,APCode,SupplierName,Phone,Fax,CPerson1 from SupplierDetail where " + 
+	"SupplierName like '%" + searchstring + "%' or APCode like '%" + searchstring + "%' order by SupplierName";
+	
+	if(searchtype == 2)
+	{
+		sqlstm = "select top 20 ID,APCode,SupplierName,Phone,Fax,CPerson1 from SupplierDetail " + 
+		"order by StartDate desc";
+	}
+
+	Listbox newlb = makeVWListbox(suppliers_holder, supplierpicker_lb_headers, "suppliers_lb", 10);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	supprecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(supprecs.size() == 0)
+	{
+		showMessageBox("Cannot find supplier.. please try again");
+		return;
+	}
+
+	newlb.setRows(25);
+	newlb.addEventListener("onSelect", new supplierslb_Listener());
+
+	for(supplier : supprecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(supplier.get("ID").toString());
+		kabom.add(supplier.get("APCode"));
+		kabom.add(supplier.get("SupplierName"));
+
+		cperson1 = (supplier.get("CPerson1") == null) ? "-----" : supplier.get("CPerson1");
+		cperson1 = trimListitemLabel(cperson1,20);
+		kabom.add(cperson1);
+
+		phone = (supplier.get("Phone") == null) ? "-----" : supplier.get("Phone");
+		phone = trimListitemLabel(phone,15);
+		kabom.add(phone);
+
+		fax = (supplier.get("Fax") == null) ? "-----" : supplier.get("Fax");
+		fax = trimListitemLabel(fax,15);
+		kabom.add(fax);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+	//dc_obj = new supplierLB_DoubleClick_Listener();
+	//setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// Update or create new supplier
+void updateSupplier_clicker()
+{
+	// selected_supplier_id = "";
+	// selected_supplier_apcode = "";
+	// selected_supplier_name = "";
+
+	apcode = replaceSingleQuotes(sup_apcode.getValue()).toUpperCase();
+	suppliername = replaceSingleQuotes(sup_suppliername.getValue());
+	supadd1 = replaceSingleQuotes(sup_supadd1.getValue());
+	supadd2 = replaceSingleQuotes(sup_supadd2.getValue());
+	supadd3 = replaceSingleQuotes(sup_supadd3.getValue());
+	phone = replaceSingleQuotes(sup_phone.getValue());
+	fax = replaceSingleQuotes(sup_fax.getValue());
+	cperson1 = replaceSingleQuotes(sup_cperson1.getValue());
+	email = replaceSingleQuotes(sup_email.getValue());
+
+	// save the supplier category code
+	selitem = sup_category.getSelectedItem(); 
+	supcat = getListcellItemLabel(selitem,1);
+
+	if(apcode.equals("") || suppliername.equals(""))
+	{
+		showMessageBox("APCode and Supplier.Name mandatory..");
+		return;
+	}
+
+	todaydate = getDateFromDatebox(hiddendatebox);
+
+	// create new supp
+	sqlstm = "insert into supplierdetail (apcode,suppliername,supadd1,supadd2,supadd3,phone,fax,email,cperson1,startdate,category) values " +
+	"('" + apcode + "','" + suppliername + "','" + supadd1 + "','" + supadd2 + "','" + supadd3 + "','" + 
+	phone + "','" + fax + "','" + email + "','" + cperson1 + "','" + todaydate + "','" + supcat + "')";
+
+	refreshtype = 2;
+
+	// there is a selected_supplier_id .. update lor
+	if(!selected_supplier_id.equals(""))
+	{
+		sqlstm = "update supplierdetail set apcode='" + apcode + "', suppliername='" + suppliername + "', " + 
+		"supadd1='" + supadd1 + "',supadd2='" + supadd2 + "',supadd3='" + supadd3 + "',phone='" + phone + "',fax='" + fax + "', " +
+		"cperson1='" + cperson1 + "',email='" + email + "', category='" + supcat + "' where id=" + selected_supplier_id;
+		
+		refreshtype = 1;
+	}
+	else
+	{
+		// check for dup APCode
+		dupsup = getSupplier_Rec_ByCode(apcode);
+		if(dupsup != null)
+		{
+			showMessageBox("APCode is already allocated for another supplier.. please use a different code");
+			return;
+		}
+	}
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	// if it's a new supplier thing.. disable apcode field after saving
+	if(refreshtype == 2) sup_apcode.setDisabled(true);
+	sup_apcode.setValue(apcode); // put back uppercased ap-code into inputbox
+	searchSupplier_clicker(refreshtype); // refresh
+	clearSupplierInputs_clicker(); // clear input fields - user need to reselect - to repopulate the global vars
+}
+
+// Delete supplier
+// 20/10/2010: for now, only admin can delete supplier..
+void deleteSupplier_clicker()
+{
+	if(selected_supplier_id.equals("")) return;
+
+	if (Messagebox.show("Delete this supplier..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "delete from supplierdetail where id=" + selected_supplier_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	searchSupplier_clicker(last_refreshtype); // refresh
+}
+
+//--- linking documents related
+void doViewDoculinkPopup()
+{
+	// make sure something to look-for in table - 20/10/2010: customize this for other linking-id
+	if(selected_supplier_apcode.equals("")) return;
+
+	documentLinkProp.global_eq_origid = selected_supplier_apcode;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+// List all documents linked to supplier
+void showDocumentsList(String selected_id)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + selected_id;
+
+	ds_sql = lgk_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+}
+
+void viewDocument()
+{
+	if(!check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vd");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+//--- ENDOF linking documents related
+
+// Populate supplier-category dropdown. Can be used in other mods
+void populateSupplierCategory_DD(Listbox ilb)
+{
+	sqlstm = "select category,cat_desc from suppliercategory";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	supcats = sql.rows(sqlstm);
+	sql.close();
+	if(supcats.size() == 0) return;
+
+	for(dpi : supcats)
+	{
+		ArrayList kabom = new ArrayList();
+		cat = dpi.get("category");
+		desc = dpi.get("cat_desc");
+		
+		kabom.add(cat + " : " + desc);
+		kabom.add(cat);
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(ilb,strarray,"false");
+	}
+}
+
+]]>
+</zscript>
+
+<!-- document management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="lgkglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_supplier_apcode); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of document management popup -->
+
+<div width="1200px">
+<panel id="suppliersetup_panel" title="Suppliers / Vendors Setup" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+<separator height="5px" />
+<groupbox style="padding:5px">
+<hbox>
+	<label value="Supplier.Name/APCode" style="font-size:9px" />
+	<textbox id="supplier_search_tb" width="200px" style="font-size:9px" />
+	<separator width="5px" />
+	<button label="Search" style="font-size:9px" onClick="searchSupplier_clicker(1)" />
+	<separator width="5px" />
+	<label value="(Max. 100 recs. per click)" style="font-size:9px" />
+</hbox>
+</groupbox>
+<separator height="5px" />
+<hbox>
+<div width="600px" style="padding:3px">
+	<div id="suppliers_holder" />
+</div>
+
+<div style="padding:3px">
+	<groupbox mold="3d">
+		<caption label="Supplier Details" />
+		<grid>
+			<columns>
+				<column label="" />
+				<column label="" />
+				<column label="" />
+				<column label="" />
+			</columns>
+			<rows>
+			<row spans=",3">
+				<label value="APCode" style="font-size:9px" />
+				<textbox id="sup_apcode" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Supplier.Name" style="font-size:9px" />
+				<textbox id="sup_suppliername" width="300px" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Address.Ln1" style="font-size:9px" />
+				<textbox id="sup_supadd1" width="300px" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Address.Ln2" style="font-size:9px" />
+				<textbox id="sup_supadd2" width="300px" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Address.Ln3" style="font-size:9px" />
+				<textbox id="sup_supadd3" width="300px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Phone" style="font-size:9px" />
+				<textbox id="sup_phone" style="font-size:9px" />
+				<label value="Fax" style="font-size:9px" />
+				<textbox id="sup_fax" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Contact.Person" style="font-size:9px" />
+				<textbox id="sup_cperson1" style="font-size:9px" />
+				<label value="E-mail" style="font-size:9px" />
+				<textbox id="sup_email" style="font-size:9px" />
+			</row>
+			<row spans=",3">
+				<label value="Supplier.Cat" style="font-size:9px" />
+				<listbox id="sup_category" mold="select" style="font-size:9px" />
+			</row>
+			</rows>
+		</grid>
+	</groupbox>
+	<separator height="5px" />
+	<hbox>
+		<button label="Clear fields" style="font-size:9px" onClick="clearSupplierInputs_clicker()" />
+		<button id="newsupp_btn" label="New supplier" style="font-size:9px" onClick="updateSupplier_clicker()" />
+		<button id="updatesuppdetails_btn" label="Update supplier details" style="font-size:9px" disabled="true" onClick="updateSupplier_clicker()" />
+		<button id="deletesupp_btn" label="Delete" style="font-size:9px" visible="false" onClick="deleteSupplier_clicker()" />
+	</hbox>
+	<separator height="8px" />
+	<groupbox mold="3d">
+		<caption label="Documents" />
+		<div id="doculist_holder" />
+		<separator height="3px" />
+		<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+		<button id="viewdoculinks_btn" label="Upload document" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+	</groupbox>
+
+</div>
+
+</hbox>
+</panelchildren>
+</panel>
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+documentLinkProp.document_idprefix = "DOCS";
+lgk_setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+populateSupplierCategory_DD(sup_category);
+
+if(useraccessobj.accesslevel == 9)
+{
+	deletesupp_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+
+</div>
+</zk>

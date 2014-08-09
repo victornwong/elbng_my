@@ -1,0 +1,675 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="frontslab2_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Folders Overview";
+MYVERSION = "v0.2";
+MYPANEL = "frontslab2_panel";
+/*
+Title		: Front slab for show due-folders and so on..
+Written by	: Victor Wong
+Dated		: 12/01/2013
+
+A new version with ideas chopped from EnviroLIMS
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+glob_selected_folder = "";
+glob_selected_folderli = null;
+
+void showLabel(String ilblid, String iprestr, String ivalstr)
+{
+	kcomp = maindiv.getFellowIfAny(ilblid);
+	if(kcomp != null) kcomp.setValue(iprestr + ivalstr);
+}
+
+class folders_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_selected_folder = lbhand.getListcellItemLabel(isel,2);
+		company = lbhand.getListcellItemLabel(isel,3);
+		glob_selected_folderli = isel;
+		showLabComments(glob_selected_folder);
+		showFolderMetadata(glob_selected_folder,company);
+
+		internalstuff.setVisible(true);
+	}
+}
+
+class folders_dclick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		//glob_selected_folder = lbhand.getListcellItemLabel(isel,2);
+		//doFunc(1);
+	}
+}
+
+void showThemOverdueFolders(String ittdate, String ishsm)
+{
+Object[] folders_headers =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Dated",true,""),
+	new listboxHeaderWidthObj("Folder",true,""),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("LC",true,"30px"),
+	new listboxHeaderWidthObj("Sub",true,"30px"),
+	new listboxHeaderWidthObj("Samp",true,"40px"),
+	new listboxHeaderWidthObj("Catg.",true,""),
+};
+	Listbox newlb = lbhand.makeVWListbox_Width(folders_holder, folders_headers, "folders_lb", 30);
+	folderslist_lbl.setValue(ishsm + " :: Due-date : " + ittdate);
+
+	sqlstm = "select jf.origid,jf.datecreated, jf.folderno_str, cust.customer_name, csci.customer_name as cashcustomer, " + 
+	"(select count(origid) from jobsamples where jobfolders_id = jf.origid and deleted=0) smpcount, cust.category, " +
+	"(select count(origid) from elb_labcomments where folderno_str=jf.folderno_str) as lccount, " +
+	"(select count(origid) from elb_subcon_items where folderno_str=jf.folderno_str) as subcon " +
+	"from jobfolders jf left join customer cust on jf.ar_code = cust.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.duedate = '" + ittdate + "' and jf.deleted=0 and jf.folderstatus <> 'DRAFT' " +
+	"and jf.folderno_str <> '' and jf.labfolderstatus = 'WIP' and jf.share_sample='" + ishsm + "' order by jf.folderno_str";
+
+	frecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(frecs.size() == 0) return;
+	newlb.addEventListener("onSelect", new folders_onSelect());
+	for(dpi : frecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("folderno_str"));
+
+		if(dpi.get("cashcustomer") != null) custn = dpi.get("cashcustomer");
+		else
+		custn = kiboo.checkNullString(dpi.get("customer_name"));
+
+		kabom.add(custn);
+
+		kabom.add(dpi.get("lccount").toString());
+		kabom.add(dpi.get("subcon").toString());
+
+		kabom.add(dpi.get("smpcount").toString());
+		kabom.add(dpi.get("category"));
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	dc_obj = new folders_dclick();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+class sharesamp_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getTarget();
+		ittdate = lbhand.getListcellItemLabel(isel,0);
+		ishsm = lbhand.getListcellItemLabel(isel,1);
+		showThemOverdueFolders(ittdate,ishsm);
+
+		workarea.setVisible(true);
+		internalstuff.setVisible(false);
+	}
+}
+
+// populate 'em small boxes of due-stuff
+void populateBoxes()
+{
+Object[] sharesmp_headers =
+{
+	new listboxHeaderWidthObj("ttdate",false,""),	
+	new listboxHeaderWidthObj("Share",true,"70px"),
+	new listboxHeaderWidthObj("Jobs",true,"40px"),
+};
+
+	sdate = kiboo.getDateFromDatebox(usertoday_date);
+
+	// get 'em stuff from today till a week
+	for(i=1;i<8;i++)
+	{
+		myis = i.toString();
+		datei = i-1;
+		myttdate = ""; 
+	
+		// get incomplete folders count
+		sqlstm = "select count(jf.origid) as incomplete, convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) as thedate " + 
+		"from jobfolders jf where " +
+		"jf.duedate = convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) and jf.deleted=0 " +
+		"and jf.folderstatus <> 'DRAFT' and jf.folderno_str <> '' and jf.labfolderstatus = 'WIP'";
+
+		incomp = sqlhand.gpSqlFirstRow(sqlstm);
+		if(incomp != null)
+		{
+			if(i>2) // show dates label after today/tomorrow
+				showLabel("due_" + myis + "_lbl","Folders due : ",incomp.get("thedate"));
+
+			if(i == 1) showLabel("due_" + myis + "_lbl","Today : ",incomp.get("thedate"));
+			if(i == 2) showLabel("due_" + myis + "_lbl","Tomorrow : ",incomp.get("thedate"));
+
+			showLabel("imcomp_" + myis + "_lbl","",incomp.get("incomplete").toString());
+
+			myttdate = incomp.get("thedate");
+		}
+
+		// get completed/released folders
+		sqlstm = "select count(jf.origid) as completed " + 
+		"from jobfolders jf where " +
+		"jf.duedate = convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) and jf.deleted=0 " +
+		"and jf.folderstatus <> 'DRAFT' and jf.folderno_str <> '' and jf.labfolderstatus = 'RELEASED'";
+
+		compl = sqlhand.gpSqlFirstRow(sqlstm);
+		if(compl != null)
+		{
+			showLabel("comp_" + myis + "_lbl","",compl.get("completed").toString());
+		}
+
+		// get each share_sample type incomplete folders count
+		sqlstm = "select distinct jf.share_sample, (select count(jf2.origid) from jobfolders jf2 " +
+		"where jf2.duedate = convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126) and jf2.deleted=0 and jf2.folderstatus <> 'DRAFT' " + 
+		"and jf2.folderno_str <> '' and jf2.labfolderstatus = 'WIP' and jf2.share_sample = jf.share_sample) byfolders " +
+		"from jobfolders jf where jf.share_sample <> '' " +
+		"and jf.duedate = convert(varchar(10),dateadd(dd," + datei.toString() + ",'" + sdate + "'),126)";
+
+		shsmps = sqlhand.gpSqlGetRows(sqlstm);
+		if(shsmps.size() > 0)
+		{
+			shsmid = "sharesmp_" + myis + "_lb";
+			shsmholder = "share_" + myis + "_holder";
+			shold = maindiv.getFellowIfAny(shsmholder);
+			Listbox newlb = lbhand.makeVWListbox_Width(shold, sharesmp_headers, shsmid, 8);
+			//newlb.addEventListener("onSelect", new sharesamp_onSelect());
+			for(dpi : shsmps)
+			{
+				ArrayList kabom = new ArrayList();
+				flcnt = dpi.get("byfolders");
+				if(flcnt > 0)
+				{
+					kabom.add(myttdate); // to use in clicker to get date
+					kabom.add(dpi.get("share_sample"));
+					kabom.add(flcnt.toString());
+					strarray = kiboo.convertArrayListToStringArray(kabom);	
+					lbhand.insertListItems(newlb,strarray,"false","");
+				}
+			}
+			dc_obj = new sharesamp_onSelect();
+			lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+		}
+	}
+
+	workarea.setVisible(false);
+}
+
+void showFolderMetadata(String ifolder, String icompany)
+{
+Object[] samples_headers =
+{
+	new listboxHeaderWidthObj("SampleID",true,"60px"),
+	new listboxHeaderWidthObj("Test",true,""),
+	new listboxHeaderWidthObj("Div",true,"60px"),
+	new listboxHeaderWidthObj("Sect",true,"60px"),
+	new listboxHeaderWidthObj("Res",true,"70px"),
+};
+
+	foldermeta_lbl.setValue(ifolder + " : " + icompany);
+
+	sqlstm = "select js.origid, smd.description, smd.stock_cat, smd.groupcode, " + 
+	"(select top 1 final from elb_chemistry_results chm where chm.jobtestparameter_id = jtp.origid order by origid desc ) as lastfinal, " +
+	"(select top 1 result_unit from elb_chemistry_results chm where chm.jobtestparameter_id = jtp.origid order by origid desc ) as lastunit " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " + 
+	"left join jobtestparameters jtp on jtp.jobsamples_id = js.origid " + 
+	"left join stockmasterdetails smd on jtp.mysoftcode = smd.id where jf.folderno_str = '" + ifolder + "' and js.deleted=0 " +
+	"order by js.origid" ;
+
+	smps = sqlhand.gpSqlGetRows(sqlstm);
+	if(smps.size() == 0) return;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(samples_holder, samples_headers, "samples_lb", 10);
+	//newlb.addEventListener("onSelect", new sharesamp_onSelect());
+	lastsmpid = "";
+
+	for(dpi : smps)
+	{
+		smpid = dpi.get("origid").toString();
+		if(!smpid.equals(lastsmpid)) lastsmpid = smpid;
+		else smpid = "";
+
+		ArrayList kabom = new ArrayList();
+		kabom.add(smpid);
+		kabom.add(kiboo.checkNullString(dpi.get("description")));
+		kabom.add(kiboo.checkNullString(dpi.get("stock_cat")));
+		kabom.add(kiboo.checkNullString(dpi.get("groupcode")));
+		kabom.add(kiboo.checkNullString(dpi.get("lastfinal")) + " " + kiboo.checkNullString(dpi.get("lastunit")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	
+
+}
+
+Object[] subcon_headers =
+{
+	new listboxHeaderWidthObj("SampleID",true,"80px"),
+	new listboxHeaderWidthObj("Samp.Mark",true,"150px"),
+	new listboxHeaderWidthObj("Tests",true,"150px"),
+};
+
+void doFunc(Component iwhat)
+{
+	itype = iwhat.getId();
+
+	if(itype.equals("viewsubcon_btn"))
+	{
+		if(glob_selected_folder.equals("")) return;
+
+		sqlstm = "select sc.origid, sc.subcon_name, sc.datecreated, sc.username, sci.test_request, sci.sampleid, sci.samplemarking " +
+		"from elb_subcons sc left join elb_subcon_items sci on sci.parent_id = sc.origid " +
+		"where sci.folderno_str = '" + glob_selected_folder + "'";
+
+		subcs = sqlhand.gpSqlGetRows(sqlstm);
+		if(subcs.size() == 0) return;
+
+		sc_subcon_name.setValue(subcs.get(0).get("subcon_name"));
+		sc_origid.setValue(subcs.get(0).get("origid").toString());
+		sc_datecreated.setValue(subcs.get(0).get("datecreated").toString().substring(0,10));
+		sc_username.setValue(subcs.get(0).get("username"));
+
+		Listbox newlb = lbhand.makeVWListbox_Width(subcon_holder, subcon_headers, "subcon_lb", 8);
+		//newlb.addEventListener("onSelect", new sharesamp_onSelect());
+		for(dpi : subcs)
+		{
+			ArrayList kabom = new ArrayList();
+			kabom.add(dpi.get("sampleid"));
+			kabom.add(dpi.get("samplemarking"));
+			kabom.add(dpi.get("test_request"));
+			strarray = kiboo.convertArrayListToStringArray(kabom);	
+			lbhand.insertListItems(newlb,strarray,"false","");
+		}
+
+		subcon_popup.open(glob_selected_folderli);
+	}
+
+	if(itype.equals("folderdets_btn"))
+	{
+		theparam = "folderno=" + glob_selected_folder;
+		workfn = "samplereg/folderjobs_driller.zul";
+		uniqwindowid = kiboo.makeRandomId("ldx");
+		guihand.globalActivateWindow(mainPlayground,"miscwindows",workfn, uniqwindowid, theparam, useraccessobj);
+	}
+}
+
+//----- internal lab-comments funcs, to replace the klunky job-notes
+void showLabComments(String ifolder)
+{
+Object[] lc_headers =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("User",true,"70px"),
+	new listboxHeaderWidthObj("Comments",true,""),
+};
+	Listbox newlb = lbhand.makeVWListbox_Width(lc_holder, lc_headers, "labcomments_lb", 5);
+
+	sqlstm = "select origid,datecreated,username,thecomment from elb_labcomments where folderno_str='" + ifolder + "' order by origid";
+	lcrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(lcrecs.size() == 0) return;
+	newlb.setRows(10);
+	for(dpi : lcrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("thecomment"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+void labcommentFunc(Component iwhat)
+{
+	if(glob_selected_folder.equals("")) return;
+	itype = iwhat.getId();
+	todate = kiboo.todayISODateString();
+	refresh = false;
+	sqlstm = "";
+
+	if(itype.equals("savelc_btn"))
+	{
+		tcomm = kiboo.replaceSingleQuotes(lc_entry.getValue());
+		if(tcomm.equals("")) return;
+
+		sqlstm = "insert into elb_labcomments (folderno_str,username,datecreated,thecomment) values " +
+		"('" + glob_selected_folder + "','" + useraccessobj.username + "','" + todate + "','" + tcomm + "')";
+
+		refresh = true;
+	}
+
+	if(itype.equals("clearlc_btn")) lc_entry.setValue("");
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) showLabComments(glob_selected_folder);
+}
+
+]]>
+</zscript>
+
+<popup id="subcon_popup">
+
+<div width="420px" style="background:#e1721e;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+	<grid>
+		<rows>
+			<row spans="4" style="background:#4d4d4d">
+			<label style="color:#eeeeee">
+			Subcontract Request
+			</label>
+			</row>
+			<row>
+				<label value="Req#" />
+				<label id="sc_origid" />
+				<label value="Dated" />
+				<label id="sc_datecreated" />
+			</row>
+			<row>
+				<label value="Subcon Lab" />
+				<label id="sc_subcon_name" />
+				<label value="Req. by" />
+				<label id="sc_username" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<div id="subcon_holder" />
+</div>
+<separator height="5px" />
+<button label="X Close" style="font-size:9px" onClick="subcon_popup.close()" />
+</popup>
+
+<div id="maindiv" width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true" >
+<panelchildren>
+
+<div style="background:#b5f449;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+	<hbox>
+	<label value="Set today date" style="font-size:9px" />
+	<datebox id="usertoday_date" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+	<button label="Dig 'em overdues" style="font-size:9px" onClick="populateBoxes()" />
+	(Incomplete folders are those not "RELEASED" by the lab)
+	</hbox>
+</div>
+<separator height="5px" />
+<hbox>
+<grid style="background:#a52a2a;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#ff0000">
+			<label id="due_1_lbl" style="font-weight:bold;text-decoration:blink" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_1_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_1_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_1_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#de9511;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#ffa500">
+			<label id="due_2_lbl" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_2_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_2_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_2_holder" />
+		</row>
+	</rows>
+</grid>
+<grid style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#4d4d4d">
+			<label id="due_3_lbl" style="color:#eeeeee" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_3_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_3_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_3_holder" />
+		</row>
+
+	</rows>
+</grid>
+<grid style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#4d4d4d">
+			<label id="due_4_lbl" style="color:#eeeeee" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_4_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_4_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_4_holder" />
+		</row>
+
+	</rows>
+</grid>
+<grid style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#4d4d4d">
+			<label id="due_5_lbl" style="color:#eeeeee" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_5_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_5_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_5_holder" />
+		</row>
+
+	</rows>
+</grid>
+<grid style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#4d4d4d">
+			<label id="due_6_lbl" style="color:#eeeeee" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_6_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_6_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_6_holder" />
+		</row>
+
+	</rows>
+</grid>
+<grid style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<rows>
+		<row spans="2" style="background:#4d4d4d">
+			<label id="due_7_lbl" style="color:#eeeeee" />
+		</row>
+		<row>
+			<label value="Completed folders" style="font-size:9px" />
+			<label id="comp_7_lbl" />
+		</row>
+		<row>
+			<label value="Incomplete folders" style="font-size:9px" />
+			<label id="imcomp_7_lbl" />
+		</row>
+		<row spans="2">
+			<div id="share_7_holder" />
+		</row>
+
+	</rows>
+</grid>
+</hbox>
+<separator height="3px" />
+
+<div id="workarea" visible="false" >
+
+<hbox>
+	<div width="600px" style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+		<div style="background:#4d4d4d;padding:2px">
+		<label id="folderslist_lbl" style="color:#eeeeee" />
+		</div>
+		<separator height="3px" />
+		<hbox>
+			<button id="viewsubcon_btn" label="View subcon" style="font-size:9px" onClick="doFunc(self)" />
+			<button id="folderdets_btn" label="Folder details / attachments" style="font-size:9px" onClick="doFunc(self)" />
+		</hbox>
+		<separator height="3px" />
+		<label style="font-size:8px">
+		(LC = internal Lab Comments, Sub = Subcon, Samp = Sample count, Catg = customer category)
+		</label>
+		<separator height="3px" />
+		<div id="folders_holder" />
+	</div>
+	
+	<div id="internalstuff" visible="false">
+	<div width="560px" style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+		<div style="background:#4d4d4d;padding:2px">
+		<label id="foldermeta_lbl" style="color:#eeeeee" />
+		</div>
+		<separator height="3px" />
+		<div id="samples_holder" />
+	</div>
+	<separator height="5px" />
+
+	<div width="560px" style="background:#1e90ff;
+-moz-box-shadow: 4px 5px 5px #000000;
+-webkit-box-shadow: 4px 5px 5px #000000;
+box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+
+		<div style="background:#4d4d4d;padding:2px">
+		<label value="Internal Lab Comments (LC)" style="color:#eeeeee" />
+		</div>
+		<separator height="3px" />
+		<div id="lc_holder" />
+		<separator height="3px" />
+		<grid>
+			<rows>
+				<row>
+					<label value="Lab comment" style="font-size:9px" />
+					<textbox id="lc_entry" style="font-size:9px" multiline="true" width="99%" height="60px" />
+				</row>
+				<row spans="2">
+					<hbox>
+						<button id="savelc_btn" label="Save comment" style="font-size:9px" onClick="labcommentFunc(self)" />
+						<button id="clearlc_btn" label="Clear text" style="font-size:9px" onClick="labcommentFunc(self)" />
+						<label style="font-size:9px">
+						(SUBMIT ONLY something that make sense to a job-folder)
+						</label>
+					</hbox>
+				</row>
+			</rows>
+		</grid>
+	</div>
+	</div>
+
+</hbox>
+
+</div> <!-- ENDOF workarea -->
+
+<separator height="5px" />
+
+<zscript>
+<![CDATA[
+kiboo.setTodayDatebox(usertoday_date);
+populateBoxes();
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

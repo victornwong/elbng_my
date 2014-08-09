@@ -1,0 +1,629 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="newdispsched_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
+<zscript src="../alsglobal/dispatchschedule.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Dispatch/sample-collection/Transport Scheduling (NEW)";
+MYVERSION = "v0.8";
+MYPANEL = "newdispt_panel";
+/*
+Dispatcher scheduling - will be some major stuff in this module and supporting modules
+Written by : Victor Wong
+
+17/05/2012: total rewrite - uses elb_dispatchmanifest and elb_dispatchscheduledetails . prev tables untouched
+
+*/
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+luhand = new LookupFuncs();
+guihand = new GuiFuncs();
+
+last_search_type = 0;
+global_selected_manifest = "";
+global_selected_destination = "";
+
+String[] schedulecomplete_ddi = { "ALL", "Incomplete" , "Completed" };
+
+//--- to be used in searchSelectCustomer_v1.zs
+class CallMeObject
+{
+	public Object companyrec;
+	public Object callme;
+	void doSomething()
+	{
+		if(companyrec == null) return;
+
+		dsp_arcode.setValue(companyrec.get("ar_code"));
+		dsp_customer_name_tb.setValue(companyrec.get("customer_name"));
+		dsp_contactperson_tb.setValue(companyrec.get("contact_person1"));
+		dsp_address1_tb.setValue(companyrec.get("address1"));
+		dsp_address2_tb.setValue(companyrec.get("address2") + ", " + companyrec.get("address3"));
+		dsp_primarytelephone_tb.setValue(companyrec.get("telephone_no"));
+		dsp_primaryfax_tb.setValue(companyrec.get("fax_no"));
+		dsp_email_tb.setValue(companyrec.get("E_mail"));
+
+		selectcustomer_popup.close();
+	}
+}
+
+local_callme = new CallMeObject();
+//---
+
+Object getDispatchManifest_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from elb_dispatchmanifest where origid=" + iorigid;
+	retv = sql.firstRow(sqlstm);
+	sql.close();
+	return retv;
+}
+
+Object getDispatchDestination_Rec(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return null;
+	sqlstm = "select * from elb_dispatchscheduledetails where origid=" + iorigid;
+	retv = sql.firstRow(sqlstm);
+	sql.close();
+	return retv;
+}
+
+void clearBoxes()
+{
+	dispatchmanifest_origid.setValue("");
+	dispatcher_id.setSelectedIndex(0);
+	newextranotes.setValue("");
+	dsp_branch.setSelectedIndex(0);
+}
+
+void clearDestinationBoxes()
+{
+	desti_origid.setValue("");
+	dsp_customer_name_tb.setValue("");
+	dsp_arcode.setValue("");
+	dsp_contactperson_tb.setValue("");
+	dsp_address1_tb.setValue("");
+	dsp_address2_tb.setValue("");
+	dsp_city_tb.setValue("");
+	dsp_zipcode_tb.setValue("");
+	dsp_state_tb.setValue("");
+	dsp_country_tb.setValue("");
+	dsp_primarytelephone_tb.setValue("");
+	dsp_primaryfax_tb.setValue("");
+	dsp_email_tb.setValue("");
+	dsp_extranotes_tb.setValue("");
+}
+
+void showDestinationMetadata(String iorigid)
+{
+	if(iorigid.equals("")) return;
+	crec = getDispatchDestination_Rec(iorigid);
+	if(crec == null) { guihand.showMessageBox("[ERR] Cannot access dispatch destinations table..."); return; }
+	clearDestinationBoxes();
+	
+	desti_origid.setValue(crec.get("origid").toString());
+	dsp_customer_name_tb.setValue(kiboo.checkNullString(crec.get("customer_name")));
+	dsp_arcode.setValue(kiboo.checkNullString(crec.get("ar_code")));
+	dsp_contactperson_tb.setValue(kiboo.checkNullString(crec.get("contactperson")));
+	dsp_address1_tb.setValue(kiboo.checkNullString(crec.get("address_1")));
+	dsp_address2_tb.setValue(kiboo.checkNullString(crec.get("address_2")));
+	dsp_city_tb.setValue(kiboo.checkNullString(crec.get("city")));
+	dsp_zipcode_tb.setValue(kiboo.checkNullString(crec.get("zip")));
+	dsp_state_tb.setValue(kiboo.checkNullString(crec.get("state")));
+	dsp_country_tb.setValue(kiboo.checkNullString(crec.get("country")));
+	dsp_primarytelephone_tb.setValue(kiboo.checkNullString(crec.get("primaryphone")));
+	dsp_primaryfax_tb.setValue(kiboo.checkNullString(crec.get("primaryfax")));
+	dsp_email_tb.setValue(kiboo.checkNullString(crec.get("email")));
+	dsp_extranotes_tb.setValue(kiboo.checkNullString(crec.get("reasonnotes")));
+}
+
+void showDispatchMetadata(String iorigid)
+{
+	if(iorigid.equals("")) return;
+	crec = getDispatchManifest_Rec(iorigid);
+	if(crec == null) { guihand.showMessageBox("[ERR] Cannot access dispatch manifest table..."); return; }
+	clearBoxes();
+
+	dispatchmanifest_origid.setValue(crec.get("origid").toString());
+	schedule_date.setValue(crec.get("schedule_date"));
+	if(crec.get("dispatcher_id") != null) lbhand.matchListboxItems(dispatcher_id,crec.get("dispatcher_id"));
+	newextranotes.setValue(kiboo.checkNullString(crec.get("extranotes")));
+	if(crec.get("branch") != null) lbhand.matchListboxItems(dsp_branch,crec.get("branch"));
+
+	clearDestinationBoxes();
+	global_selected_destination = "";
+	loadDestinations(iorigid);
+}
+
+// onSelect event for loadDispatchManifest()
+class dispmanif_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = dispmanif_lb.getSelectedItem();
+		global_selected_manifest = lbhand.getListcellItemLabel(isel,0);
+		
+		showDispatchMetadata(global_selected_manifest);
+	}
+}
+
+Object[] dmaniflb_headers = {
+	new listboxHeaderWidthObj("DL#",true,"50px"),
+	new listboxHeaderWidthObj("Sch.Date",true,"60px"),
+	new listboxHeaderWidthObj("Branch",true,"60px"),
+	new listboxHeaderWidthObj("Submitter",true,""),
+	new listboxHeaderWidthObj("Dispatcher",true,"120px"),
+};
+
+void loadDispatchManifest(int itype)
+{
+	last_search_type = itype;
+	sdate = kiboo.getDateFromDatebox(startdate);
+    edate = kiboo.getDateFromDatebox(enddate);
+	searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+
+	Listbox newlb = lbhand.makeVWListbox_Width(dispatchlist_holder, dmaniflb_headers, "dispmanif_lb", 12);
+
+	sqlstm = "select origid,username,schedule_date,dispatcher_id,branch from elb_dispatchmanifest " +
+	"where schedule_date between '" + sdate + "' and '" + edate + "'";
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.addEventListener("onSelect", new dispmanif_onSelect());
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("schedule_date").toString().substring(0,10));
+		kabom.add(kiboo.checkNullString(dpi.get("branch")));
+		kabom.add(dpi.get("username"));
+		kabom.add(kiboo.checkNullString(dpi.get("dispatcher_id")));
+
+		//kiboo.checkNullString(dpi.get("customer_name")));
+		//kabom.add(kiboo.checkNullDate(dpi.get("shipout_date"),"---"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+// onSelect event for loadDispatchManifest()
+class dispdest_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = destinations_lb.getSelectedItem();
+		global_selected_destination = lbhand.getListcellItemLabel(isel,1);
+		showDestinationMetadata(global_selected_destination);
+	}
+}
+
+Object[] destilb_headers = {
+	new listboxHeaderWidthObj("No.",true,"30px"),
+	new listboxHeaderWidthObj("DD#",true,"40px"),
+	new listboxHeaderWidthObj("Client",true,""),
+	new listboxHeaderWidthObj("Reasons",true,""),
+	new listboxHeaderWidthObj("Done",true,"40px"),
+};
+
+void loadDestinations(String imanifest_id)
+{
+	Listbox newlb = lbhand.makeVWListbox_Width(destinations_holder, destilb_headers, "destinations_lb", 12);
+
+	sqlstm = "select origid,customer_name,reasonnotes,completed from elb_dispatchscheduledetails where manifest_id=" + imanifest_id;
+	screcs = sqlhand.gpSqlGetRows(sqlstm);
+	if(screcs.size() == 0) return;
+	newlb.addEventListener("onSelect", new dispdest_onSelect());
+	countme = 1;
+	for(dpi : screcs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(countme.toString() + ".");
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(kiboo.checkNullString(dpi.get("reasonnotes")));
+		kabom.add((dpi.get("completed") != null) ? ((dpi.get("completed") == 1) ? "YES" : "NO") : "NO");
+
+		//kiboo.checkNullString(dpi.get("customer_name")));
+		//kabom.add(kiboo.checkNullDate(dpi.get("shipout_date"),"---"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+		countme++;
+	}
+}
+
+void newManifest()
+{
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+	sqlstm = "insert into elb_dispatchmanifest (schedule_date,username) values " +
+	"('" + todate + "','" + useraccessobj.username + "')";
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadDispatchManifest(last_search_type); // refresh
+}
+
+void updateManifest()
+{
+	if(global_selected_manifest.equals("")) return;
+	schd = kiboo.getDateFromDatebox(schedule_date);
+	dsid = dispatcher_id.getSelectedItem().getLabel();
+	exnot = kiboo.replaceSingleQuotes(newextranotes.getValue());
+	dbran = dsp_branch.getSelectedItem().getLabel();
+
+	sqlstm = "update elb_dispatchmanifest set schedule_date='" + schd + "', dispatcher_id='" + dsid + "', " +
+	"extranotes='" + exnot + "',branch='" + dbran + "' where origid=" + global_selected_manifest;
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadDispatchManifest(last_search_type); // refresh
+}
+
+void newDestination()
+{
+	if(global_selected_manifest.equals("")) return;
+	sqlstm = "insert into elb_dispatchscheduledetails (manifest_id,completed) values (" + global_selected_manifest + ",0)";
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadDestinations(global_selected_manifest); // refresh
+}
+
+void saveDestination()
+{
+	if(global_selected_destination.equals("")) return;
+
+	cstnam = kiboo.replaceSingleQuotes(dsp_customer_name_tb.getValue());
+	cstarc = dsp_arcode.getValue();
+	contper = kiboo.replaceSingleQuotes(dsp_contactperson_tb.getValue());
+	adr1 = kiboo.replaceSingleQuotes(dsp_address1_tb.getValue());
+	adr2 = kiboo.replaceSingleQuotes(dsp_address2_tb.getValue());
+	city = kiboo.replaceSingleQuotes(dsp_city_tb.getValue());
+	zipc = kiboo.replaceSingleQuotes(dsp_zipcode_tb.getValue());
+	dstate = kiboo.replaceSingleQuotes(dsp_state_tb.getValue());
+	dcounty = kiboo.replaceSingleQuotes(dsp_country_tb.getValue());
+	dphon = kiboo.replaceSingleQuotes(dsp_primarytelephone_tb.getValue());
+	dfax = kiboo.replaceSingleQuotes(dsp_primaryfax_tb.getValue());
+	demal = kiboo.replaceSingleQuotes(dsp_email_tb.getValue());
+	dreason = kiboo.replaceSingleQuotes(dsp_extranotes_tb.getValue());
+
+	sqlstm = "update elb_dispatchscheduledetails set customer_name='" + cstnam + "', ar_code='" + cstarc + "',contactperson='" + contper + "'," +
+	"address_1='" + adr1 + "', address_2='" + adr2 + "',city='" + city + "',zip='" + zipc + "',state='" + dstate + "',country='" + dcounty + "'," +
+	"primaryphone='" + dphon + "',primaryfax='" + dfax + "',email='" + demal + "',reasonnotes='" + dreason + "' " +
+	"where origid=" + global_selected_destination;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadDestinations(global_selected_manifest); // refresh
+
+	guihand.showMessageBox("Destination details saved..");
+}
+
+void deleteDestination()
+{
+	if(global_selected_destination.equals("")) return;
+	sqlstm = "delete from elb_dispatchscheduledetails where origid=" + global_selected_destination;
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	loadDestinations(global_selected_manifest); // refresh
+	clearDestinationBoxes();
+	global_selected_destination = "";
+}
+
+void printDispatchList()
+{
+	theparam = "manifest_id=" + global_selected_manifest;
+	uniqwindowid = kiboo.makeRandomId("pdl");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","dispatch/print_dispatchmanifest2.zul", uniqwindowid, theparam,useraccessobj);
+}
+
+// itype: 1=del manifest
+void adminFunc(int itype)
+{
+	if(global_selected_manifest.equals("")) return;
+
+	switch(itype)
+	{
+		case 1:
+			
+			if(Messagebox.show("this is a HARD-DELETE..", "Are you sure?",
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+			// del destinations and manifest
+			sqlstm = "delete from elb_dispatchscheduledetails where manifest_id=" + global_selected_manifest + ";";
+			sqlstm += "delete from elb_dispatchmanifest where origid=" + global_selected_manifest + ";";
+
+			sqlhand.gpSqlExecuter(sqlstm);
+
+			clearBoxes();
+			clearDestinationBoxes();
+			global_selected_destination = "";
+			global_selected_manifest = "";
+			destinations_lb.setParent(null); // remove desti lb too
+			loadDispatchManifest(last_search_type); // refresh
+			break;
+
+		default:
+			guihand.showMessageBox("Not implemented yet..");
+			break;
+	}
+}
+
+// 17/05/2013: knockoff from billingdocsman.zul to allow update of send-out inv+coa
+void playDocsDeliveryDetails()
+{
+	invno = kiboo.replaceSingleQuotes(invfolder_inp.getValue());
+	if(invno.equals("")) return;
+	invstr = "invoiceno=" + invno;
+	uniqwindowid = kiboo.makeRandomId("xdcm");
+	guihand.globalActivateWindow(mainPlayground,"miscwindows","acctmodules/invoice_docs_details.zul", uniqwindowid, invstr,useraccessobj);
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers(local_callme)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox> <!-- main hbox -->
+
+<div id="themanifest" width="500px">
+<groupbox mold="3d" width="100%">
+	<grid>
+	<rows>
+		<row>
+			<label value="Start date" style="font-size:9px" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+			<label value="End date" style="font-size:9px" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+		</row>
+		<row spans=",3">
+			<label value="Search" style="font-size:9px" visible="false" />
+			<hbox>
+				<textbox id="searhtxt_tb" width="300px" style="font-size:9px" visible="false" />
+				<button label="Load" style="font-size:9px" onClick="loadDispatchManifest(1)" />
+			</hbox>
+		</row>
+	</rows>
+	</grid>
+	<separator height="2px" />
+	<hbox>
+		<button label="New dispatch-list" style="font-size:9px" onClick="newManifest()" />
+		<button label="Print dispatch-list" style="font-size:9px" onClick="printDispatchList()" />
+		<!-- <button label="Export checklist" style="font-size:9px" /> -->
+	</hbox>
+	<separator height="2px" />
+	<!--
+	<hbox>
+		<button label="Print DO" style="font-size:9px" />
+		<button label="Print proforma invoice" style="font-size:9px" />
+	</hbox>
+	-->
+
+	<div id="adminstuff" style="background:#a52a2a;padding:2px" visible="false">
+		<hbox>
+			<button label="delete" style="font-size:9px" onClick="adminFunc(1)" />
+			<button label="clr flag" style="font-size:9px" onClick="adminFunc(2)" />
+		</hbox>
+	</div>
+
+</groupbox>
+<groupbox mold="3d" width="100%">
+	<div id="dispatchlist_holder" />
+
+	<separator height="3px" />	
+	<grid> <!-- dispatch-list entry form -->
+	<rows>
+		<row>
+			<label value="Dispatch list #" style="font-size:9px" />
+			<label id="dispatchmanifest_origid" />
+			<label value="Branch" style="font-size:9px" />
+			<listbox id="dsp_branch" mold="select" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Schedule date" style="font-size:9px" />
+			<datebox id="schedule_date" format="yyyy-MM-dd" style="font-size:9px" onCreate="self.value = new Date()" />
+			<label value="Dispatcher name" style="font-size:9px" />
+			<listbox id="dispatcher_id" mold="select" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Extra notes" style="font-size:9px" />
+			<textbox id="newextranotes" style="font-size:9px" multiline="true" width="99%" height="50px" />
+		</row>
+	</rows>
+	</grid> <!-- ENDOF dispatch-list entry form -->
+	<separator height="3px" />
+
+	<button label="Update dispatch-list" style="font-size:9px" onClick="updateManifest()" />
+
+</groupbox>
+
+</div> <!-- ENDOF themanifest -->
+
+<div id="theform" width="650px" >
+
+<groupbox mold="3d"> <!-- destinations list -->
+	<div style="padding:2px;background:#00ff00">
+		<hbox>
+		<label value="Dispatch Destinations" />
+		</hbox>
+	</div>
+	<separator height="3px" />
+	<hbox>
+		<button label="New destination" style="font-size:9px" onClick="newDestination()" />
+		<button label="Delete" style="font-size:9px" onClick="deleteDestination()" />
+	</hbox>
+	<separator height="3px" />
+	<div id="destinations_holder" />
+</groupbox> <!-- ENDOF destinations list -->
+
+<groupbox mold="3d"> <!-- destination info -->
+	<grid>
+		<rows>
+		<row spans=",3" style="padding:2px;background:#00ff00">
+			<label value="Destination #" style="font-size:9px" />
+			<label id="desti_origid" />
+		</row>
+		<row>
+			<label value="Cust.Name" style="font-size:9px" />
+			<textbox id="dsp_customer_name_tb" width="99%" style="font-size:9px" />
+			<hbox>
+				<label value="AR_CODE: " style="font-size:9px" />
+				<label id="dsp_arcode" style="font-size:9px" />
+			</hbox>
+			<button id="getcust_btn" label="Get customer" style="font-size:9px" onClick="selectcustomer_popup.open(self)" />
+		</row>
+		<row spans=",3">
+			<label value="Cont.Person" style="font-size:9px" />
+			<textbox id="dsp_contactperson_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address1" style="font-size:9px" />
+			<textbox id="dsp_address1_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Address2" style="font-size:9px" />
+			<textbox id="dsp_address2_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="City" style="font-size:9px" />
+			<textbox id="dsp_city_tb" width="99%" style="font-size:9px" />
+			<label value="Zipcode" style="font-size:9px" />
+			<textbox id="dsp_zipcode_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="State" style="font-size:9px" />
+			<textbox id="dsp_state_tb" width="99%" style="font-size:9px" />
+			<label value="Country" style="font-size:9px" />
+			<textbox id="dsp_country_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Telephone" style="font-size:9px" />
+			<textbox id="dsp_primarytelephone_tb" width="99%" style="font-size:9px" />
+			<label value="Fax" style="font-size:9px" />
+			<textbox id="dsp_primaryfax_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Email" style="font-size:9px" />
+			<textbox id="dsp_email_tb" width="99%" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Notes.Reasons" style="font-size:9px" />
+			<textbox id="dsp_extranotes_tb" multiline="true" width="99%" height="50px" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<grid>
+		<rows>
+			<row spans="3" style="background:#9485f0;padding:2px">
+				<label style="color:#ffffff">Update send-out</label>
+			</row>
+			<row>
+				<label value="Invoice/FolderNo" style="font-size:9px" />
+				<textbox id="invfolder_inp" style="font-size:9px" />
+				<button label="Update send-out record" style="font-size:9px" onClick="playDocsDeliveryDetails()" />
+			</row>
+		</rows>
+	</grid>
+	
+	<separator height="2px" />
+	<hbox>
+		<button label="Save destination details" style="font-size:9px" onClick="saveDestination()" />
+	</hbox>
+</groupbox>  <!-- ENDOF destination info -->
+
+</div> <!-- ENDOF theform -->
+
+</hbox> <!-- ENDOF main hbox -->
+
+</panelchildren>
+</panel>
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(dispatcher_id,"DISPATCHER_LIST",2);
+luhand.populateListbox_ByLookup(dsp_branch,"dd_branches",2);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</div>
+</zk>
+

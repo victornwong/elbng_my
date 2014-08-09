@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="containersrequest_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/containers_funcs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Containers Requester
+Written by: Victor Wong
+
+**NOTES**
+
+*/
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+import java.io.*;
+import java.util.*;
+import java.text.*;
+import java.util.Date;
+import java.util.TimeZone;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+THIS_MODULE_VERSION = "v.1";
+LISTBOX_LIMIT = 200;
+
+global_selected_containerreq = "";
+global_contreq_status = "";
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+// Popup something and let user create a new vial request rec.
+void newContReq_Clicker()
+{
+	newvialreq_popup.open(vial_newreq_btn);
+}
+
+Object[] customerpicker_lb_headers = {
+	new listboxHeaderObj("AR Code",true),
+	new listboxHeaderObj("Customer.Name",true),
+};
+
+// Popup-clicker to search customer - make use of pckcust_customername_tb to search Customer database
+void searchCustomer_popup_clicker()
+{
+	custname = replaceSingleQuotes(pckcust_customername_tb.getValue());
+	if(custname.equals("")) return;
+	
+	Listbox newlb = makeVWListbox(customersearch_div, customerpicker_lb_headers, "customerpicker_lb", 5);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "select top 50 ar_code,customer_name from Customer where customer_name like '%" + custname + "%'";
+	custrecs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(custrecs.size() == 0) return;
+	
+	newlb.setRows(15);
+	
+	for(custr : custrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(custr.get("ar_code"));
+		kabom.add(custr.get("customer_name"));
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Real-picker for search customer popup.. will insert the customer details into the customer-info popup
+void pickcustomer_realPicker()
+{
+	if(customersearch_div.getFellowIfAny("customerpicker_lb") == null) return;
+	if(customerpicker_lb.getSelectedIndex() == -1) return;
+	
+	ar_code = customerpicker_lb.getSelectedItem().getLabel(); // first col is the ar_code di
+	clientrec = getCompanyRecord(ar_code);
+	if(clientrec == null) return;
+	
+	// now lets populate the popup textboxes
+	
+	nvr_customer_name_tb.setValue(clientrec.get("customer_name"));
+	nvr_contact_person1_tb.setValue(clientrec.get("contact_person1"));
+	
+	// mysoft customer table ain't setup with city/zipcode/state/country fields
+	nvr_address1_tb.setValue(clientrec.get("address1"));
+	nvr_address2_tb.setValue(clientrec.get("address2") + clientrec.get("address3"));
+
+	nvr_telephone_tb.setValue(clientrec.get("telephone_no"));
+	nvr_fax_tb.setValue(clientrec.get("fax_no"));
+	nvr_email_tb.setValue(clientrec.get("E_mail"));
+
+	newvialreq_popup.open(vial_newreq_btn); // re-show the popup, was closed when we use the customer picker popup
+}
+
+Object[] contreqs_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("CRQ#",true),
+	new listboxHeaderObj("Customer.Name",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Pack.Date",true),
+	new listboxHeaderObj("Ship.Date",true),
+};
+
+void populateContainerRequest_Listbox(String ireq_type)
+{
+	Listbox newlb = makeVWListbox(all_contrequests_div, contreqs_lb_headers, "contreqs_lb", 5);
+	
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "select origid,username,customer_name,datecreated,packed_date,shipout_date from ContainerReq where req_type='" + ireq_type + "'";
+	contreqs = sql.rows(sqlstm);
+	sql.close();
+	
+	if(contreqs.size() == 0) return;
+	
+	newlb.setRows(20);
+	
+	for(cntreq : contreqs)
+	{
+		ArrayList kabom = new ArrayList();
+		
+		origid = cntreq.get("origid").toString();
+		req_id_str = makeContainerReq_IDstr(origid);
+		
+		kabom.add(origid);
+		kabom.add(req_id_str);
+		
+		kabom.add(cntreq.get("customer_name"));
+		kabom.add(cntreq.get("datecreated").toString().substring(0,10));
+		
+		packdate = (cntreq.get("packed_date") == null) ? "-----" : cntreq.get("packed_date").toString().substring(0,10);
+		kabom.add(packdate);
+		
+		shipdate = (cntreq.get("shipout_date") == null) ? "-----" : cntreq.get("shipout_date").toString().substring(0,10);
+		kabom.add(shipdate);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// popup vial insert request clicker
+void newvialreq_insertreq_Clicker()
+{
+	customername = replaceSingleQuotes(nvr_customer_name_tb.getValue());
+	cperson = replaceSingleQuotes(nvr_contact_person1_tb.getValue());
+	telephone = replaceSingleQuotes(nvr_telephone_tb.getValue());
+	fax = replaceSingleQuotes(nvr_fax_tb.getValue());
+	address1 = replaceSingleQuotes(nvr_address1_tb.getValue());
+	address2 = replaceSingleQuotes(nvr_address2_tb.getValue());
+	city = replaceSingleQuotes(nvr_city_tb.getValue());
+	zipcode = replaceSingleQuotes(nvr_zipcode_tb.getValue());
+	state = replaceSingleQuotes(nvr_state_tb.getValue());
+	country = replaceSingleQuotes(nvr_country_tb.getValue());
+	email = replaceSingleQuotes(nvr_email_tb.getValue());
+	
+	if(customername.equals("") || cperson.equals("") || telephone.equals(""))
+	{
+		showMessageBox("Customer-name, contact person and telephone are mandatory");
+		return;
+	}
+	
+	ArrayList tparams = new ArrayList();
+	
+	tparams.add(useraccessobj.username);
+	tparams.add(customername);
+	tparams.add(cperson);
+	tparams.add(address1);
+	tparams.add(address2);
+	tparams.add(city);
+	tparams.add(zipcode);
+	tparams.add(state);
+	tparams.add(country);
+	tparams.add(telephone);
+	tparams.add(fax);
+	tparams.add(email);
+	tparams.add(CONTAINER_REQ_VIAL_TYPE);
+	tparams.add(CONTAINER_REQ_PENDING);
+	
+	strarray = convertArrayListToStringArray(tparams);
+	insertContainerRequest_Rec(strarray);
+	
+	// refresh container-req listbox
+	populateContainerRequest_Listbox(CONTAINER_REQ_VIAL_TYPE);
+	newvialreq_popup.close();
+}
+
+Object[] vialreqs_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Init.Weight",true),
+	new listboxHeaderObj("Samp.Weight",true),
+};
+
+// Populate vial-recs listbox - ContainerReq_Items.field6 - field8 used to store init.weight, sample.weight and watever later
+// vials_record_div
+void populateVialsRec_Listbox(String icontreq_parent)
+{
+	Listbox newlb = makeVWListbox(vials_record_div, vialreqs_lb_headers, "vialrecs_lb", 5);
+
+	// incase no cont-req selected
+	if(icontreq_parent.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "select origid,field6,field7,field8 from ContainerReq_Items where contreq_parent=" + icontreq_parent;
+	vialrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(vialrecs.size() == 0) return;
+
+	newlb.setRows(20);
+	counter = 1;
+
+	for(vialr : vialrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		origid = vialr.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(counter.toString());
+		initwg = (vialr.get("field6").equals("")) ? "-----" : vialr.get("field6");
+		kabom.add(initwg + " mg");
+		sampwg = (vialr.get("field7").equals("")) ? "-----" : vialr.get("field7");
+		kabom.add(sampwg + " mg");
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		counter++;
+	}
+}
+
+void disable_VialCRUD()
+{
+	reqd_newvial_btn.setDisabled(true);
+	reqd_delvial_btn.setDisabled(true);
+}
+
+void enable_VialCRUD()
+{
+	reqd_newvial_btn.setDisabled(false);
+	reqd_delvial_btn.setDisabled(false);
+}
+
+// Load/Show container-request details into the accordian thang
+void loadContReq_Clicker()
+{
+	if(all_contrequests_div.getFellowIfAny("contreqs_lb") == null) return;
+	if(contreqs_lb.getSelectedIndex() == -1) return;
+	
+	selitem = contreqs_lb.getSelectedItem();
+	cr_origid = getListcellItemLabel(selitem,0);
+	
+	contreqrec = getContainerReq_Rec(cr_origid);
+	if(contreqrec == null) return;
+	
+	global_selected_containerreq = cr_origid; // save container-req origid for later use
+	global_contreq_status = contreqrec.get("req_status");
+	
+	req_id_str = makeContainerReq_IDstr(cr_origid);
+	
+	// customer details - address and such
+	contreq_det_lbl.setLabel("1. Container request details: " + req_id_str);
+	reqd_customer_name_tb.setValue(contreqrec.get("customer_name"));
+	reqd_contact_person1_tb.setValue(contreqrec.get("contact_person"));
+	reqd_telephone_tb.setValue(contreqrec.get("telephone"));
+	reqd_fax_tb.setValue(contreqrec.get("fax"));
+	reqd_address1_tb.setValue(contreqrec.get("address1"));
+	reqd_address2_tb.setValue(contreqrec.get("address2"));
+	reqd_city_tb.setValue(contreqrec.get("city"));
+	reqd_zipcode_tb.setValue(contreqrec.get("zipcode"));
+	reqd_state_tb.setValue(contreqrec.get("state"));
+	reqd_country_tb.setValue(contreqrec.get("country"));
+	reqd_email_tb.setValue(contreqrec.get("email"));
+	
+	reqd_req_status_lbl.setValue(contreqrec.get("req_status"));
+	
+	// show vial records
+	populateVialsRec_Listbox(global_selected_containerreq);
+	
+	// check cont-req status is not CONTAINER_REQ_PENDING, disable CRUD buttons
+	enable_VialCRUD();
+	
+	if(!global_contreq_status.equals(CONTAINER_REQ_PENDING))
+		disable_VialCRUD();
+}
+
+// Let user create a new vial request
+void newvial_Clicker()
+{
+	if(global_selected_containerreq.equals("")) return;
+	
+	/*
+	if(!global_contreq_status.equals(CONTAINER_REQ_PENDING))
+	{
+		showMessageBox("Request already PACKED or SHIPPED, cannot anymore");
+		return;
+	}
+	*/
+
+	newvial_popup.open(reqd_newvial_btn);
+}
+
+// popup insert new vial clicker - uses global_selected_containerreq for ContainerReq_Items.contreq_parent
+// this special method 5035, uses ContainerReq_Items.field6 - field8 to store stuff
+void insert_newvial_clicker()
+{
+	initwg = nv_initweight.getValue();
+	if(initwg.equals("")) return;
+	if(global_selected_containerreq.equals("")) return;
+	
+	ArrayList krab = new ArrayList();
+	
+	krab.add(global_selected_containerreq);
+	krab.add(CONTAINER_VIAL_METHOD5035_DESC);
+	krab.add("1");
+	krab.add(initwg);
+	krab.add("");
+	krab.add("");
+	
+	strarray = convertArrayListToStringArray(krab);
+	insertContReqItem_Rec(strarray);
+	
+	// once new vial weight inserted, clear the inputbox for next
+	nv_initweight.setValue("");
+	
+	// refresh vial-recs listbox
+	populateVialsRec_Listbox(global_selected_containerreq);
+}
+
+// Delete a vial clicker - vialrecs_lb
+void delvial_Clicker()
+{
+	if(global_selected_containerreq.equals("")) return;
+	if(vials_record_div.getFellowIfAny("vialrecs_lb") == null) return;
+	if(vialrecs_lb.getSelectedIndex() == -1) return;
+
+	selitem = vialrecs_lb.getSelectedItem();
+	vorigid = getListcellItemLabel(selitem,0);
+
+	if (Messagebox.show("Delete vial # " + vorigid, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		sqlstatem = "delete from ContainerReq_Items where origid=" + vorigid;
+		sql.execute(sqlstatem);
+		sql.close();
+
+		// reset and refresh
+		populateVialsRec_Listbox(global_selected_containerreq);
+	}
+}
+
+// Update container-request to "PACKED" status
+void updateContReq_Status_Packed()
+{
+	if(global_selected_containerreq.equals("")) return;
+	if(vialrecs_lb.getItemCount() < 1) return;
+	
+	if(!global_contreq_status.equals(CONTAINER_REQ_PENDING)) return;
+	
+	// update database
+	updateContainerReq_Rec(global_selected_containerreq,"req_status='" + CONTAINER_REQ_PACKED + "'");
+	global_contreq_status = CONTAINER_REQ_PACKED;
+	
+	// disable container-items panel CRUD buttons
+	disable_VialCRUD();
+	
+	// refresh label..
+	reqd_req_status_lbl.setValue(CONTAINER_REQ_PACKED);
+
+}
+
+]]>
+</zscript>
+
+<popup id="newvial_popup">
+<groupbox >
+	<caption label="Insert new vial" />
+	<vbox style="padding:2px">
+		<hbox>
+			<label value="Init.Weight" style="font-size:9px" />
+			<textbox id="nv_initweight" style="font-size:9px" />
+			<label value="mg" style="font-size:9px" />
+		</hbox>
+	</vbox>
+	<separator height="5px" />
+	<button label="Insert" style="font-size:9px" onClick="insert_newvial_clicker()" />
+	<button label="Close" style="font-size:9px" onClick="newvial_popup.close()" />
+</groupbox>
+
+</popup>
+
+<popup id="pickcustomer_popup">
+<groupbox width="400px">
+	<caption label="Pick customer" />
+	<vbox style="padding:2px">
+		<hbox>
+			<label value="Customer name" style="font-size:9px" />
+			<textbox id="pckcust_customername_tb" width="150px" style="font-size:9px" />
+			<separator width="5px" />
+			<button label="Search" style="font-size:9px" onClick="searchCustomer_popup_clicker()" />
+		</hbox>
+		<separator height="5px" />
+		<div id="customersearch_div" />
+	</vbox>
+	<separator height="5px" />
+	<button label="Pick" style="font-size:9px" onClick="pickcustomer_realPicker()" />
+	<button label="Close" style="font-size:9px" onClick="pickcustomer_popup.close()" />
+</groupbox>
+</popup>
+
+<popup id="newvialreq_popup">
+<groupbox>
+	<caption label="Client Info" />
+	<vbox style="padding:2px">
+		<hbox>
+			<label value="Cust.Name" style="font-size:9px" />
+			<separator width="10px" />
+			<textbox id="nvr_customer_name_tb" width="200px" style="font-size:9px" />
+			<separator width="5px" />
+			<button id="nvr_loadclient_btn" label="Client database" style="font-size:9px" onClick="pickcustomer_popup.open(nvr_loadclient_btn)" />
+		</hbox>
+		<hbox>
+			<label value="Cont.Person" style="font-size:9px" />
+			<separator width="4px" />
+			<textbox id="nvr_contact_person1_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="Address1" style="font-size:9px" />
+			<separator width="17px" />
+			<textbox id="nvr_address1_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="Address2" style="font-size:9px" />
+			<separator width="17px" />
+			<textbox id="nvr_address2_tb" width="200px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="City" style="font-size:9px" />
+			<separator width="45px" />
+			<textbox id="nvr_city_tb" width="70px" style="font-size:9px" />
+
+			<label value="Zipcode" style="font-size:9px" />
+			<textbox id="nvr_zipcode_tb" width="70px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="State" style="font-size:9px" />
+			<separator width="39px" />
+			<textbox id="nvr_state_tb" width="70px" style="font-size:9px" />
+
+			<label value="Country" style="font-size:9px" />
+			<textbox id="nvr_country_tb" width="70px" style="font-size:9px" />
+		</hbox>
+		
+		<hbox>
+			<label value="Telephone" style="font-size:9px" />
+			<separator width="14px" />
+			<textbox id="nvr_telephone_tb" width="70px" style="font-size:9px" />
+
+			<label value="Fax" style="font-size:9px" />
+			<separator width="18px" />
+			<textbox id="nvr_fax_tb" width="70px" style="font-size:9px" />
+		</hbox>
+		<hbox>
+			<label value="Email" style="font-size:9px" />
+			<separator width="38px" />
+			<textbox id="nvr_email_tb" width="100px" style="font-size:9px" />
+		</hbox>
+	</vbox>
+	
+	<separator height="3px" />
+	<button label="Insert request" style="font-size:9px" onClick="newvialreq_insertreq_Clicker()" />
+	<button label="Close" style="font-size:9px" onClick="newvialreq_popup.close()" />
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="containersrequest_panel" title="Containers Request" border="normal" collapsible="true" closable="true">
+<panelchildren>
+
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<groupbox mold="3d" style="padding:2px" width="550px">
+	<caption label="Requests List" />
+	<hbox>
+		<button label="Show all requests" style="font-size:9px" />
+		<button label="Show incomplete requests" style="font-size:9px" />
+	</hbox>
+	<separator height="3px" />
+	<div id="all_contrequests_div" />
+	<separator height="3px" />
+	<hbox>
+		<button id="vial_newreq_btn" label="New request" style="font-size:9px" onClick="newContReq_Clicker()" />
+		<button id="vial_loadreq_btn" label="Load request" style="font-size:9px" onClick="loadContReq_Clicker()" />
+	</hbox>
+</groupbox>
+
+<div style="padding:2px">
+<tabbox mold="accordion">
+	<tabs>
+		<tab id="contreq_det_lbl" label="1. Container request details" />
+		<tab label="2. Vials record" />
+		<tab label="3. Shipping record" />
+	</tabs>
+	<tabpanels>
+	<!-- request-details panel -->
+	<tabpanel>
+			<grid>
+				<columns>
+					<column label="" />
+					<column label="" />
+					<column label="" />
+					<column label="" />
+				</columns>
+				<rows>
+				<row spans=",3">
+					<label value="Cust.Name" style="font-size:9px" />
+					<textbox id="reqd_customer_name_tb" width="300px" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Cont.Person" style="font-size:9px" />
+					<textbox id="reqd_contact_person1_tb" width="300px" style="font-size:9px" />				
+				</row>
+				<row spans=",3">
+					<label value="Address1" style="font-size:9px" />
+					<textbox id="reqd_address1_tb" width="300px" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Address2" style="font-size:9px" />
+					<textbox id="reqd_address2_tb" width="300px" style="font-size:9px" />				
+				</row>
+				<row>
+					<label value="City" style="font-size:9px" />
+					<textbox id="reqd_city_tb" width="150px" style="font-size:9px" />
+					<label value="Zipcode" style="font-size:9px" />
+					<textbox id="reqd_zipcode_tb" width="150px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="State" style="font-size:9px" />
+					<textbox id="reqd_state_tb" width="150px" style="font-size:9px" />
+					<label value="Country" style="font-size:9px" />
+					<textbox id="reqd_country_tb" width="150px" style="font-size:9px" />				
+				</row>
+				<row>
+					<label value="Telephone" style="font-size:9px" />
+					<textbox id="reqd_telephone_tb" width="150px" style="font-size:9px" />
+					<label value="Fax" style="font-size:9px" />
+					<textbox id="reqd_fax_tb" width="150px" style="font-size:9px" />				
+				</row>
+				<row spans=",3">
+					<label value="Email" style="font-size:9px" />
+					<textbox id="reqd_email_tb" width="300px" style="font-size:9px" />
+				</row>
+				<row spans=",3">
+					<label value="Status" style="font-size:9px" />
+					<label id="reqd_req_status_lbl" style="font-size:9px" />	
+				</row>
+				<row spans=",3">
+					<label value="Notes" style="font-size:9px" />
+					<textbox id="reqd_notes_tb" multiline="true" width="300px" height="150px" style="font-size:9px" />	
+				</row>
+				</rows>
+			</grid>
+
+	</tabpanel>
+	<!-- END OF request-details panel -->
+
+	<!-- vials record panel -->
+	<tabpanel>
+		<div style="padding:2px">
+								<vbox>
+									<div id="vials_record_div" />
+
+									<hbox>
+										<button id="reqd_newvial_btn" label="New vial" style="font-size:9px" onClick="newvial_Clicker()" />
+										<!-- <button id="reqd_editvial_btn" label="Modify" style="font-size:9px" /> -->
+										<button id="reqd_delvial_btn" label="Remove vial" style="font-size:9px" onClick="delvial_Clicker()" />
+										<button id="reqd_printcontlabel_btn" label="Print cont.labels" style="font-size:9px" />
+										<separator width="15px" />
+										
+										<button id="reqd_printcontlist_btn" label="Print pack list" />
+										<button id="reqd_packedstat_btn" label="Mark PACKED" onClick="updateContReq_Status_Packed()" />
+									</hbox>
+								</vbox>
+							</div>
+	</tabpanel>
+	<!-- END OF vials record panel -->
+
+	<!-- shipping record panel -->
+	<tabpanel>
+							<div style="padding:3px">
+								<vbox>
+								
+								<hbox>
+									<label value="Shipping company" style="font-size:9px" />
+									<textbox id="reqd_shipcompany_tb" width="220px" style="font-size:9px" />
+									<separator width="5px" />
+									<label value="Airway bill" style="font-size:9px" />
+									<separator width="3px" />
+									<textbox id="reqd_ship_airwaybill_tb" width="180px" style="font-size:9px" />
+								</hbox>
+								
+								<hbox>
+									<label value="Shipping.Notes" style="font-size:9px" />
+									<separator width="10px" />
+									<textbox id="reqd_ship_notes_tb" multiline="true" width="220px" height="150px" style="font-size:9px" />
+									<separator width="5px" />
+
+									<vbox>
+										<hbox>
+											
+											<label value="Ship.Date" style="font-size:9px" />
+											<separator width="6px" />
+											<datebox id="reqd_shipout_date_tb" format="yyyy-MM-dd" />
+										</hbox>
+										<separator height="5px" />
+										<hbox>
+											<separator width="10px" />
+											<label id="reqd_ship_status_lbl" style="padding:2px;font-weight:bold;background:#66BBAA" value="Ship status:" />
+										</hbox>
+									</vbox>
+								</hbox>
+								
+								<hbox>
+									<button id="shipout_btn" label="SHIP-OUT these containers" />
+								</hbox>
+								</vbox>								
+							</div>
+	</tabpanel>
+	<!-- EOF shipping record panel -->
+	</tabpanels>
+</tabbox>
+<separator height="5px" />
+<button label="4. SAVE REQUEST" />
+</div>
+
+</hbox>
+
+</panelchildren>
+</panel>
+</div>
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+// admin login, show branch dropdrown
+if(useraccessobj.accesslevel == 9)
+{
+}
+// security notes: if user access level >= 5, then can attach documents to non-owned purchase-req, else can view only
+//populateDropdownListbox(prf_priority_lb,purchasereq_priority);
+//populatePurchaseReq_Listbox();
+// supporting docs stuff
+//populateDropdownListbox(fileupl_docu_status, doculink_status);
+
+populateContainerRequest_Listbox(CONTAINER_REQ_VIAL_TYPE);
+
+]]>
+</zscript>
+</zk>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="setuppage"?>
+
+<!--
+
+Setup stuff
+
+-->
+
+<zk>
+
+<window id="setupform" title="Setup" width="300px" position="center"
+	mode="overlapped" border="normal" visible="false">
+
+Setup some stuff
+<textbox />
+
+<button label="OK" onClick="setupform.visible = false" />
+
+</window>
+
+</zk>
+

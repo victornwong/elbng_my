@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="box_management_wind"?>
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Some security checking codes here
+// useraccessobj = getUserAccessObject();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+MODULE_DBNAME = "BoxAvailable";
+
+BOXAVAILABLE_PREFIX = "BOXNUM";
+
+String[] dd_boxstatus = { "Available", "Unavailable", "Damaged" };
+
+Object whathuh;
+
+Object getBoxAvailableRec(String boxid)
+{
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	
+	retrec = null;
+	
+	stripboxid = strip_PrefixID(boxid);
+
+	sqlstatem = "select * from BoxAvailable where origid=" + stripboxid;
+	retrec = sql.firstRow(sqlstatem);
+	//alert(sqlstatem);
+	sql.close();
+	
+	return retrec;
+
+}
+
+class extraBoxInput
+{
+	public Textbox ea_typeofbox;
+	public Textbox ea_box_id;
+	public Listbox ea_status;
+
+	public extraBoxInput(Textbox itypeofbox, Textbox ibox_id, Listbox istatus)
+	{
+		ea_typeofbox = itypeofbox;
+		ea_box_id = ibox_id;
+		
+		ea_status = istatus;
+	}
+	
+	void clearTextBox()
+	{
+		ea_typeofbox.setValue("");
+		ea_box_id.setValue("");
+		ea_status.setSelectedIndex(0);
+		
+		if(testsdrillbit2 != null)
+		{
+			testsdrillbit2.clearSelection();
+			updateornewbutton.setLabel("Save box");
+		}
+	}
+
+	// whatever
+
+	void showDetails()
+	{
+		therec = getBoxAvailableRec(ea_box_id.getValue());
+		
+		// no record
+		if(therec == null)
+		{
+			showMessageBox("Sorry, cannot get box record");
+			return;
+		}
+		// put values into inputboxes
+		ea_typeofbox.setValue(therec.get("typeofbox"));
+		
+		istatus = therec.get("status");
+		tostatus = "Unavailable";
+		
+		switch(istatus)
+		{
+			case 0 : 	tostatus = "Unavailable";
+						break;
+						
+			case 1 : 	tostatus = "Available";
+						break;
+						
+			case 2 :	tostatus = "Damaged";
+						break;
+		}
+
+		matchListboxItems(ea_status, tostatus);
+
+		updateornewbutton.setLabel("Update box");
+
+	} // end of showDetails()
+	
+	// update/store box info to mysoft.BoxAvailable
+	void updateExtraBox()
+	{
+		itypeofbox = ea_typeofbox.getValue();
+		
+		// must have typeofbox before saving/updating
+		if(itypeofbox.equals(""))
+			return;
+	
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		istatus = ea_status.getSelectedItem().getLabel();
+		
+		ibox_id = ea_box_id.getValue();
+
+		istatus = boxstatus.getSelectedItem().getLabel();
+		tostatus = "1";
+		
+		if(istatus.equals("Damaged")) tostatus = "2";
+		if(istatus.equals("Available")) tostatus = "1";
+		if(istatus.equals("Unavailable")) tostatus = "0";
+	
+		// if no origid(box_id) .. should be a new entry
+		
+		sqlstatem = "";
+
+		if(ibox_id.equals(""))
+		{
+			sqlstatem = "insert into " + MODULE_DBNAME + " (typeofbox,status,deleted) values ('" + itypeofbox + "'," + tostatus + ",0)";
+		}
+		else
+		{
+			ibox_id = strip_PrefixID(ibox_id);
+			sqlstatem = "update " + MODULE_DBNAME + " set typeofbox='" + itypeofbox + "', status=" + tostatus + " where origid=" + ibox_id;
+		}
+		
+		alert(sqlstatem);
+		
+		// ival5 =	f5_recipientname.getValue();
+		// docstat.getSelectedItem().getLabel()
+		// alert(sqlstatem);
+		
+		sql.execute(sqlstatem);
+		sql.close();
+		
+		clearTextBox();
+		populateBoxAvailableBox(extra_boxavailable_div);
+
+	} // end of updateExtraBox()
+
+	void deleteExtraBox()
+	{
+		// additional security check - to be coded.
+
+		// if nothing selected, don't proceed
+		
+		irecno = strip_PrefixID(ea_box_id.getValue());
+		
+		if(irecno.equals("")) return;
+		
+		if (Messagebox.show("Delete extra box", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+		{
+			sql = als_mysoftsql();
+			if(sql == NULL) return;
+			
+			// need to redo this part, instead of deleting straight from table, set isDeleted flag - can have audit-trail later
+			sqlstatem = "update " + MODULE_DBNAME + " set deleted=1 where origid=" + irecno;
+			
+			sql.execute(sqlstatem);
+			sql.close();
+			
+			clearTextBox();
+			populateBoxAvailableBox(extra_boxavailable_div);
+		}
+	}
+
+} // end of class extraBoxInput
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// put new box rec-no into hidden textbox
+		irecno = testsdrillbit2.getSelectedItem().getLabel();
+		
+		whathuh.ea_box_id.setValue(irecno);
+		whathuh.showDetails();
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeBoxListbox(Div mDiv)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testsdrillbit2");
+    newlb.setVflex(true);
+	
+	newlb.addEventListener("onSelect", new MyListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("BoxId");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Type of box");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Status");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeBoxListbox()
+
+// Populate the listbox of all extra box for this customer
+// uses global-var the_arcode
+void populateBoxAvailableBox(Div thediv)
+{
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select * from " + MODULE_DBNAME + " where deleted=0 order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null)
+		return;
+	
+	String[] strarray = new String[3];
+
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = thediv.getFellowIfAny("testsdrillbit2");
+	if(oldlb != null)
+		oldlb.setParent(null);
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeBoxListbox(thediv);
+	
+	for(ilist : tlist)
+	{
+		t_origid = BOXAVAILABLE_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		
+		strarray[1] = ilist.get("typeofbox");
+		
+		istat = ilist.get("status");
+		tostatus = "Unavailable";
+		
+		switch(istat)
+		{
+			case 0 : 	tostatus = "Unavailable";
+						break;
+						
+			case 1 : 	tostatus = "Available";
+						break;
+						
+			case 2 :	tostatus = "Damaged";
+						break;
+		}
+
+		strarray[2] = tostatus;
+
+		insertListItems(newlb,strarray,BOXAVAILABLE_PREFIX);
+	}
+			
+} // end of populateBoxAvailableBox()
+
+void deleteBox_Wrapper()
+{
+	// check access level
+	
+	// run the actual delete func
+}
+
+]]>
+</zscript>
+
+<window id="box_management_win" title="Chiller Box Management" width="600px" height="550px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<groupbox mold="3d" width="100%">
+<caption label="Box Available" />
+
+<div id="extra_boxavailable_div" />
+
+</groupbox>
+
+<hbox>
+<!--
+<button label="Refresh" onClick="populateBoxAvailableBox(extra_boxavailable_div)" />
+-->
+<button label="Delete" onClick="tNewBoxInput.deleteExtraBox()" />
+</hbox>
+
+<separator height="10px" />
+
+<groupbox mold="3d" width="100%">
+<caption label="Input form" />
+
+<grid>
+<columns>
+  <column label="" />
+</columns>
+
+<rows>
+	<row>
+		<hbox>
+			<separator width="10px" />
+			
+			<label value="Type of Box" />
+			<textbox id="newtypeofbox" width="150px"/>
+			
+			<separator width="10px" />
+			
+			<label value="Status" />
+			<listbox id="boxstatus" mold="select" />
+			<zscript>
+				populateDropdownListbox(boxstatus,dd_boxstatus);
+			</zscript>
+		</hbox>
+	
+	</row>
+
+	<row>
+		<hbox>
+		<textbox id="box_id" visible="false" />
+		</hbox>
+	</row>
+	
+</rows>
+</grid>
+
+</groupbox>
+
+<zscript>
+<![CDATA[
+
+// populateWindowsTitle(addboxwin);
+
+populateBoxAvailableBox(extra_boxavailable_div);
+
+tNewBoxInput = new extraBoxInput(newtypeofbox, box_id, boxstatus);
+	
+whathuh = tNewBoxInput;
+	
+/*
+tDocumentDetails = new docDetailsInput(recname,consnum,delmethod_dd,dedate,docutype_dd);
+tDocumentDetails.showDetails();
+
+*/
+
+]]>
+</zscript>
+
+<separator height="10px" />
+
+<hbox>
+<button id="updateornewbutton" label="Add Box" onClick="tNewBoxInput.updateExtraBox()" />
+<button label="Clear fields" onClick="tNewBoxInput.clearTextBox()" />
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+</hbox>
+
+</div>
+
+</window>
+
+</zk>

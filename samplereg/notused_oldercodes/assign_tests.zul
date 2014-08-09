@@ -1,0 +1,1552 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="assigntests_panel"?>
+<!--
+Assign test parameters to LOGGED folders
+Coding began date	:
+Developers			: Victor
+
+Revisions:
+25/3/2010: added box to allow search on company - instead of just start-date and end-date
+25/3/2010: updated to main file
+
+30/3/2010: added branch field search
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+// check usergroup access - no access, just close the panel..
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL);
+
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+Object whathuh;
+Object whathuh_samples;
+
+// const for max chars in listbox item
+SAMPLEID_SAMPLEMARKING_LEN = 35;
+
+// check whether can do CRUD on samples. uses whathuh var to access folderJobObj
+boolean foldersamplesCRUD_Check()
+{
+	retval = true;
+	
+	if(!whathuh.fj_folderstatus.equals(FOLDERDRAFT))
+	{
+		showMessageBox("Folder/job already logged or commited. Modification can only be performed by HOD or senior supervisor");
+		retval = false;
+	}
+
+	return retval;
+}
+
+ALS_stock_cat = "";
+
+public class codeToLongNameObj
+{
+	String thecode;
+	String thelongname;
+	
+	public codeToLongNameObj(String ithecode, String ithe_longname)
+	{
+		thecode = ithecode;
+		thelongname = ithe_longname;
+	}
+}
+
+Object[] als_divisions = {
+	new codeToLongNameObj("0","Unsorted"),
+	new codeToLongNameObj("EV","Environmental (EV)"),
+	new codeToLongNameObj("BS","Banned Substances (BS)"),
+	new codeToLongNameObj("IH","Industrial Hygiene (IH)"),
+	new codeToLongNameObj("WC","Wearcheck (WC)"),
+	new codeToLongNameObj("ASMA","ASMA"),
+	new codeToLongNameObj("OF","Oil and Food (OF)"),
+	new codeToLongNameObj("MD","Medical Devices (MD)")
+};
+
+// Convert codes to its long name - uses codeToLongNameObj
+String convertCodeToLongName(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thecode.equals(iwhich))
+		{
+			retval = iobjs[i].thelongname;
+			break;
+		}
+	}
+	return retval;
+}
+
+// Same as convertCodeToLongName() but the reversal
+String convertLongNameToCode(Object iobjs, String iwhich)
+{
+	retval = "Unknown";
+	
+	for(i=0; i<iobjs.length; i++)
+	{
+		if(iobjs[i].thelongname.equals(iwhich))
+		{
+			retval = iobjs[i].thecode;
+			break;
+		}
+	}
+	return retval;
+}
+
+void hideTestParametersBox()
+{
+	mysoft_testparams.setVisible(false);	
+}
+
+void showTestParametersBox()
+{
+	mysoft_testparams.setVisible(true);
+}
+
+void storeTestParameter(String iwhich)
+{
+	// alert("to store this test: " + iwhich + " to record: " + testparamid.getValue());
+
+	testjobid = testparamid.getValue();
+	if(testjobid.equals("")) return;
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "update JobTestParameters set mysoftcode=" + iwhich + " where origid=" + testjobid;
+	sql.execute(sqlstatem);
+	
+	sql.close();
+	
+}
+
+// onSelect event for makeALSTestParametersListbox()
+class ALSTestParametersLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = tests_description_lb.getSelectedItem().getLabel();
+		idex = testparameters_lb.getSelectedIndex();
+		// alert(iwhat);
+		
+		// test selected if this event got activated.. just need to store the test id which is hidden in the listbox, column 1
+		// 3/2/2010: tied in with JobTestParameters table
+		
+		storeTestParameter(iwhat);
+		
+		// refresh folder->samples->tests listbox and select what's been previously selected
+		startTestParametersSearch(sampleid);
+		testparameters_lb.setSelectedIndex(idex);
+		
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeALSTestParametersListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("tests_description_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("tests_description_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("extraAddressContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+	hd1.setVisible(false);
+    hd1.setParent(newhead);
+	
+    Listheader hd2 = new Listheader();
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSTestParametersListbox()
+*/
+
+Object[] testparameters_lb_headers = {
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("",true),
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateTestParametersColumn(Div iwhichdiv, String istock_cat, String igroupcode)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select id,description,description2 from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' " +
+		"and groupcode='" + igroupcode + "' " +
+		"order by description" ;
+
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	//Listbox newlb = makeALSTestParametersListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, testparameters_lb_headers, "tests_description_lb", 20);
+	newlb.addEventListener("onSelect", new ALSTestParametersLB_Listener());
+	
+	String[] strarray = new String[2];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		
+		strarray[0] = ilist.get("id").toString();
+		strarray[1] = ilist.get("description") + " (" + ilist.get("description2") + ")" ;
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateTestParametersColumn()
+
+// onSelect event for makeALSSectionListbox()
+class ALSSectionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = section_groupcode_lb.getSelectedItem().getLabel();
+		
+		// populate section column
+		// iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+
+		populateTestParametersColumn(testparameters_column,ALS_stock_cat,iwhat);
+		
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeALSSectionListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("section_groupcode_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("section_groupcode_lb");
+    newlb.setVflex(true);
+	
+    // newlb.setContext("extraAddressContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    //hd1.setLabel("-");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    return newlb;
+
+} // end of makeALSSectionListbox()
+*/
+
+Object[] alssection_lb_headers = {
+	new listboxHeaderObj("",true)
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+// istock_cat = as in stockmasterdetails.stock_cat
+void populateSectionColumn(Div iwhichdiv, String istock_cat)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct groupcode from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' " + 
+		"and stock_cat='" + istock_cat + "' order by groupcode" ;
+		
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	// save istock_cat , to be used later in ALSSectionLB_Listener
+	ALS_stock_cat = istock_cat;
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	//Listbox newlb = makeALSSectionListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, alssection_lb_headers, "section_groupcode_lb", 20);
+	newlb.addEventListener("onSelect", new ALSSectionLB_Listener());
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		// strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		strarray[0] = ilist.get("groupcode");
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateSectionColumn()
+
+// onSelect event for makeALSDivisionListbox()
+class ALSDivisionLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		iwhat = division_stockcat_lb.getSelectedItem().getLabel();
+		
+		// populate section column
+		
+		iwhatcode = convertLongNameToCode(als_divisions, iwhat);
+				
+		// alert("selected: " +  iwhat + " and code: " + iwhatcode);
+		
+		populateSectionColumn(section_column,iwhatcode);
+		
+		// if there's previously a test parameters listbox, remove before adding a new one.
+		Listbox oldlb = testparameters_column.getFellowIfAny("tests_description_lb");
+		if(oldlb != null) oldlb.setParent(null);
+
+		// create a new listbox and attach to div
+		//Listbox newlb = makeALSTestParametersListbox(testparameters_column);
+		Listbox newlb = makeVWListbox(testparameters_column, testparameters_lb_headers, "tests_description_lb", 20);
+		
+	}
+}
+
+Object[] alsdivision_lb_headers = {
+	new listboxHeaderObj("",true)
+};
+
+// Populate division column - refer to mysoft.stockmasterdetails.stock_cat
+// nominal_code=glcode=5xxxxx = services we sell
+void populateDivisionColumn(Div iwhichdiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	
+	sqlstatem = "select distinct stock_cat from stockmasterdetails where item_type='Service Item' and nominal_code like '5%' order by stock_cat" ;
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+
+	// create a new listbox and attach to div
+	// Listbox newlb = makeALSDivisionListbox(iwhichdiv);
+	Listbox newlb = makeVWListbox(iwhichdiv, alsdivision_lb_headers, "division_stockcat_lb", 20);
+	newlb.addEventListener("onSelect", new ALSDivisionLB_Listener());
+	
+	String[] strarray = new String[1];
+	
+	for(ilist : tlist)
+	{
+		strarray[0] = convertCodeToLongName(als_divisions,ilist.get("stock_cat"));
+		insertListItems(newlb,strarray,"true");
+	}
+
+} // end of populateDivisionColumn()
+
+// Show the sample marking and notes from database
+void showSampleMarking_Notes(String isampid)
+{
+	sampno = Integer.parseInt(extractSampleNo(isampid));
+	samprec = getFolderSampleRec(sampno.toString());
+	
+	if(samprec != null)
+	{
+		// this 2 textbox s are hardcoded and def in UI section
+		sampmark_tb.setValue(samprec.get("samplemarking"));
+		sampnotes_tb.setValue(samprec.get("extranotes"));
+	}
+}
+
+class SamplesLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = samples_lb.getSelectedItem().getLabel();
+		sampleid.setValue(irecno);
+
+		startTestParametersSearch(sampleid);
+		
+		hideTestParametersBox();
+		
+		// 5/3/2010: show sample marking and notes for editing if any
+		showSampleMarking_Notes(irecno);
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeSamplesListbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("samples_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("samples_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new SamplesLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("SampleID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Sample Marking");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    newlb.setRows(15);
+
+    return newlb;
+
+} // end of makeSamplesListbox()
+*/
+
+Object[] samples_lb_headers = {
+
+	new listboxHeaderObj("SampleID",true),
+	new listboxHeaderObj("Sample Marking",true)
+};
+
+// Search and populate samples in folders listbox
+void startFolderSamplesSearch(Textbox ifolderno)
+{
+	foldns = ifolderno.getValue();
+	thefolderno = convertFolderNoToInteger(foldns);
+	if(thefolderno == 0) return;
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	sqlstatem = "select top 510 * from JobSamples where jobfolders_id=" + thefolderno.toString() +
+	" and deleted=0" +
+	" order by origid";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+	
+	// create a new listbox and attach to searchdiv
+	//Listbox newlb = makeSamplesListbox(samples_div);
+	Listbox newlb = makeVWListbox(samples_div, samples_lb_headers, "samples_lb", 15);
+	newlb.addEventListener("onSelect", new SamplesLB_Listener());
+
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[2];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			ifno = ilist.get("origid");
+			
+            strarray[0] = foldns + padZeros5(ifno);
+
+			// 12/3/2010: chomp sample marking so it won't clutter the listbox			
+			ismtemp = trimListitemLabel(ilist.get("samplemarking"), SAMPLEID_SAMPLEMARKING_LEN);
+
+            strarray[1] = ismtemp;
+
+            insertListItems(newlb,strarray,SAMPLES_PREFIX);
+		}
+	}
+
+} // end of startFolderSamplesSearch()
+
+class FolderLB_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = folderjobs_lb.getSelectedItem().getLabel();
+
+		// folderno is hidden Textbox defined in the UI section
+		folderno.setValue(irecno);
+
+		/*
+		ifoldn = convertFolderNoToInteger(irecno);
+		therec = getFolderJobRec(ifoldn.toString());
+		ifoldstat = therec.get("folderstatus");
+		*/
+
+		startFolderSamplesSearch(folderno);
+
+		// clear the tests listbox
+		//makeTestParametersListbox(testparameters_div);
+		Listbox newlb = makeVWListbox(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb", 20);
+		newlb.addEventListener("onSelect", new TestParams_Listener());
+
+		hideTestParametersBox();
+
+		// 5/3/2010: clear the sample marking and notes textbox. uses hardcode textboxes in UI section
+		sampmark_tb.setValue("");
+		sampnotes_tb.setValue("");
+
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeFoldersListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("folderjobs_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("folderjobs_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new FolderLB_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("FolderNo");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("RecvDate");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Customer");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+	
+    Listheader hd4 = new Listheader();
+    hd4.setLabel("Status");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+	
+	// 29/3/2010: new col for branch
+	Listheader hd5 = new Listheader();
+    hd5.setLabel("Brnch");
+    hd5.setSort("auto");
+    hd5.setParent(newhead);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeFoldersListbox()
+*/
+
+Object[] jobfolders_lb_headers = {
+
+	new listboxHeaderObj("FolderNo",true),
+	new listboxHeaderObj("RecvDate",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Status",true),
+	new listboxHeaderObj("Brnch",true)
+};
+
+
+/* 
+Do the folders search and populate listbox
+
+25/3/2010: change the select command to:
+select jobfolders.origid,jobfolders.ar_code,jobfolders.datecreated,
+customer.ar_code,customer.customer_name
+from jobfolders
+left join customer
+on customer.ar_code = jobfolders.ar_code 
+where 
+jobfolders.datecreated between '2010-03-01' and '2010-03-15' 
+and customer.customer_name like 'kawan%'
+group by 
+jobfolders.origid,jobfolders.ar_code,jobfolders.datecreated,
+customer.ar_code,customer.customer_name
+
+30/3/2010: added in branch search
+*/
+void startFolderJobsSearch(Datebox startd, Datebox endd, Textbox icustomer_tb)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	cnm = icustomer_tb.getValue();
+	
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	// 29/3/2010: check branch
+	branch_str = "";
+	
+	ibranch = useraccessobj.branch;
+	if(!ibranch.equals("ALL")) // if admin login, should be able to see all folders else filter according to branch
+		branch_str = "and branch='" + ibranch + "' ";
+	
+	// 2/2/2010: find those folders that're LOGGED
+	sqlstatem = "select top 510 * from JobFolders where datecreated between '" + sdate + "' and '" + edate + "'" + 
+		" and deleted=0 and folderstatus='" + FOLDERLOGGED + "' " + branch_str + " order by datecreated desc";
+	
+	// 25/3/2010: new select cmd to search based on s.date, e.date and customer-name - req by Zainab
+	if(!cnm.equals(""))
+	{
+		xcnm = replaceSingleQuotes(cnm); // play safe
+		sqlstatem = "select jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch, " + 
+			"customer.ar_code,customer.customer_name " +
+			"from jobfolders left join customer " +
+			"on customer.ar_code = jobfolders.ar_code where " +
+			"jobfolders.datecreated between '" + sdate + "' and '" + edate + "'" + 
+			"and customer.customer_name like '%" + xcnm + "%' " +
+			"and deleted=0 and folderstatus='" + FOLDERLOGGED + "' " +
+			branch_str +
+			"group by " + 
+			"jobfolders.origid, jobfolders.ar_code, jobfolders.datecreated, jobfolders.folderstatus, jobfolders.branch," +
+			"customer.ar_code, customer.customer_name";
+	}
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+
+	// create a new listbox and attach to searchdiv
+	// Listbox newlb = makeFoldersListbox(folderjobs_div);
+	Listbox newlb = makeVWListbox(folderjobs_div, jobfolders_lb_headers, "folderjobs_lb", 20);
+	newlb.addEventListener("onSelect", new FolderLB_Listener());
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[5];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			ifolderno = ilist.get("origid");
+
+			folderprefix = JOBFOLDERS_PREFIX; // default folder prefix
+
+			chkbranch = ilist.get("branch");
+			
+			// 15/4/2010: set branch folders prefix
+			if(chkbranch.equals("JB"))
+				folderprefix = JB_JOBFOLDERS_PREFIX;
+
+			if(chkbranch.equals("KK"))
+				folderprefix = KK_JOBFOLDERS_PREFIX;
+
+			strarray[0] = folderprefix + padZeros5(ifolderno);
+
+			strarray[1] = ilist.get("datecreated").toString().substring(0,10);
+			
+			// get customer name from ar_code - will be slow if alot, scan 1 by 1
+			iar_code = ilist.get("ar_code");
+			icompanyname = "Undefined";
+
+			if(!iar_code.equals(""))
+				icompanyname = getCompanyName(iar_code);
+
+			strarray[2] = icompanyname;
+
+			ifoldstat = ilist.get("folderstatus");
+			statstr = (ifoldstat.equals(FOLDERLOGGED)) ? FOLDERLOGGED : FOLDERDRAFT; // def in alsglobaldefs.zs
+
+			strarray[3] = statstr;
+
+			strarray[4] = ilist.get("branch");
+
+            insertListItems(newlb,strarray,folderprefix);
+		}
+	}
+
+} // end of startFolderJobsSearch()
+
+// Auto select those test-parameters boxes
+void autoAssignTestParametersBox(String iwhich)
+{
+	therec = getJobTestParametersRec(iwhich);
+	if(therec == null) return;
+	
+	//alert(therec.get("jobsamples_id").toString() + " : " + therec.get("mysoftcode").toString());
+	
+	imysoftcode = therec.get("mysoftcode");
+	if(imysoftcode == 0) return;
+	
+	istockrec = getStockMasterDetails(imysoftcode.toString());
+	if(istockrec == null) return;
+	
+	istockcat = istockrec.get("Stock_Cat");
+	igroupcode = istockrec.get("GroupCode");
+	
+	populateSectionColumn(section_column,istockcat);
+	populateTestParametersColumn(testparameters_column,istockcat,igroupcode);
+	
+	// auto-select the thing in the listboxes.. tricky part
+	divisionln = convertCodeToLongName(als_divisions,istockcat);
+	
+	matchListboxItems(division_stockcat_lb, divisionln);
+	matchListboxItems(section_groupcode_lb, igroupcode);
+	
+	tscode = istockrec.get("ID").toString();
+	
+	// alert(tsname);
+	
+	// ilist.get("description") + " (" + ilist.get("description2") + ")" ;
+	
+	matchListboxItems(tests_description_lb,tscode);
+
+}
+
+class TestParams_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		irecno = testparameters_lb.getSelectedItem().getLabel();
+
+		testparamid.setValue(irecno); // save the rec no in the hidden textbox
+		
+		// update test-parameters selection-box with whatever test being assigned
+		autoAssignTestParametersBox(irecno);
+
+		// show the test-parameters selection box
+		showTestParametersBox();
+
+	}
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeTestParametersListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("testparameters_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testparameters_lb");
+    newlb.setVflex(true);
+
+    //newlb.setContext("dispatchSchedulingContext");
+    //newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new TestParams_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("TestNo");
+    hd1.setSort("auto");
+	hd1.setVisible(false);
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Description");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeTestParametersListbox()
+*/
+
+Object[] testparameterssearch_lb_headers = {
+
+	new listboxHeaderObj("TestNo",false),
+	new listboxHeaderObj("Description",true)
+};
+	
+// Do the search and populate listbox
+void startTestParametersSearch(Textbox isampleid)
+{
+	tsi = isampleid.getValue();
+	if(tsi.equals("")) return;
+	
+	tsampid = extractSampleNo(tsi);
+	
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	// 2/2/2010: find those folders that're LOGGED
+	sqlstatem = "select * from JobTestParameters where jobsamples_id=" + tsampid + " order by origid";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+	
+	// create a new listbox and attach to searchdiv
+	// Listbox newlb = makeTestParametersListbox(testparameters_div);
+	Listbox newlb = makeVWListbox(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb", 20);
+	newlb.addEventListener("onSelect", new TestParams_Listener());
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[2];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+			strarray[0] = ilist.get("origid").toString();
+			
+			myscode = ilist.get("mysoftcode");
+			myrec = getMySoftMasterProductRec(myscode.toString()); // alsglobal_sqlfuncs.zs
+			
+			yystr = "-NO TEST SELECTED-";
+			if(myrec != null)
+			{
+				yystr = myrec.get("Description") + " (" + myrec.get("Description2") + ")";
+			}
+			
+			strarray[1] = yystr;
+
+            insertListItems(newlb,strarray,"false");
+		}
+	}
+
+} // end of startTestParametersSearch()
+
+// create a new empty test-parameter linking to the sample-id
+// refer to table JobTestParameters
+void createNewTestParameter()
+{
+	// make sure something selected
+	ifoldno = folderno.getValue();
+	isampid = sampleid.getValue();
+	
+	if(ifoldno.equals("") || isampid.equals("")) return;
+	
+	tsampid = extractSampleNo(isampid);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstatem = "insert into JobTestParameters values (" + tsampid + ",0,0,'DRAFT',0,0)";
+
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh listbox
+	startTestParametersSearch(sampleid);
+
+}
+
+void deleteTestParameter()
+{
+	if(testparameters_lb.getSelectedIndex() == -1) return;
+	
+	irec = testparameters_lb.getSelectedItem().getLabel();
+	
+	// alert(irec);
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	sqlstatem = "delete from JobTestParameters where origid=" + irec;
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh listbox
+	startTestParametersSearch(sampleid);
+}
+
+// Copy tests assigned to selected sample to the next sample. Will allow user to work faster, instead of selecting tests for each samples which might have the same tests.
+void copyTestsToNext()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+	
+	lb_itemcount = samples_lb.getItemCount();
+	if(lb_itemcount == 0) return;
+	
+	thisitem = samples_lb.getSelectedIndex();
+	lb_nextitem = thisitem + 1;
+	
+	// no more next item, return
+	if(lb_nextitem > lb_itemcount-1) return;
+	
+	nextsampid = samples_lb.getItemAtIndex(lb_nextitem).getLabel();
+	
+	// alert("sampleid : " + isampid + " lb_itemcount: " + lb_itemcount.toString() + " thisitem: " + thisitem.toString() + " lb_nextitem: " + lb_nextitem.toString());
+	// samples_lb.setSelectedIndex(lb_nextitem);
+	
+	// now copy what're the tests for the selected sample to the next sample
+	// need not check for dups. if user copy twice, the tests will appear 2 times for that sample
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	this_sampidint = convertSampleNoToInteger(isampid);
+	next_sampidint = convertSampleNoToInteger(nextsampid);
+	
+	// get all tests assigned for selected sample
+	
+	sqlstatem = "select * from JobTestParameters where jobsamples_id=" + this_sampidint.toString();
+	tlist = sql.rows(sqlstatem);
+
+	// alert(tlist);
+	
+	if(tlist != null)
+	{
+		for(ilist:tlist)
+		{
+			sqlstatem2 = "insert into JobTestParameters values(" + next_sampidint.toString() + ", " + ilist.get("mysoftcode") + ", 0, 'DRAFT', 0, 0)";
+			sql.execute(sqlstatem2);
+		}
+	}
+	
+	sql.close();
+}
+
+// Dup all tests assigned to selected sample to all below it
+void dupAllTests()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+	
+	if (Messagebox.show("Duplicate selected sample's tests to other samples", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+			return;
+	
+	this_sampidint = convertSampleNoToInteger(isampid).toString();
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	// get all the tests for selected sample id, save into an array
+	
+	sqlstatem = "select mysoftcode from JobTestParameters where jobsamples_id=" + this_sampidint;
+	tcodes = sql.rows(sqlstatem);
+	
+	reccount = tcodes.size();
+
+	if(tcodes != null && reccount > 0)
+	{
+		// get selected sample 's jobfolders_id , main link for other samples
+		samprec = getFolderSampleRec(this_sampidint);
+		jobfolderid = samprec.get("jobfolders_id");
+		
+		Integer[] samptestcodes = new Integer[reccount];
+		
+		// alert("sizeof samptestcodes: " + samptestcodes.length);
+		// store the mysoftcode into array
+		i = 0;
+		for(kki : tcodes)
+		{
+			samptestcodes[i] = kki.get("mysoftcode");
+			i++;
+		}
+		
+		// now find all other samples
+		
+		sqlstatem2 = "select origid from JobSamples where origid<>" + this_sampidint + " and jobfolders_id=" + jobfolderid;
+		othersamprecs = sql.rows(sqlstatem2);
+		
+		for(iik : othersamprecs)
+		{
+			kiko = iik.get("origid").toString();
+
+			// loop through all the tests stored in samptestcodes
+			for(i=0; i<samptestcodes.length; i++)
+			{
+				kitest = samptestcodes[i].toString();
+				sqlstatem3 = "insert into JobTestParameters values(" + kiko + ", " + kitest + ", 0, 'DRAFT', 0, 0)";
+				sql.execute(sqlstatem3);
+			}
+			
+		}
+	}
+	
+	sql.close();
+	
+	showMessageBox("Selected sample's tests have been duplicated to other samples");
+	
+}
+
+// Will commit the folder/job - folderstatus will change to FOLDERCOMMITED (def in alsglobaldefs.zs).
+// This section is where the upload to MySoft and STARLIMS will happen
+// uses folderjobs_lb.
+void commitFolder()
+{
+	if(folderjobs_lb.getSelectedIndex() == -1 ) return; // nothing , return
+
+	ifoldn = folderjobs_lb.getSelectedItem().getLabel();
+	
+	showMessageBox("Point of no return, once this folder/job is commited, you cannot change anything no more..");
+	
+	if (Messagebox.show("Commit folder/job: " + ifoldn, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		iorig = Integer.parseInt(extractFolderNo(ifoldn)).toString();
+		
+		sqlstatem = "update jobfolders set folderstatus='" + FOLDERCOMMITED + "' where origid=" + iorig;
+		sql.execute(sqlstatem);
+
+		sql.close();
+		
+		showMessageBox("Commited : " + ifoldn);
+
+		// refresh folder/job listbox
+		startFolderJobsSearch(startdate, enddate,customer_tb);
+		// clear samples listbox - already commited, should be cleared to avoid confusion
+		//makeSamplesListbox(samples_div);
+		
+		Listbox newlb = makeVWListbox(samples_div, samples_lb_headers, "samples_lb", 15);
+		newlb.addEventListener("onSelect", new SamplesLB_Listener());
+
+		// makeTestParametersListbox(testparameters_div);
+		Listbox newlb2 = makeVWListbox(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb", 20);
+		newlb2.addEventListener("onSelect", new TestParams_Listener());
+		
+	}
+}
+
+void printSRA_Wrapper()
+{
+	// check all before printing the SRA
+	ifoldi = folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	printSRA(ifoldi); // samplereg_funcs.zs
+
+}
+
+void printSampleLabels()
+{
+	// see if we have any samples in listbox - hardcoded samples_lb
+	if(samples_lb.getItemCount() < 1) return;
+
+	ifoldi = folderno.getValue();
+	if(ifoldi.equals("")) return;
+	
+	// 24/2/2010: save samples id full string eg. ALSM000010001 before printing.
+	// Previously depended on the onSelect event to kick this func, not totally saved the full-string
+	saveFolderSamplesNo_Main(samples_lb); // samplereg_funcs.zs
+	
+	printSampleLabels(ifoldi); // samplereg_funcs.zs
+	
+} // end of printSampleLabels()
+
+// Update sample marking and extra notes
+void updateSampleMarking(Textbox isampmark, Textbox isampnotes)
+{
+	if(samples_lb.getSelectedIndex() == -1) return;
+	
+	sql = als_mysoftsql();
+	if(sql != null)
+	{
+		sampleid_fromtree = samples_lb.getSelectedItem().getLabel();
+		sampleid_lb_item = samples_lb.getSelectedItem();
+		
+		sampno = Integer.parseInt(extractSampleNo(sampleid_fromtree));
+
+		isampm = replaceSingleQuotes(isampmark.getValue());
+		isampn = replaceSingleQuotes(isampnotes.getValue());
+
+		sqlstatem = "update JobSamples set samplemarking='" + isampm + "',extranotes='" + isampn + "' where origid=" + sampno.toString();
+		sql.execute(sqlstatem);
+		sql.close();
+		
+		// 12/3/2010: show sample marking in the listbox, without redrawing the lb
+		/*
+		childs = sampleid_lb_item.getChildren();
+		ismtemp = trimListitemLabel(isampm, SAMPLEID_SAMPLEMARKING_LEN);
+		childs.get(1).setLabel(ismtemp);
+		*/
+		
+		// 26/4/2010: need to redraw better..
+		startFolderSamplesSearch(folderno);
+		
+	}
+	
+}
+
+// 12/3/2010: to dup all sample-marking to sampleid
+void dupSampleMarking()
+{
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+	
+	this_sampidint = convertSampleNoToInteger(isampid).toString();
+	
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	
+	// get all the tests for selected sample id, save into an array
+	
+	sqlstatem = "select * from JobSamples where origid=" + this_sampidint;
+	fsamprec = sql.firstRow(sqlstatem);
+
+	if(fsamprec != null)
+	{
+		firstsampm_str = fsamprec.get("samplemarking");
+		jobfolderid = fsamprec.get("jobfolders_id");
+
+		// make sure it ain't blank, otherwise it'll overwrite other sample-marking keyed
+		if(!firstsampm_str.equals(""))
+		{
+			if (Messagebox.show("Duplicate selected sample marking to other samples", "Are you sure?", 
+				Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO)
+					break;
+
+			// set other sampleid in this folder to the sample-marking
+			sqlstatem2 = "select origid,sampleid_str from JobSamples where origid<>" + this_sampidint + " and jobfolders_id=" + jobfolderid;
+			othersamprecs = sql.rows(sqlstatem2);
+
+			// other sample-id, lets dup 'em marking
+			if(othersamprecs != null)
+			{
+				for(otrec : othersamprecs)
+				{
+					ooid = otrec.get("origid");
+					sampid_str = otrec.get("sampleid_str");
+
+					sqls3 = "update JobSamples set samplemarking='" + firstsampm_str + "' where origid=" + ooid.toString();
+					sql.execute(sqls3);
+
+					matchItemUpdateLabel(samples_lb, sampid_str, 1, firstsampm_str);
+				}
+			}
+		}
+	}
+	
+	startFolderSamplesSearch(folderno);
+	
+	sql.close();
+}
+
+/*
+// Hand-coded listbox creation
+Listbox makeTestPackages_Listbox(Div mDiv)
+{
+	Listbox oldlb = mDiv.getFellowIfAny("testpackages_lb");
+	if(oldlb != null) oldlb.setParent(null);
+
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testpackages_lb");
+    newlb.setVflex(true);
+	
+	//newlb.addEventListener("onSelect", new TestPackages_Listener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+	Listheader hd3 = new Listheader();
+    hd3.setLabel("Origid");
+    hd3.setSort("auto");
+	hd3.setVisible(false);
+    hd3.setParent(newhead);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("Name");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("LastUpdate");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeTestPackages_Listbox()
+*/
+
+Object[] testpackages_lb_headers = {
+
+	new listboxHeaderObj("Origid",false),
+	new listboxHeaderObj("Name",true),
+	new listboxHeaderObj("LastUpdate",true)
+};
+
+void populateTestPackages(Div idiv)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "select * from TestPackages where deleted=0";
+	tp_recs = sql.rows(sqlstatem);
+	sql.close();
+
+	if(tp_recs != null)
+	{
+		// Listbox newlb = makeTestPackages_Listbox(idiv);
+		Listbox newlb = makeVWListbox(idiv, testpackages_lb_headers, "testpackages_lb", 20);
+		
+		String[] strarray = new String[3];
+
+		for(tpi : tp_recs)
+		{
+			strarray[0] = tpi.get("origid").toString();
+
+			pckname = tpi.get("package_name");
+			if(pckname.equals(""))
+				pckname = "-undefined-";
+
+			pckname = trimListitemLabel(pckname,30);
+			strarray[1] = pckname;
+
+			strarray[2] = tpi.get("lastupdate").toString().substring(0,10);
+
+			insertListItems(newlb,strarray,"false");
+		}
+
+	}
+}
+
+void insertTestParameter(String tsampid, String mysoftc)
+{
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstatem = "insert into JobTestParameters values (" + tsampid + "," + mysoftc + ",0,'DRAFT',0,0)";
+	sql.execute(sqlstatem);
+
+	sql.close();
+}
+
+void crampTestPackage()
+{
+	// make sure selected a sample-id
+	isampid = sampleid.getValue();
+	if(isampid.equals("")) return;
+
+	this_sampidint = convertSampleNoToInteger(isampid).toString();
+
+	// make sure selected a test package
+	if(testpackages_lb.getSelectedIndex() == -1) return;
+
+	testpack = testpackages_lb.getSelectedItem().getLabel(); // which test package selected
+
+	// get list of test parameters (mysoftcode) as def in test-package
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	sqlst = "select mysoftcode from TestPackage_Items where deleted=0 and testpackage_id=" + testpack;
+	tp_items = sql.rows(sqlst);
+
+	sql.close();
+
+	if(tp_items != null)
+	{
+		for(tpi : tp_items)
+		{
+			tp_mysc = tpi.get("mysoftcode").toString();
+			insertTestParameter(this_sampidint, tp_mysc);
+		}
+	}
+
+	// refresh listbox
+	startTestParametersSearch(sampleid);
+
+}
+
+// 26/3/2010: to enable or disable certain buttons / input depend on user security level/group
+void activateSecurity()
+{
+	// disable commit button , need level 3 to be able to commit folder
+	dis_cmt = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,SAMPREG_ACCESSLEVEL + 1);
+	
+	if(!dis_cmt) commit_butt.setDisabled(true);
+
+}
+
+void refreshSampleMarkingBox()
+{
+	startFolderSamplesSearch(folderno);
+
+}
+
+]]>
+</zscript>
+
+<!-- Test Package selection popup -->
+<popup id="testPackagePopup">
+
+<groupbox width="300px" >
+<caption label="Test Packages" />
+	<div id="testpackages_div" />
+
+	<button label="Get test package" onClick="crampTestPackage()" style="font-size:9px" />
+	<button label="Refresh" onClick="populateTestPackages(testpackages_div)" style="font-size:9px" />
+	<button label="Close" onClick="testPackagePopup.close()" style="font-size:9px" />
+
+<zscript>
+populateTestPackages(testpackages_div);
+</zscript>
+
+</groupbox>
+
+</popup>
+<!-- end of Test package selection popup -->
+
+<div width="1020px">
+<panel id="assign_tests_panel" title="Test Parameters" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+
+<div>
+<borderlayout height="800px">
+<north>
+	
+	<borderlayout height="370px">
+	<west title="Folders/Jobs" size="60%" splittable="true" collapsible="true">
+	<div>
+		<separator height="3px" />
+
+		<hbox>
+			<label value="Start date" />
+			<datebox id="startdate" format="yyyy-MM-dd" />
+
+			<label value="End date" />
+			<datebox id="enddate" format="yyyy-MM-dd" />
+
+			<button label="Search" onClick="startFolderJobsSearch(startdate, enddate, customer_tb)" style="font-size:9px" />
+
+			<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+		</hbox>
+		
+		<hbox>
+			<label value="Customer" />
+			<textbox id="customer_tb" width="200px" />
+		</hbox>
+
+		<separator height="3px" />
+
+		<div id="folderjobs_div" />
+
+		<button label="Print SRA" onClick="printSRA_Wrapper()" style="font-size:9px" />
+		<button id="commit_butt" label="COMMIT folder/job" onClick="commitFolder()" style="font-size:9px" />
+
+		<!-- to keep track of things -->
+		<textbox id="folderno" visible="false" />
+		<textbox id="sampleid" visible="false" />
+		<textbox id="testparamid" visible="false" />
+	</div>
+	</west>
+
+	<center title="Folders -> Samples">
+		<div>
+			<separator height="3px" />
+			
+			<hbox>
+				<button label="Copy Tests to Next" onClick="copyTestsToNext()" style="font-size:9px" />
+				<button label="Dup Tests All" onClick="dupAllTests()" style="font-size:9px" />
+				<button label="Print labels" onClick="printSampleLabels()" style="font-size:9px" />
+			</hbox>
+			
+			<hbox>
+				<button label="Dup SampMarking" onClick="dupSampleMarking()" style="font-size:9px" />
+				<button label="Refresh" onClick="refreshSampleMarkingBox()" style="font-size:9px" />
+			</hbox>
+			
+			<separator height="3px" />
+
+			<div id="samples_div" />
+			
+			<separator height="3px" />
+
+			<hbox>
+				<separator width="5px" />
+				<label value="Sample marking" style="font-size:9px" />
+				<textbox id="sampmark_tb" multiline="true" height="40px" width="210px" style="font-size:9px" />
+		
+				<button label="Update" onClick="updateSampleMarking(sampmark_tb,sampnotes_tb)" style="font-size:9px" />
+			</hbox>
+	
+			<hbox>
+				<separator width="5px" />
+				<label value="Notes" style="font-size:9px" />
+				<separator width="45px" />
+				<textbox id="sampnotes_tb" multiline="true" height="40px" width="250px" style="font-size:9px" />
+			</hbox>
+		</div>
+		<!-- end of Samples Div -->
+	</center>
+	</borderlayout>
+	
+</north>
+
+<center>
+	<borderlayout height="200px">
+	
+		<west title="Folders -> Samples -> Tests" size="35%" splittable="true" collapsible="true">
+		<div>
+			<separator height="3px" />
+			<hbox>
+				<button label="Add test" onClick="createNewTestParameter()" style="font-size:9px" />
+				<button label="Remove test" onClick="deleteTestParameter()" style="font-size:9px" />
+				<button label="Test package" popup="testPackagePopup" style="font-size:9px" />
+			</hbox>
+			<separator height="3px" />
+			
+			<div id="testparameters_div" />
+			
+		</div>
+		</west>
+		
+		<center>
+			<!-- test parameters from mysoft -->
+			<borderlayout id="mysoft_testparams" height="200px" visible="false">
+			
+				<west title="Division" size="150px" flex="true" splittable="true" collapsible="true">
+					<div id="division_column" />
+				</west>
+	
+				<center>
+					<borderlayout height="200px" width="100%">
+						<west title="Section" size="150px" flex="true" splittable="true" collapsible="true">
+							<div id="section_column" />
+						</west>
+	
+						<center>
+							<borderlayout height="200px" width="100%">
+								<west title="Test parameters" size="100%" flex="true" splittable="true" collapsible="true">
+									<div id="testparameters_column" />
+								</west>
+							</borderlayout>
+						</center>
+			
+					</borderlayout>
+				</center>
+			</borderlayout>
+			<!-- end of test parameters from mysoft -->
+		</center>
+	</borderlayout>
+</center>
+
+</borderlayout>
+</div>
+
+<zscript>
+<![CDATA[
+
+if(can_access)
+{
+	// Set search today's date
+	setTodayDatebox(startdate);
+	setTodayDatebox(enddate);
+	setTodayDatebox(hiddendatebox);
+
+	startFolderJobsSearch(startdate, enddate, customer_tb);
+
+	// show empty samples listbox when loaded
+	startFolderSamplesSearch(folderno);
+
+	populateDivisionColumn(division_column);
+
+	//makeTestParametersListbox(testparameters_div);
+	Listbox newlb = makeVWListbox(testparameters_div, testparameterssearch_lb_headers, "testparameters_lb", 20);
+	newlb.addEventListener("onSelect", new TestParams_Listener());
+	
+	activateSecurity();
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+
+</zk>
+

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="box_form_wind"?>
+<zk>
+
+<!--
+Dispatch Manifest module
+
+Version				: 0.1
+Coding began date	: 1/03/2010
+Developer			: Nurul
+
+(c)2010 ALS Technichem Malaysia Sdn Bhd
+-->
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+MODULE_DBNAME = "BoxRental";
+
+
+// Hand-coded listbox creation
+Listbox makeBoxListbox(Div mDiv)
+{
+	// if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = mDiv.getFellowIfAny("boxform_lb");
+	if(oldlb != null) oldlb.setParent(null);
+		
+    Listbox newlb = new Listbox();
+
+    newlb.setId("boxform_lb");
+    newlb.setVflex(true);
+	
+	// newlb.addEventListener("onSelect", new MyListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("BoxId");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Customer");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+	Listheader hd2 = new Listheader();
+    hd2.setLabel("Rent out date");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+	
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    newlb.setRows(20);
+
+    return newlb;
+
+} // end of makeBoxListbox()
+
+// Populate the listbox of all extra box for this customer
+// uses global-var the_arcode
+void populateBoxRentalBox(Div thediv)
+{
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "select * from " + MODULE_DBNAME + " where deleted=0 and status=1 order by origid";
+	tlist = sql.rows(sqlstatem);
+	sql.close();
+	
+	if(tlist == null) return;
+	
+	String[] strarray = new String[4];
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeBoxListbox(thediv);
+	
+	for(ilist : tlist)
+	{
+		t_origid = RENTALFORM_PREFIX + ilist.get("origid").toString();
+		strarray[0] = t_origid;
+		
+		strarray[1] = ilist.get("rentalform_id");
+		strarray[2] = ilist.get("box_id");
+		strarray[3] = ilist.get("rentout_date");
+
+		insertListItems(newlb,strarray,RENTALFORM_PREFIX);
+	}
+			
+} // end of populateBoxRentalBox()
+
+
+]]>
+</zscript>
+
+<window id="box_form" title="Box Form" width="400px" height="400px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="globalCloseWindow(myincludeid)" onClose="globalCloseWindow(myincludeid)"
+>
+<div>
+
+<groupbox>
+<div id="boxform_div" droppable="true" onDrop="dropAR_Code(event)"/>
+</groupbox>
+
+<button label="Close window" onClick="globalCloseWindow(myincludeid)" />
+
+</div>
+
+<zscript>
+<![CDATA[
+populateBoxRentalBox(boxform_div);
+]]>
+</zscript>
+
+</window>
+
+</zk>

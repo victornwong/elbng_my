@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="userspage"?>
+
+<!--
+
+Setup stuff
+
+-->
+
+<zk>
+
+<window id="usersform" title="Setup users" width="300px" position="center"
+	mode="overlapped" border="normal" visible="false">
+
+Setup new user
+<textbox />
+
+<button label="OK" onClick="usersform.visible = false" />
+
+</window>
+
+</zk>
+

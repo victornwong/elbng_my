@@ -1,0 +1,550 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="sendoutcooler_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
+<zscript src="../alsglobal/fileUploading.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Send-out Cooler Boxes Tracker(INDO)";
+MYVERSION = "v0.1";
+/*
+Title		: Send-out cooler boxes tracker for indonesia
+Dated		: 03/10/2012
+Written by	: Victor Wong
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+dmshand = new DMSFuncs();
+
+// listbox field position
+LB_ORIGID = 0;
+LB_ARCODE = 1;
+LB_STATUS = 10;
+
+// set these accordingly for indonesia later..
+COURIER_FORM_ID = "9";
+RECVBILL_FORM_ID = "10";
+SENDOUT_PREFIX = "SOI";
+
+vicFormMaker glob_formmaker = null;
+vicFormMaker receipt_formmaker = null;
+
+glob_selected_sendout = "";
+glob_selected_listitem = null;
+glob_selected_status = "";
+
+//--- to be used in searchSelectCustomer_v1.zs
+class CallMeObject
+{
+	public Object companyrec;
+	public Object callme;
+
+	void doSomething()
+	{
+		if(companyrec == null) return;
+		if(glob_selected_sendout.equals("")) return;
+
+		arcode = kiboo.checkNullString(companyrec.get("ar_code"));
+		clcon = kiboo.checkNullString(companyrec.get("contact_person1"));
+		
+		sqlstm = "update elb_sendcoolerboxes_indo set ar_code='" + arcode + "', client_contact='" + clcon + "' " +
+		"where origid=" + glob_selected_sendout;
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		listSendOut();
+
+		// get what's in companyrec and populate fields -- can be customized for other mods
+		/*
+		drc_arcode.setValue(companyrec.get("ar_code"));
+		drc_customer_name.setValue(companyrec.get("customer_name"));
+		drc_address1.setValue(companyrec.get("address1"));
+		drc_address2.setValue(companyrec.get("address2") + " " + companyrec.get("address3"));
+		drc_contactperson.setValue(companyrec.get("contact_person1"));
+		drc_email.setValue(companyrec.get("E_mail"));
+		drc_phone.setValue(companyrec.get("telephone_no"));
+		drc_fax.setValue(companyrec.get("fax_no"));
+		*/
+		selectcustomer_popup.close();
+	}
+}
+
+local_callme = new CallMeObject();
+//---
+
+Object getSentCooler_rec(String iwhat)
+{
+	sql = sqlhand.als_mysoftsql();
+	retval = null;
+	if(sql == null ) return retval;
+	String sqlstm = "select * from elb_sendcoolerboxes_indo where origid=" + iwhat;
+	retval = sql.firstRow(sqlstm);
+	sql.close();
+	return retval;
+}
+
+void showCourierForm(String iwhat)
+{
+	fmobj = sqlhand.getFormKeeper_rec(COURIER_FORM_ID);
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	//exmres = sqlhand.clobToString(fmobj.get("exampleresult"));
+	glob_formmaker = new vicFormMaker(form_holder,"courierform",formxml);
+	glob_formmaker.generateForm();
+	formid_label.setValue("Form ID: " + iwhat);
+
+	// populate fields
+	serec = getSentCooler_rec(iwhat);
+	if(serec != null) glob_formmaker.populateFormValues(serec);
+
+	sbstatus = serec.get("bstatus");
+	saveform_btn.setDisabled(false);
+	//updatebill_btn.setDisabled(true);
+	if(!sbstatus.equals("NEW"))
+	{
+		saveform_btn.setDisabled(true);
+		//updatebill_btn.setDisabled(false);
+	}
+	
+	fillDocumentsList(SENDOUT_PREFIX,iwhat);
+
+/* unused in Indon for now
+	// show receipt/billing form
+	fmobj = sqlhand.getFormKeeper_rec(RECVBILL_FORM_ID);
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	receipt_formmaker = new vicFormMaker(recvbillform_holder,"recvbillform",formxml);
+	receipt_formmaker.generateForm();
+
+	// populate courier billing stuff
+	invoiceno.setValue(serec.get("invoiceno"));
+	billed.setSelectedIndex((serec.get("billed") == null) ? 0 : serec.get("billed") );
+	client_received.setSelectedIndex((serec.get("client_received") == null) ? 0 : serec.get("client_received") );
+*/
+
+	//formarea.setVisible(true);
+}
+
+
+void toggleButtons(boolean iwhat)
+{
+	asscustomer.setDisabled(iwhat);
+	commit_it.setDisabled(iwhat);
+	cancel_it.setDisabled(iwhat);
+}
+
+void saveThemSelected(Listitem iwhat)
+{
+	glob_selected_listitem = iwhat;
+	glob_selected_sendout = lbhand.getListcellItemLabel(iwhat,LB_ORIGID);
+	glob_selected_status = lbhand.getListcellItemLabel(iwhat,LB_STATUS);
+}
+
+class sendoutlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		saveThemSelected(event.getReference());
+
+		if(!glob_selected_status.equals("NEW")) // if status ain't NEW - disable some butts
+			toggleButtons(true);
+		else
+			toggleButtons(false);
+	}
+}
+
+// double-clicker
+class sendoutDC_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	Object executeObject;
+
+	public void onEvent(Event event) throws UiException
+	{
+		saveThemSelected(event.getTarget());
+		showCourierForm(glob_selected_sendout);
+		sendoutform.open(exportlist); // show form at "export list" button --
+	}
+}
+
+Object[] sendout_lb_headers = {
+	new listboxHeaderWidthObj("##",true,"30px"),
+	new listboxHeaderWidthObj("arcode",false,""),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("Client",true,"250px"),
+	new listboxHeaderWidthObj("Contact",true,"180px"),
+	new listboxHeaderWidthObj("Project",true,"180px"),
+	new listboxHeaderWidthObj("Courier",true,"100px"),
+	new listboxHeaderWidthObj("Airway",true,"80px"),
+	new listboxHeaderWidthObj("Bx",true,"30px"),
+	new listboxHeaderWidthObj("Sender",true,"80px"),
+	new listboxHeaderWidthObj("Stat",true,"50px"),
+	new listboxHeaderWidthObj("Recv",true,"50px"),
+};
+
+void listSendOut()
+{
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	shtext = kiboo.replaceSingleQuotes(searchtext_box.getValue());
+	
+	// reset vars
+	glob_selected_sendout = "";
+	glob_selected_listitem = null;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(sendouts_holder, sendout_lb_headers, "sendouts_lb", 5);
+
+	sqlstm = "select scb.origid, scb.ar_code, scb.airwaybill, scb.datecreated, scb.username," + 
+	"scb.bstatus, scb.numboxes, scb.client_contact, scb.client_projectid, cust.customer_name, " +
+	"scb.client_received, scb.couriername " +
+	"from elb_sendcoolerboxes_indo scb " +
+	"left join customer cust on cust.ar_code = scb.ar_code " +
+	"where scb.datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	if(!shtext.equals(""))
+		sqlstm += "and (scb.airwaybill like '%" + shtext + "%' or scb.client_contact like '%" + shtext + "%' or " +
+		"scb.client_projectid like '%" + shtext + "%' or cust.customer_name like '%" + shtext + "%') ";
+
+	sqlstm += "order by scb.origid";
+
+	srecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(srecs.size() == 0) return;
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", new sendoutlb_Listener());
+
+	for(dpi:srecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("ar_code"));
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+		kabom.add(kiboo.checkNullString(dpi.get("customer_name")));
+		kabom.add(kiboo.checkNullString(dpi.get("client_contact")));
+		kabom.add(kiboo.checkNullString(dpi.get("client_projectid")));
+		kabom.add(kiboo.checkNullString(dpi.get("couriername")));
+		kabom.add(dpi.get("airwaybill"));
+		kabom.add(kiboo.checkNullString(dpi.get("numboxes")));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("bstatus"));
+
+		rcv = (dpi.get("client_received") != null) ? ( (dpi.get("client_received") == 1) ? "-Y-" : "-N-") : "-N-";
+		kabom.add(rcv);
+
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	
+	dc_obj = new sendoutDC_Listener();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+
+	workarea.setVisible(true);
+}
+
+void sendoutFunc(Object iwhat)
+{
+	itype = iwhat.getId();
+	refresh = false;
+	dostatupdate = false;
+	thestatus = "";
+	sqlstm = "";
+	popmsg = "";
+	todate = kiboo.todayISODateString();
+
+	if(itype.equals("newsendout"))
+	{
+		sqlstm = "insert into elb_sendcoolerboxes_indo " + 
+		"(ar_code,airwaybill,extranotes,couriername,datecreated,billed,username,bstatus,client_received) " +
+		"values ('','','','','" + todate + "',0,'" + useraccessobj.username + "','NEW',0)" ;
+		refresh = true;
+	}
+
+	if(itype.equals("commit_it"))
+	{
+		toggleButtons(true);
+		thestatus = "COMMIT";
+		dostatupdate = true;
+	}
+
+	if(itype.equals("togcommit"))
+	{
+		toggleButtons(false);
+		thestatus = "NEW";
+		dostatupdate = true;
+	}
+
+	if(itype.equals("cancel_it"))
+	{
+		if (Messagebox.show("Once cancelled, cannot change anything..", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+		toggleButtons(true);
+		thestatus = "CANCEL";
+		dostatupdate = true;
+	}
+
+	if(itype.equals("clientrecv"))
+	{
+		sqlstm = "update elb_sendcoolerboxes_indo set client_received=1-client_received where origid=" + glob_selected_sendout;
+	}
+
+	if(itype.equals("delsendout"))
+	{
+		if (Messagebox.show("Hard delete this record..", "Are you sure?", 
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+		sqlstm = "delete from elb_sendcoolerboxes_indo where origid=" + glob_selected_sendout;
+	}
+
+	if(itype.equals("saveform_btn"))
+	{
+		awbstr = kiboo.replaceSingleQuotes(airwaybill.getValue()).trim();
+		curnam = couriername.getSelectedItem().getLabel();
+		exnots = kiboo.replaceSingleQuotes(extranotes.getValue()).trim();
+		numbox = numboxes.getSelectedItem().getLabel();
+		qtid = kiboo.replaceSingleQuotes(quotation_id.getValue());
+		clcont = kiboo.replaceSingleQuotes(client_contact.getValue());
+		clproj = kiboo.replaceSingleQuotes(client_projectid.getValue());
+		destn = kiboo.replaceSingleQuotes(destination.getValue());
+
+		sqlstm = "update elb_sendcoolerboxes_indo set airwaybill='" + awbstr + "', couriername='" + curnam + "'," +
+		"extranotes='" + exnots + "', username='" + useraccessobj.username +"', numboxes='" + numbox + "'," +
+		"quotation_id='" + qtid + "', client_contact='" + clcont + "', client_projectid='" + clproj + "'," +
+		"destination='" + destn + "' where origid=" + glob_selected_sendout;
+
+		popmsg = "Send-out details saved..";
+	}
+
+	if(itype.equals("exportlist"))
+	{
+		exportListboxExcel(sendouts_holder,"sendouts_lb","sendCoolerboxes_checklist.xls",
+			sendout_lb_headers,"Sendout",kasiexport_holder,65);
+	}
+
+	// for status update - update username as well (to keep track of the last who do what)
+	if(dostatupdate && !glob_selected_sendout.equals(""))
+		sqlstm = "update elb_sendcoolerboxes_indo set bstatus='" + thestatus + 
+		"', username='" + useraccessobj.username + "' where origid=" + glob_selected_sendout;
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	//if(refresh)
+	listSendOut();
+
+	if(!popmsg.equals("")) guihand.showMessageBox(popmsg);
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<popup id="selectcustomer_popup">
+<div style="padding:3px">
+<hbox>
+<groupbox width="400px">
+	<caption label="Search / Assign customer" />
+	<hbox>
+		<label value="Search text" style="font-size:9px" />
+		<textbox id="cust_search_tb" width="150px" style="font-size:9px" />
+		<button label="Find" style="font-size:9px" onClick="searchCustomers(local_callme)" />
+	</hbox>
+	<separator height="3px" />
+	<div id="foundcustomer_holder" />
+</groupbox>
+<groupbox id="custinfo_gb" width="300px" >
+	<caption label="Customer info" />
+	<grid>
+		<rows>
+		<row>
+			<label value="Company" style="font-size:9px" />
+			<label id="cfind_company_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<label id="cfind_address1_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<label id="cfind_address2_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address3" style="font-size:9px" />
+			<label id="cfind_address3_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Contact " style="font-size:9px" />
+			<label id="cfind_contact_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<label id="cfind_email_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Tel" style="font-size:9px" />
+			<label id="cfind_tel_lbl" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Fax" style="font-size:9px" />
+			<label id="cfind_fax_lbl" style="font-size:9px" />
+		</row>
+		</rows>
+	</grid>
+</groupbox>
+
+</hbox>
+<separator height="3px" />
+<button label="X Close" style="font-size:9px" onClick="selectcustomer_popup.close()" />
+</div>
+</popup>
+<!-- ENDOF select customer popup -->
+
+<!-- upload a file popup -->
+<popup id="uploadfile_popup">
+<groupbox>
+<caption label="Upload a file" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Filename" style="font-size:9px" />
+				<textbox id="fileupl_file_title" width="200px" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Description" style="font-size:9px" />
+				<textbox id="fileupl_file_description" multiline="true" height="60px" width="200px" style="font-size:9px" />
+			</row>
+		</rows>
+	</grid>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button label="Select file" onClick="uploadFile(SENDOUT_PREFIX, glob_selected_sendout)" style="font-size:9px" />
+	<button label="Close" onClick="uploadfile_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+<!-- ENDOF upload a file popup -->
+
+<!-- the send-out form popup -->
+<popup id="sendoutform">
+<groupbox mold="3d" id="formarea" style="padding:2px" width="380px" >
+	<button label="X Close" style="font-size:9px" onClick="sendoutform.close()" />
+	<separator height="2px" />
+	<div id="form_holder" />
+	<separator height="5px" />
+	<button id="saveform_btn" label="Save details" style="font-size:9px" onClick="sendoutFunc(self)" />
+	<separator height="5px" />
+
+	<div id="recvbillform_holder" />
+	<separator height="5px" />
+	<!--
+	<button id="updatebill_btn" label="Update receipt and bill details" style="font-size:9px" onClick="sendoutFunc(7)" />
+	-->
+
+	<separator height="5px" />
+	<div style="background:#204a87;padding:2px">
+		<label style="color:#eeeeee;font-weight:bold" >
+		Do attach any documents, scanned airwaybill or emails(in PDF format) for future reference
+		</label>
+	</div>
+	<separator height="3px" />
+	<div>
+		<hbox>
+			<button id="uploaddoc_btn" label="Upload file" style="font-size:9px" onClick="showUploadPopup(glob_selected_sendout)" />
+			<button id="viewdoc_btn" label="View file" style="font-size:9px" onClick="viewFile()" />
+			<button id="editdoc_btn" label="Update" style="font-size:9px" onClick="updatefiledesc_popup.open(editdoc_btn)" />
+			<button id="deletedoc_btn" label="Delete" style="font-size:9px" onClick="deleteFile(SENDOUT_PREFIX, glob_selected_sendout)" />
+		</hbox>
+		<separator height="3px" />
+		<div id="documents_holder" />
+	</div>
+</groupbox>
+</popup>
+<!-- ENDOF the send-out form popup -->
+
+<!-- update file description popup -->
+<popup id="updatefiledesc_popup">
+<groupbox width="400px">
+	<caption id="updatefiledesc_label" />
+	<label value="Description" style="font-size:9px" />
+	<textbox id="update_file_description" multiline="true" height="70px" width="99%" style="font-size:9px" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Update" style="font-size:9px" onClick="updateFileDescription()" />
+		<button label="Close" style="font-size:9px" onClick="updatefiledesc_popup.close()" />
+	</hbox>
+</groupbox>
+
+</popup>
+
+
+<div width="1200px">
+<panel id="sendoutcooler_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<groupbox mold="3d" style="padding:2px" >
+	<hbox>
+		<label value="Start date" style="font-size:9px" />
+		<datebox id="startdate" style="font-size:9px" format="yyyy-MM-dd" onCreate="self.value = new Date()" />
+		<label value="End date" style="font-size:9px" />
+		<datebox id="enddate" style="font-size:9px" format="yyyy-MM-dd" onCreate="self.value = new Date()" />
+		<textbox id="searchtext_box" style="font-size:9px" width="200px" />
+		<button id="search_btn" label="Refresh" style="font-size:9px" onClick="listSendOut()" />
+		<separator width="50px" />
+		<button id="exportlist" label="Export MS-Excel checklist" style="font-size:9px" onClick="sendoutFunc(self)" />
+	</hbox>
+</groupbox>
+
+<groupbox id="workarea" mold="3d" style="padding:2px" visible="false" >
+<hbox>
+	<button id="newsendout" label="New sendout" onClick="sendoutFunc(self)" />
+	<button id="cancel_it" label="CANCEL" style="font-weight:bold" onClick="sendoutFunc(self)" />
+	<button id="asscustomer" label="Assign client" onClick="selectcustomer_popup.open(glob_selected_listitem)" />
+	<button id="commit_it" label="COMMIT" style="font-weight:bold" onClick="sendoutFunc(self)" />
+	<button id="clientrecv" label="Client received" onClick="sendoutFunc(self)" />
+
+	<div id="adminstuff" style="background:#ef2929;padding:2px" visible="false" >
+		<button id="togcommit" label="Uncommit" style="font-size:9px" onClick="sendoutFunc(self)" />
+		<button id="delsendout" label="Hard delete" style="font-size:9px" onClick="sendoutFunc(self)" />
+	</div>
+
+</hbox>
+
+<separator height="3px" />
+<div id="sendouts_holder" />
+</groupbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

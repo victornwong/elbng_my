@@ -1,0 +1,861 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="dispatch_scheduling_manager"?>
+<!--
+
+Version				:
+Coding began date	:
+Developers			: Victor
+
+Dispatcher scheduling - will be some major stuff in this module and supporting modules
+
+-->
+
+<zk>
+
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+
+<zscript src="../alsglobal/dispatchschedule.zs" />
+
+<zscript>
+<![CDATA[
+
+import java.util.*;
+import java.text.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+
+// Get access obj set by login-page
+useraccessobj = getUserAccessObject();
+
+// no access obj, redirect back to login page
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+
+// to count open invoice-details window
+windcounter = 1;
+
+String[] schedulecomplete_ddi = { "ALL", "Incomplete" , "Completed" };
+
+Object whathuh;
+
+class scheduleInputBox
+{
+	public Textbox origid;
+	public Textbox manifest_id;
+	public Textbox address_1;
+	public Textbox address_2;
+	public Textbox city;
+	public Textbox zip;
+	public Textbox state;
+	public Textbox country;
+	public Textbox primaryphone;
+	public Textbox primaryfax;
+	public Textbox contactperson;
+	public Textbox email;
+	public Textbox reasonnotes;
+	public Datebox schedule_date;
+	public Checkbox completed;
+	public Textbox ar_code;
+	public Textbox dispatcher_id;
+	
+	public int extra_address_id;
+	
+	public scheduleInputBox(Textbox iorigid, Textbox imanifest_id, Textbox iaddress_1, Textbox iaddress_2,
+		Textbox icity, Textbox izip, Textbox istate, Textbox icountry, Textbox iprimaryphone, Textbox iprimaryfax,
+		Textbox icontactperson, Textbox iemail, Textbox ireasonnotes, Datebox iappointment, Checkbox icompleted,
+		Textbox iar_code, Textbox idispatcher_id)
+	{
+		origid = iorigid;
+		manifest_id = imanifest_id;
+		address_1 = iaddress_1;
+		address_2 = iaddress_2;
+		city = icity;
+		zip = izip;
+		state = istate;
+		country = icountry;
+		primaryphone = iprimaryphone;
+		primaryfax = iprimaryfax;
+		contactperson = icontactperson;
+		email = iemail;
+		reasonnotes = ireasonnotes;
+		schedule_date = iappointment;
+		completed = icompleted;
+		ar_code = iar_code;
+		dispatcher_id = idispatcher_id;
+		
+		extra_address_id = 0;
+	}
+	
+	void clearDetails()
+	{
+		origid.setValue("");
+		manifest_id.setValue("");
+		address_1.setValue("");
+		address_2.setValue("");
+		city.setValue("");
+		zip.setValue("");
+		state.setValue("");
+		country.setValue("");
+		primaryphone.setValue("");
+		primaryfax.setValue("");
+		contactperson.setValue("");
+		email.setValue("");
+		reasonnotes.setValue("");
+
+		completed.setChecked(false);
+	
+		ar_code.setValue("");
+		dispatcher_id.setValue("");
+		
+		extra_address_id = 0;
+	}
+	
+	void completedLock()
+	{
+		origid.setDisabled(true);
+		address_1.setDisabled(true);
+		address_2.setDisabled(true);
+		city.setDisabled(true);
+		zip.setDisabled(true);
+		state.setDisabled(true);
+		country.setDisabled(true);
+		primaryphone.setDisabled(true);
+		primaryfax.setDisabled(true);
+		contactperson.setDisabled(true);
+		email.setDisabled(true);
+		reasonnotes.setDisabled(true);
+		
+		ar_code.setDisabled(true);
+		schedule_date.setDisabled(true);
+	}
+	
+	void incompleteUnlock()
+	{
+		origid.setDisabled(false);
+		address_1.setDisabled(false);
+		address_2.setDisabled(false);
+		city.setDisabled(false);
+		zip.setDisabled(false);
+		state.setDisabled(false);
+		country.setDisabled(false);
+		primaryphone.setDisabled(false);
+		primaryfax.setDisabled(false);
+		contactperson.setDisabled(false);
+		email.setDisabled(false);
+		reasonnotes.setDisabled(false);
+		
+		ar_code.setDisabled(false);
+		schedule_date.setDisabled(false);
+	}
+	
+	void showDetails()
+	{
+		// get origid from the DSPSCHxx code in the textbox
+		meid = origid.getValue();
+		iorigid = strip_PrefixID(meid);
+	
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		sqlstatem = "select * from DispatchScheduleDetails where origid=" + iorigid;
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+		
+		if(therec == null)
+		{
+			showMessage("ERROR! Cannot retrieve schedule record");
+			return;
+		}
+
+	if(therec.get("manifest_id") == 0)
+		manifstr = "";
+	else
+		manifstr = DISPATCHMANIFEST_PREFIX + therec.get("manifest_id").toString();
+		
+	manifest_id.setValue(manifstr);
+	
+	address_1.setValue(therec.get("address_1"));
+	address_2.setValue(therec.get("address_2"));
+	city.setValue(therec.get("city"));
+	zip.setValue(therec.get("zip"));
+	state.setValue(therec.get("state"));
+	
+	country.setValue(therec.get("country"));
+	primaryphone.setValue(therec.get("primaryphone"));
+	primaryfax.setValue(therec.get("primaryfax"));
+	contactperson.setValue(therec.get("contactperson"));
+	email.setValue(therec.get("email"));
+	reasonnotes.setValue(therec.get("reasonnotes"));
+	
+	schedule_date.setValue(therec.get("schedule_date"));
+	
+	compchk = therec.get("completed");
+	
+	completed.setChecked( ( compchk == 1) ? true : false );
+	
+	// 28/1/2010: if completed, don't allow user to change anything anymore
+	if(compchk == 1)
+		completedLock();
+	else
+		incompleteUnlock();
+	
+	ar_code.setValue(therec.get("ar_code"));
+	dispatcher_id.setValue(therec.get("dispatcher_id"));
+	
+	extra_address_id = therec.get("extra_address_id");
+	
+	uses_extra_address.setVisible( (extra_address_id != 0) ? true : false );
+	
+	}
+	
+	// save whatever in the inputbox back to database
+	void updateDetails()
+	{
+		// nothing to update, return
+		if(origid.getValue().equals("")) return;
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+
+		iorigid = strip_PrefixID(origid.getValue());
+
+		// manifest_id uses the same 6 char prefix, use the same func to strip
+		imanifest_id = strip_PrefixID(manifest_id.getValue());
+		
+		if(imanifest_id.equals("")) imanifest_id="0";
+		
+		iaddress_1 = replaceSingleQuotes(address_1.getValue());
+		iaddress_2 = replaceSingleQuotes(address_2.getValue());
+		icity = replaceSingleQuotes(city.getValue());
+		izip = replaceSingleQuotes(zip.getValue());
+		istate = replaceSingleQuotes(state.getValue());
+		icountry = replaceSingleQuotes(country.getValue());
+		iprimaryphone = replaceSingleQuotes(primaryphone.getValue());
+		iprimaryfax = replaceSingleQuotes(primaryfax.getValue());
+		icontactperson = replaceSingleQuotes(contactperson.getValue());
+		iemail = replaceSingleQuotes(email.getValue());
+		ireasonnotes = replaceSingleQuotes(reasonnotes.getValue());
+		
+		ischedule_date = getDateFromDatebox(schedule_date);
+		
+		icompleted = ((completed.isChecked()) ? 1 : 0);
+		
+		iar_code = replaceSingleQuotes(ar_code.getValue());
+		idispatcher_id = dispatcher_id.getValue();
+		
+		sqlstatem = "update DispatchScheduleDetails set manifest_id=" + imanifest_id + ", " +
+			"address_1='" + iaddress_1 + "', " +
+			"address_2='" + iaddress_2 + "', " +
+			"city='" + icity + "', " +
+			"zip='" + izip + "', " +
+			"state='" + istate + "', " +
+			"country='" + icountry + "', " +
+			"primaryphone='" + iprimaryphone + "', " +
+			"primaryfax='" + iprimaryfax + "', " +
+			"contactperson='" + icontactperson + "', " +
+			"email='" + iemail + "', " +
+			"reasonnotes='" + ireasonnotes + "', " +
+			"ar_code='" + iar_code + "', " +
+			"dispatcher_id='" + idispatcher_id + "', " +
+			"completed=" + icompleted + ", " +
+			"schedule_date='" + ischedule_date + "', " +
+			"extra_address_id=" + extra_address_id.toString() +
+			" where origid=" + iorigid;
+		
+		sql.execute(sqlstatem);
+		sql.close();
+	}
+
+} // end of object scheduleInputBox
+
+class MyListener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		// 28/1/2010: save previous rec if available before showing the new one
+		// whathuh.updateDetails();
+	
+		irecno = testsdrillbit2.getSelectedItem().getLabel();
+		whathuh.origid.setValue(irecno);
+		whathuh.showDetails();
+		
+		// startDispatchScheduleSearch(startdate,enddate);
+		
+	}
+}
+
+// Hand-coded listbox creation
+Listbox makeDispatchScheduleListbox(Div mDiv, Integer totalrecs)
+{
+    Listbox newlb = new Listbox();
+
+    newlb.setId("testsdrillbit2");
+    //newlb.setContext("dispatchSchedulingContext");
+    newlb.setVflex(true);
+    // newlb.setPopup("testmypop");
+	
+	newlb.addEventListener("onSelect", new MyListener());
+
+    newlb.setParent(mDiv);
+
+    Listhead newhead = new Listhead();
+    newhead.setSizable(true);
+    newhead.setParent(newlb);
+	
+    Listheader hd1 = new Listheader();
+    hd1.setLabel("DestID");
+    hd1.setSort("auto");
+    hd1.setParent(newhead);
+
+    Listheader hd2 = new Listheader();
+    hd2.setLabel("Date");
+    hd2.setSort("auto");
+    hd2.setParent(newhead);
+
+    Listheader hd3 = new Listheader();
+    hd3.setLabel("Customer");
+    hd3.setSort("auto");
+    hd3.setParent(newhead);
+
+    Listheader hd4 = new Listheader();
+    hd4.setLabel("Completed");
+    hd4.setSort("auto");
+    hd4.setParent(newhead);
+	
+    Listfoot newfooter = new Listfoot();
+    newfooter.setParent(newlb);
+
+    Listfooter fd1 = new Listfooter();
+    fd1.setLabel("Found:");
+    fd1.setParent(newfooter);
+
+    Listfooter fd2 = new Listfooter();
+    fd2.setLabel(totalrecs.toString());
+    fd2.setParent(newfooter);
+
+    newlb.setRows(12);
+
+    return newlb;
+
+} // end of makeDispatchScheduleListbox()
+
+// Do the search and populate listbox
+void startDispatchScheduleSearch(Datebox startd, Datebox endd)
+{
+	sdate = getDateFromDatebox(startd);
+    edate = getDateFromDatebox(endd);
+	
+	if(sdate == null || edate == null)
+    {
+        showMessageBox("Please specify start and end date for search");
+        return;
+    }
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+	
+	// 27/1/2010: destination status , all/incomplete/completed
+	dispstat = dispatchstatus.getSelectedItem().getLabel();
+	
+	ideststat = "";
+	
+	if(dispstat.equals("Incomplete")) ideststat = "and completed=0";
+	if(dispstat.equals("Completed")) ideststat = "and completed=1";
+
+	sqlstatem = "select top 510 * from DispatchScheduleDetails where schedule_date between '" + sdate + "' and '" + edate + "'" + 
+	ideststat +
+	" order by schedule_date desc";
+	
+	tlist = sql.rows(sqlstatem);
+	
+	sql.close();
+	
+    // found some records but must be within limit else the browser will crash
+	reccount = tlist.size();
+	
+	 // if there's previously a listbox, remove before adding a new one.
+	Listbox oldlb = searchdiv.getFellowIfAny("testsdrillbit2");
+	if(oldlb != null) oldlb.setParent(null);
+
+	// create a new listbox and attach to searchdiv
+	Listbox newlb = makeDispatchScheduleListbox(searchdiv, tlist.size());
+	
+	if(reccount > 0 && reccount <= 500)
+	{
+		String[] strarray = new String[4];
+
+        // showMessageBox(tlist.get(0).get("Date_Created").toString());
+		for(ilist : tlist)
+		{
+            strarray[0] = SCHEDULEID_PREFIX + ilist.get("origid").toString();
+            strarray[1] = ilist.get("schedule_date").toString().substring(0,10);
+			
+			// get customer name from ar_code - will be slow if alot, scan 1 by 1
+			
+			iar_code = ilist.get("ar_code");
+
+			icompanyname = "Undefined";
+			
+			if(!iar_code.equals(""))
+				icompanyname = getCompanyName(iar_code);
+			
+			strarray[2] = icompanyname;
+			
+			icompleted = ilist.get("completed");
+			icompstr = (icompleted == 1) ? "Completed" : "Incomplete";
+			strarray[3] = icompstr;
+
+            insertListItems(newlb,strarray,SCHEDULEID_PREFIX);
+		}
+	}
+	
+	// whathuh.clearDetails();
+
+} // end of startDispatchScheduleSearch()
+
+// Create an entry in the dispatchschedule table ..
+void createNewDispatchSchedule(Datebox ihiddendatebox)
+{
+	todaysdate = getDateFromDatebox(ihiddendatebox);
+
+	sql = als_mysoftsql();
+    if(sql == NULL) return;
+
+	sqlstatem = "insert into DispatchScheduleDetails values ('', '', '', '', '', '', '', '', '', '', '', '', '" + todaysdate + "',0, '', '',0)";
+	sql.execute(sqlstatem);
+	sql.close();
+	
+	// refresh the dispatch schedule search-box.. set today's date for both start/end search date
+	// setTodayDatebox(startdate);
+	// setTodayDatebox(enddate);
+	startDispatchScheduleSearch(startdate,enddate);
+
+} // end of createNewDispatchSchedule()
+
+// save the destination dispatch schedule metadata
+void saveDispatchSchedule()
+{
+	whathuh.updateDetails();
+	whathuh.clearDetails();
+	
+	startDispatchScheduleSearch(startdate,enddate);
+
+}
+
+// delete a dispatch destination schedule
+void deleteDispatchSchedule()
+{
+	// make sure something selected before deleting
+	
+	dispidstr = whathuh.origid.getValue();
+	if(dispidstr.equals("")) return;
+
+	// 28/1/2010: make sure the destination schedule is not assigned to any dispatch manifest
+	therec = getDispatchScheduleRec(dispidstr);
+	if(therec != null)
+	{
+		desti = therec.get("manifest_id");
+	
+		if(desti > 0)
+		{
+			showMessageBox(dispidstr + " already assigned to " + DISPATCHMANIFEST_PREFIX + desti + "\nCannot delete");
+			return;
+		}
+	}
+
+	if (Messagebox.show("Delete destination " + dispidstr, "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.YES)
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		dispsno = strip_PrefixID(dispidstr);
+
+		// redo this section, no direct delete, set isDeleted flag instead - audit-trail later on
+		sqlstatem = "delete from DispatchScheduleDetails where origid=" + dispsno;
+		
+		sql.execute(sqlstatem);
+		
+		sql.close();
+		
+		// refresh the search-box
+		startDispatchScheduleSearch(startdate,enddate);
+		whathuh.clearDetails();
+	}
+}
+
+void tryNotes()
+{
+	msele = testsdrillbit2.getSelectedItem().getLabel();
+	alert("selected this: " + msele);
+}
+
+void playDocsDeliveryDetails()
+{
+	// get item selected in the list-box, testsdrillbit2 = hardcoded listbox id
+	
+	if(testsdrillbit2.getSelectedIndex() == -1) return;
+	
+	arno = testsdrillbit2.getSelectedItem().getLabel();
+	arcodestr = "ar_code=" + arno;
+
+	uniqwindowid = "arcode" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/cust_addaddress.zul", uniqwindowid, arcodestr,useraccessobj);
+	windcounter++;
+}
+
+// only accept arcode type 3XXX/XXX for drag-drop
+void dropAR_Code(Event event)
+{
+	Component dragged = event.dragged;
+	
+	iarcode = dragged.getLabel();
+	
+	// if no schedule selected, don't put in the address
+	if(whathuh.origid.getValue().equals("")) return;
+
+	// if dispatch schedule already assigned to a manifest, disallow changes
+	if(!whathuh.manifest_id.getValue().equals(""))
+	{
+		showMessageBox("Dispatch schedule already assigned to dispatch manifest " + whathuh.manifest_id.getValue() );
+		return;
+	}
+	
+	if(iarcode.substring(0,1).equals("3"))
+	{
+		self.setValue(iarcode);
+		
+		// set all the other fields with the primary address from mysoft.customer
+		
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+		
+		sqlstatem = "select address1,address2,address3,telephone_no,fax_no,contact_person1 from customer where ar_code='" + iarcode + "'";
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+		
+		whathuh.address_1.setValue(therec.get("address1"));
+		whathuh.address_2.setValue(therec.get("address2"));
+		whathuh.city.setValue(therec.get("address3"));
+		
+		whathuh.state.setValue("");
+		whathuh.zip.setValue("");
+		whathuh.country.setValue("");
+		
+		whathuh.primaryphone.setValue(therec.get("telephone_no"));
+		whathuh.primaryfax.setValue(therec.get("fax_no"));
+		whathuh.contactperson.setValue(therec.get("contact_person1"));
+		whathuh.extra_address_id = 0;
+		
+		uses_extra_address.setVisible(false);
+		
+		// 27/1/2010 : enable open destination - issue of non-registered customer, cannot assign dispatch destination
+		// OPENDESTINATION_ARCODE def in alsglobaldefs.zs
+		if(iarcode.equals(OPENDESTINATION_ARCODE))
+		{
+			// enable the company textbox for data entry
+		
+		}
+
+	}
+}
+
+void dropExtraAddress_Code(Event event)
+{
+	Component dragged = event.dragged;
+	
+	// convert extra address dragged to origid number - must be something, else return
+	iextra_addrcode = strip_PrefixID(dragged.getLabel());
+	
+	if(!iextra_addrcode.equals(""))
+	{
+		sql = als_mysoftsql();
+		if(sql == NULL) return;
+	
+		sqlstatem = "select * from CustomerAdditionalAddress where origid=" + iextra_addrcode;
+	
+		therec = sql.firstRow(sqlstatem);
+		sql.close();
+	
+		whathuh.address_1.setValue(therec.get("address_1"));
+		whathuh.address_2.setValue(therec.get("address_2"));
+		whathuh.city.setValue(therec.get("city"));
+		whathuh.zip.setValue(therec.get("zip"));
+		whathuh.state.setValue(therec.get("state"));
+		whathuh.country.setValue(therec.get("country"));
+		whathuh.primaryphone.setValue(therec.get("primaryphone"));
+		whathuh.primaryfax.setValue(therec.get("primaryfax"));
+		whathuh.contactperson.setValue(therec.get("contactperson"));
+		whathuh.email.setValue(therec.get("email"));
+		whathuh.extra_address_id = Integer.parseInt(iextra_addrcode);
+	}
+}
+
+void dropDispatcherId(Event event)
+{
+	Component dragged = event.dragged;
+	
+	idispid = dragged.getLabel();
+	
+	therec = getDispatcherRec(idispid); // in alsglobalfuncs.zs
+	
+	whathuh.dispatcher_id.setValue(therec.get("dispatcher_name"));
+}
+
+void playCustomerExtraAddress()
+{
+	arcodestr = "ar_code=" + whathuh.ar_code.getValue();
+
+	uniqwindowid = "arcode" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/cust_addaddress.zul", uniqwindowid, arcodestr,useraccessobj);
+	windcounter++;
+}
+
+void playAssignDispatcher()
+{
+	uniqwindowid = "dispass" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/dispatcher_management.zul", uniqwindowid, "dispid=0",useraccessobj);
+	windcounter++;
+}
+
+void playDispatchManifest()
+{
+	whathuh.clearDetails();
+	
+	uniqwindowid = "dispmanf" + myincludeid + "wind" + windcounter;
+	globalActivateWindow("miscwindows","dispatch/dispatch_manifest.zul", uniqwindowid, "dispmanf=0",useraccessobj);
+	windcounter++;
+}
+
+]]>
+</zscript>
+
+<menupopup id="dispatchSchedulingContext">
+
+<menuitem label="Add more address" onClick="playDocsDeliveryDetails()" /> 
+<menuitem label="Hide popup" />
+
+</menupopup>
+
+<div width="990px">
+<panel id="dispatchscheduling" title="Dispatch Scheduling"
+		border="normal" collapsible="true" closable="true"
+>
+<panelchildren>
+<hbox>
+<vbox>
+
+<!-- start of schedule search column -->
+
+<groupbox mold="3d" width="620px">
+<caption label="Destinations" />
+<vbox>
+ <hbox>
+	<label value="Start date" />
+	<datebox id="startdate" format="yyyy-MM-dd" />
+
+	<label value="End date" />
+	<datebox id="enddate" format="yyyy-MM-dd" />
+	
+	<label value="Status" />
+	<listbox id="dispatchstatus" mold="select" />
+	<zscript>
+		populateDropdownListbox(dispatchstatus,schedulecomplete_ddi);
+		dispatchstatus.setSelectedIndex(1); // always start with INCOMPLETE search
+	</zscript>
+	
+	<button label="Start search" onClick="startDispatchScheduleSearch(startdate,enddate)" />
+	
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+ </hbox>
+</vbox>
+
+<separator height="3px" />
+
+<!-- search results box -->
+<groupbox mold="3d" width="100%">
+<caption label="Search results" />
+<vbox>
+<div id="searchdiv" />
+</vbox>
+</groupbox>
+
+<hbox>
+ <button label="New destination" onClick="createNewDispatchSchedule(hiddendatebox)" />
+ <button label="Delete" onClick="deleteDispatchSchedule()" />
+ <button label="Dispatcher" onClick="playAssignDispatcher()" />
+ <button label="Dispatch manifest" onClick="playDispatchManifest()" />
+</hbox>
+
+<separator height="3px" />
+
+<groupbox mold="3d" width="100%">
+<caption label="Destination Metadata" />
+<vbox>
+
+<groupbox>
+<vbox>
+	<hbox>
+        <label value="DestID" />
+        <textbox id="schedule_id" disabled="true" />
+		
+        <label value="Date" />
+		<datebox id="schedule_date" format="yyyy-MM-dd" />
+		
+		<label value="CustCode" />
+        <textbox id="ar_code" droppable="true" onDrop="dropAR_Code(event)" />
+
+    </hbox>
+
+	<hbox>
+		<label value="Dispatch manifest" />
+		<textbox id="manifest_id" disabled="true" />
+		
+		<separator width="50px" />
+		<label value="Dispatcher" />
+		<textbox id="dispatcher_id" droppable="DSPRID" onDrop="dropDispatcherId(event)" disabled="true" />
+	
+	</hbox>
+	
+    <hbox>
+		<vbox>
+			<hbox>
+			<label value="Address1" />
+			<textbox id="address_1" width="300px" droppable="EXTADR" onDrop="dropExtraAddress_Code(event)" />
+	
+			<separator width="34px" />
+			<label value="Tel" />
+			<textbox id="primaryphone" />
+			</hbox>
+		
+			<hbox>
+			<label value="Address2" />
+			<textbox id="address_2" width="300px" droppable="EXTADR" onDrop="dropExtraAddress_Code(event)" />
+
+			<separator width="34px" />
+			<label value="Fax" />
+			<textbox id="primaryfax" />
+			</hbox>
+			
+			<hbox>
+			<label value="City" />
+			<textbox id="city" />
+			
+			<separator width="5px" />
+			<label value="Postcode" />
+			<textbox id="zip" />
+
+			<separator width="5px" />
+			<label value="Contact" />
+			<textbox id="contactperson" />
+			</hbox>
+			
+			<hbox>
+			<label value="State" />
+			<textbox id="state" />
+
+			<label value="Country" />
+			<textbox id="country" />
+
+			</hbox>
+			
+		</vbox>
+    </hbox>
+	
+	<hbox>
+        <label value="Notes/Reason" />
+        <textbox id="reasonnotes" multiline="true" width="275px" height="40px" />
+		
+		<separator width="70px" />
+
+		<label value="Completed" />
+		<checkbox id="completed" />
+
+		<textbox id="email" visible="false" />
+	</hbox>
+	
+</vbox>
+</groupbox>
+<!-- end of schedule metadata box -->
+
+<!-- schedule metadata crud buttons -->
+<hbox>
+ <button id="saveupdatemeta" label="Save destination" onClick="saveDispatchSchedule()" />
+ <button label="Use extra address" onClick="playCustomerExtraAddress()" />
+ <separator width="10px" />
+ <label id="uses_extra_address" value="This schedule uses extra address" visible="false" />
+</hbox>
+
+</vbox>
+</groupbox>
+
+</groupbox>
+
+<!-- end of schedule search column -->
+
+</vbox>
+
+<!-- customer search box -->
+<groupbox mold="3d" width="100%">
+<caption label="Customer" />
+
+<div id="localcustomerdiv" />
+
+<zscript>
+localActivateWindow(localcustomerdiv, "dispatch/customer_searchbox.zul", "cusdo88", "dispatch=1",useraccessobj);
+</zscript>
+
+</groupbox>
+<!-- end of customer search box -->
+
+</hbox>
+</panelchildren>
+</panel>
+
+<zscript>
+<![CDATA[
+
+tScheduleDetails = new scheduleInputBox
+		(schedule_id, manifest_id, address_1, address_2,
+		 city, zip, state, country, primaryphone, primaryfax, contactperson, email, reasonnotes, schedule_date, completed,
+		 ar_code, dispatcher_id);
+	
+whathuh = tScheduleDetails;
+
+/*
+Calendar kkk = Calendar.getInstance();
+kkk.set(2008,0,1);
+*/
+
+/*
+startdd = patientRecsDateStart();
+Calendar myend = Calendar.getInstance();
+myend.setTime(startdd);
+myend.add(myend.DAY_OF_MONTH,6);
+startgraphdate.setValue(startdd);
+endgraphdate.setValue(myend.getTime());
+*/
+
+// Set search startdate and enddate to today's date
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+// always startup and show today's schedule
+startDispatchScheduleSearch(startdate,enddate);
+
+]]>
+</zscript>
+
+</div>
+
+</zk>
+

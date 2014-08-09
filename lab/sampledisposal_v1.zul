@@ -1,0 +1,549 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="sampledisposal_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Version		: 1.0
+Title		: Samples disposal
+Written by	: Victor Wong
+
+*NOTES*
+
+Uses jf.storagetrays , jf.disposaldate, jf.disposalstatus, jf.disposeby, jf.disposetickdate(when user pickup folders to dispose)
+
+Revisions:
+
+17/10/2011: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+import org.zkoss.util.media.AMedia;
+
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+gridhand = new GridHandler();
+
+// modded for this module
+public class folderListObject
+{
+	public String origid;
+	public String folderno_str;
+	public String ar_code;
+	public String customer_name;
+	public int disposalstatus;
+	public String disposeby;
+	public String disposaldate;
+	public String storagetrays;
+	public String disposetickdate;
+	public Object tickbox;
+}
+
+FOLDERPICK_COLOR = "background:#AAAAAA";
+
+ArrayList mainFolderList;
+Object prevSelectedFolder = null;
+String prevSelectedFolder_style = "";
+
+last_foldersearch_type = 0;
+last_matrix_type = 0;
+
+global_selected_arcode = "";
+global_selected_folderno = "";
+selected_folderno = ""; // used by repeatstuff.zs
+global_selected_origid = "";
+global_selected_customername = "";
+
+// pickup ticked <row> and create ('','') for sql
+// Specific to work on mainFolderList and tickbox obj
+String folderTickedListMaker()
+{
+	origs = "(";
+	tickcount = 0;
+
+	for(dpi : mainFolderList)
+	{
+		tickbox = dpi.tickbox;
+		if(tickbox.isChecked())
+		{
+			origs += dpi.origid + ",";
+			tickcount++;
+		}
+	}
+
+	origs = origs.substring(0,origs.length()-1) + ")";
+	if(tickcount == 0) origs = "";
+	return origs;
+}
+
+// onSelect/Click for folder-grid
+class foldersOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow)
+			{
+				if(prevSelectedFolder_style.equals(""))
+					prevSelectedFolder.setStyle(null);
+				else
+				{
+					prevSelectedFolder.setStyle(prevSelectedFolder_style);
+				}
+			}
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder_style = (selrow.getStyle() == null) ? "" : selrow.getStyle();
+		prevSelectedFolder = selrow;
+		selrow.setStyle(FOLDERPICK_COLOR);
+
+		selid = selrow.getId();
+		selid = selid.substring(2,selid.length());
+
+		for(dpi : mainFolderList)
+		{
+			if(dpi.origid.equals(selid))
+			{
+				global_selected_origid = dpi.origid;
+				global_selected_arcode = dpi.ar_code;
+				global_selected_folderno = dpi.folderno_str;
+				selected_folderno = dpi.folderno_str;
+				global_selected_customername = dpi.customer_name;
+				break;
+			}
+		}
+	}
+}
+
+String[] folderListHeaders = {"TK","Folder","Dated","Customer","Trays","Dis.Due","Dis.By","Dis.Date","Dis.Stat" };
+
+// itype: 1=due disposals, 2=load by disposal-date, 3=by tray searchtext, 4=by disposal due-date
+// imatrix: 1=water, 2=soil
+void showDueDisposal(int itype, int imatrix)
+{
+	last_foldersearch_type = itype;
+	last_matrix_type = imatrix;
+
+	sqlstm_head = "select top 200 jf.origid, jf.datecreated, jf.folderno_str, jf.ar_code, ";
+	
+	sqlstm_mid = "customer.customer_name, csci.customer_name as cashcustomer from jobfolders jf " +
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.deleted=0 ";
+
+	whatfields = (imatrix == 1) ? "jf.storagetrays, jf.disposaldate, jf.disposalstatus, jf.disposeby, jf.disposetickdate, " :
+		"jf.soil_storagetrays, jf.soil_disposaldate, jf.soil_disposalstatus, jf.soil_disposeby, jf.soil_disposetickdate, ";
+
+	storagetrays_where = (imatrix == 1) ? "and (jf.storagetrays is not null or jf.storagetrays='') " : 
+		"and (jf.soil_storagetrays is not null or jf.soil_storagetrays='') ";
+		
+	sqlstm_foot = (imatrix == 1) ? " order by jf.disposaldate" : " order by jf.soil_disposaldate"; 
+	wherestr = "";
+
+	cdispdate = kiboo.getDateFromDatebox(selectdate);
+	ctraysearch = kiboo.replaceSingleQuotes(traysearch.getValue());
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	switch(itype)
+	{
+		case 1:
+			wherestr = (imatrix == 1) ? "and (jf.disposalstatus is null or jf.disposalstatus=0) " : 
+				"and (jf.soil_disposalstatus is null or jf.soil_disposalstatus=0) ";
+			break;
+
+		case 2:
+			wherestr = (imatrix == 1) ? "and jf.disposetickdate='" + cdispdate + "' " : "and jf.soil_disposetickdate='" + cdispdate + "' ";
+			break;
+
+		case 3:
+			if(ctraysearch.equals("")) return;
+			wherestr = (imatrix == 1) ? "and jf.storagetrays like '%" + ctraysearch + "%' " :
+				"and jf.soil_storagetrays like '%" + ctraysearch + "%' ";
+			break;
+
+		case 4:
+			wherestr = (imatrix == 1) ? "and jf.disposaldate between '" + sdate + "' and '" + edate + "' " :
+				"and jf.soil_disposaldate between '" + sdate + "' and '" + edate + "' ";
+			break;
+	}
+
+	sqlstm = sqlstm_head + whatfields + sqlstm_mid + storagetrays_where + wherestr + sqlstm_foot;
+
+    sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+    therecs = sql.rows(sqlstm);
+	sql.close();
+
+	//alert(therecs); return;
+
+	if(therecs.size() == 0) return;
+
+	// show matrix selected
+	matrix_lbl.setValue((imatrix == 1) ? "WATER" : "SOIL");
+
+	// remove previous grid
+	if(folders_holder.getFellowIfAny("folders_lb") != null) folders_lb.setParent(null);
+
+	mainFolderList = new ArrayList();
+	todate = hiddendatebox.getValue();
+
+	thegrid = new Grid();
+	thegrid.setId("folders_lb");
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+	gridhand.makeGridHeaderColumns(folderListHeaders, thegrid);
+
+	labelstyle = "";
+	rowstyle = "";
+
+	for(dpi : therecs)
+	{
+		// Store folder metadata
+		ifolder = new folderListObject();
+		ifolder.origid = dpi.get("origid").toString();
+		ifolder.folderno_str = dpi.get("folderno_str");
+		ifolder.ar_code = dpi.get("ar_code");
+
+		if(dpi.get("ar_code").equals("CASH"))
+			ifolder.customer_name = dpi.get("cashcustomer");
+		else
+			ifolder.customer_name = dpi.get("customer_name");
+
+		ifolder.disposalstatus = (imatrix == 1) ? (dpi.get("disposalstatus") == null) ? 0 : dpi.get("disposalstatus") :
+			(dpi.get("soil_disposalstatus") == null) ? 0 : dpi.get("soil_disposalstatus");
+
+		ifolder.disposeby = (imatrix == 1) ? kiboo.checkNullString(dpi.get("disposeby")) : kiboo.checkNullString(dpi.get("soil_disposeby"));
+
+		ifolder.disposaldate = (imatrix == 1) ? dpi.get("disposaldate").toString().substring(0,10) :
+			dpi.get("soil_disposaldate").toString().substring(0,10);
+			
+		ifolder.storagetrays = (imatrix == 1) ? dpi.get("storagetrays") : dpi.get("soil_storagetrays");
+
+		ifolder.disposetickdate = (imatrix == 1) ? 
+			(dpi.get("disposetickdate") != null) ? dpi.get("disposetickdate").toString().substring(0,10) : "" :
+			(dpi.get("soil_disposetickdate") != null) ? dpi.get("soil_disposetickdate").toString().substring(0,10) : "";
+
+		dispdate = (imatrix == 1) ? dpi.get("disposaldate") : dpi.get("soil_disposaldate");
+
+
+		if(todate.compareTo(dispdate) >= 0)
+		{
+			labelstyle = "font-size:9px;color:#ffffff;font-weight:bold";
+			rowstyle = "background:#FA3A0F";
+		}
+		else
+		{
+			rowstyle = "";
+			labelstyle = "";
+		}
+
+		theid = "FR" + ifolder.origid;
+		folder_row = gridhand.gridMakeRow(theid,rowstyle,"",gridrows);
+		//folder_row.setStyle("background:#AA0000");
+		folder_row.addEventListener("onClick", new foldersOnSelect());
+
+		tickid = "TI" + ifolder.origid;
+		ifolder.tickbox = new Checkbox();
+		ifolder.tickbox.setId(tickid);
+		if(ifolder.disposalstatus == 1) ifolder.tickbox.setChecked(true);
+		ifolder.tickbox.setParent(folder_row);
+
+		mainFolderList.add(ifolder);
+
+		gridhand.makeLabelToParent(dpi.get("folderno_str"),labelstyle,folder_row);
+		gridhand.makeLabelToParent(dpi.get("datecreated").toString().substring(0,10),labelstyle,folder_row);
+
+		icompanyname = "Undefined";
+		iar_code = dpi.get("ar_code");
+
+		if(iar_code != null)
+		{
+			iar_code = iar_code.toUpperCase().trim();
+
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD"))
+			{
+				icompanyname = "CshAcct: ";
+
+				if(dpi.get("cashcustomer") != null)
+					icompanyname += dpi.get("cashcustomer");
+				else
+					icompanyname += "UNKNOWN";
+			}
+			else
+				icompanyname = kiboo.checkNullString_RetWat(dpi.get("customer_name"),"Undefined");
+		}
+
+		gridhand.makeLabelToParent(icompanyname,labelstyle,folder_row);
+
+		gridhand.makeLabelToParent(ifolder.storagetrays,labelstyle,folder_row);
+		gridhand.makeLabelToParent(ifolder.disposaldate,labelstyle,folder_row);
+		gridhand.makeLabelToParent(ifolder.disposeby,labelstyle,folder_row);
+
+		//disptickdate = (dpi.get("disposetickdate") != null) ? dpi.get("disposetickdate").toString().substring(0,10) : "";
+		gridhand.makeLabelToParent(ifolder.disposetickdate,labelstyle,folder_row);
+
+		dispstat = (ifolder.disposalstatus == 1) ? "DISP" : "";
+		gridhand.makeLabelToParent(dispstat,labelstyle,folder_row);
+
+	}
+
+	thegrid.setParent(folders_holder);	
+	workarea.setVisible(true);
+}
+
+void tickAllToggler()
+{
+	if(mainFolderList.size() == 0) return;
+	for(dpi : mainFolderList)
+	{
+		tickbox = dpi.tickbox;
+		tickbox.setChecked((tickbox.isChecked()) ? false : true);
+	}
+}
+
+// imatrix : 1=water, 2=soil
+void disposeTickedFolders()
+{
+	if(mainFolderList.size() == 0) return;
+	origs = folderTickedListMaker();
+	if(!origs.equals(""))
+	{
+		todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+		// default water
+		sqlstm = "update jobfolders set disposalstatus=1, disposeby='" + useraccessobj.username + "',disposetickdate='" + todate + "' " + 
+		"where origid in " + origs;
+
+		if(last_matrix_type == 2) // soil
+			sqlstm = "update jobfolders set soil_disposalstatus=1, soil_disposeby='" + useraccessobj.username + 
+			"',soil_disposetickdate='" + todate + "' " + 
+			"where origid in " + origs;
+
+	    sql = sqlhand.als_mysoftsql();
+		if(sql == null) return;
+		sql.execute(sqlstm);
+		sql.close();
+		showDueDisposal(last_foldersearch_type,last_matrix_type); // refresh
+	}
+}
+
+// imatrix : 1=water, 2=soil
+void adminClearDisposalRecs()
+{
+	if(mainFolderList.size() == 0) return;
+	origs = folderTickedListMaker();
+	if(!origs.equals(""))
+	{
+		sqlstm = "update jobfolders set disposalstatus=null, disposeby=null, disposetickdate=null where origid in " + origs;
+		if(last_matrix_type == 2) // soil
+			sqlstm = "update jobfolders set soil_disposalstatus=null, soil_disposeby=null, soil_disposetickdate=null where origid in " + origs;
+
+	    sql = sqlhand.als_mysoftsql();
+	    if(sql == null) return;
+		sql.execute(sqlstm);
+		sql.close();
+		showDueDisposal(last_foldersearch_type,last_matrix_type); // refresh
+	}
+}
+
+// stuff copied from exportListboxExcel() alsglobal_guifuncs.zs - modded for this module
+void exportDisposalFolders()
+{
+	if(mainFolderList.size() == 0) return;
+
+	ifilename = "sampdisposals.xls";
+	isheetname = "DisposalList";
+
+	// Uses Apache POI stuff
+	HSSFWorkbook wb = new HSSFWorkbook();
+	thefn = session.getWebApp().getRealPath("tmp/" + ifilename);
+	FileOutputStream fileOut = new FileOutputStream(thefn);
+	sheet = wb.createSheet(isheetname);
+
+	stylo = wb.createCellStyle();
+	stylo.setFillBackgroundColor((short)210);
+	
+	// title row
+	row0 = sheet.createRow(0);
+	// matrix_lbl def in UI to show matrix to user - we just get the last value
+	row0.createCell(0).setCellValue("Samples Disposal - Storage Trays : " + matrix_lbl.getValue() + " samples");
+
+	// Header row
+	String[] sheetheaders = { "Folder","Trays","DisposalDue","DisposalDate","Disposer" };
+	row1 = sheet.createRow(2);
+	for(i=0; i < sheetheaders.length; i++)
+	{
+		hedc = row1.createCell(i);
+		hedc.setCellValue(sheetheaders[i]);
+		hedc.setCellStyle(stylo);
+	}
+	
+	cellstylo = wb.createCellStyle();
+	cellstylo.setWrapText(true);
+
+	// loop through, output stuff into excel file
+	rowcount = 3;
+	for(dpi : mainFolderList)
+	{
+		if(dpi.tickbox.isChecked())
+		{
+			if(dpi.disposalstatus == 1)
+			{
+				row = sheet.createRow(rowcount);
+				
+/*					public String origid;
+	public String folderno_str;
+	public String ar_code;
+	public String customer_name;
+	public int disposalstatus;
+	public String disposeby;
+	public String disposaldate;
+	public String storagetrays;
+*/
+				row.createCell(0).setCellValue(dpi.folderno_str);
+				row.createCell(1).setCellValue(dpi.storagetrays);
+				row.createCell(2).setCellValue(dpi.disposaldate);
+				row.createCell(3).setCellValue(dpi.disposetickdate);
+				row.createCell(4).setCellValue(dpi.disposeby);
+				rowcount++;
+			}
+		}
+	}
+
+	ps = sheet.getPrintSetup();
+	ps.setScale((short)70);
+
+	wb.write(fileOut);
+	fileOut.close();
+
+	// long method to let user download a file	
+	File f = new File(thefn);
+	fileleng = f.length();
+	finstream = new FileInputStream(f);
+	byte[] fbytes = new byte[fileleng];
+	finstream.read(fbytes,0,(int)fileleng);
+
+	AMedia amedia = new AMedia(ifilename, "xls", "application/vnd.ms-excel", fbytes);
+	Iframe newiframe = new Iframe();
+	newiframe.setParent(kasiexport_holder);
+	newiframe.setContent(amedia);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="sampledisposal_panel" title="Samples Disposal v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<!-- top buttons bar -->
+<groupbox mold="3d">
+<hbox>
+	<grid>
+		<rows>
+			<row>
+				<hbox>
+					<button label="Load due water disposals" style="font-size:9px" onClick="showDueDisposal(1,1)" />
+					<button label="Load due soil disposals" style="font-size:9px" onClick="showDueDisposal(1,2)" />
+				</hbox>
+				<hbox>
+					<textbox id="traysearch" width="99%" style="font-size:9px" />
+					<button label="Find folder by tray -water" style="font-size:9px" onClick="showDueDisposal(3,1)" />
+					<button label="Find folder by tray -soil" style="font-size:9px" onClick="showDueDisposal(3,2)" />
+				</hbox>
+			</row>
+			<row>
+				<hbox>
+					<datebox id="selectdate" format="yyyy-MM-dd" style="font-size:9px" />
+					<separator width="5px" />
+					<button label="Load by disposal date -water" style="font-size:9px" onClick="showDueDisposal(2,1)" />
+					<button label="Load by disposal date -soil" style="font-size:9px" onClick="showDueDisposal(2,2)" />
+				</hbox>
+				<hbox>
+					<label value="Start" style="font-size:9px" />
+					<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+					<label value="End" style="font-size:9px" />
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+					<button label="Load by disposal due-date -water" style="font-size:9px" onClick="showDueDisposal(4,1)" />
+					<button label="Load by disposal due-date -soil" style="font-size:9px" onClick="showDueDisposal(4,2)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+</hbox>
+</groupbox>
+<!-- ENDOF top buttons bar -->
+
+<div id="workarea" visible="false">
+	<div width="100%" style="background:#777777">
+		<label id="matrix_lbl" />
+	</div>
+	<separator height="2px" />
+	<hbox>
+		<button label="ToggleTick" style="font-size:9px" onClick="tickAllToggler()" />
+		<button label="Dispose TICKED folders samples" style="font-size:9px" onClick="disposeTickedFolders()" />
+		<button label="Export ticked and ready for disposal to Excel" style="font-size:9px" onClick="exportDisposalFolders()" />
+
+		<div id="adminstuff" visible="false" style="background:#ff0000;padding:2px">
+			<button label="Clear disposal-recs" style="font-size:9px" onClick="adminClearDisposalRecs()" />
+		</div>
+	</hbox>
+	<separator height="2px" />
+	<div id="folders_holder" height="500px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+</div>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+kiboo.setTodayDatebox(selectdate);
+kiboo.setTodayDatebox(startdate);
+kiboo.setTodayDatebox(enddate);
+
+if(useraccessobj.accesslevel == 9)
+{
+	adminstuff.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

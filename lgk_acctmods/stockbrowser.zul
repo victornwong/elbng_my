@@ -1,0 +1,986 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="stockbrowser_mod"?>
+<zk>
+<zscript src="../lgkglobal/globaldefs.zs" />
+<zscript src="../lgkglobal/globalfuncs.zs" />
+<zscript src="../lgkglobal/global_guifuncs.zs" />
+<zscript src="../lgkglobal/lgk_sqlfuncs.zs" />
+<zscript src="../lgkglobal/purchasereq_sqlfuncs.zs" />
+<zscript src="../lgkglobal/doculink_funcs.zs" />
+<zscript src="../lgkglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title: Stock Items Browser based on StockMasterDetails and other tables
+Written by: Victor Wong
+Start Date: 19/10/2010
+
+**NOTES**
+
+19/10/2010: start coding for FXM
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+import java.math.BigDecimal;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+/*
+// check usergroup access - no access, just close the panel.. min. level 1 can browser through the folder/job list
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+*/
+
+THIS_WAREHOUSE = "HQFOXMAY";
+MODULE_MANAGER_LEVEL = 4;
+
+String[] warehouseList = { "HQFOXMAY","SITEBINTULU","SITEPAKA","MLNG_MP162","DULANG_MP150" };
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+String[] currencycode = { "MYR","IDR","USD","AUD","NZD","SGD","JPY","HKD" };
+
+selected_stock_cat = "";
+selected_stockcat_name = "";
+selected_stock_group = "";
+selected_stockgroup_name = "";
+selected_stock_code = "";
+selected_stock_id = "";
+
+lastitems_searchtype = 1;
+
+void checkNullSet_DecimalBox(Object inpbox, Object theval, String fieldname)
+{
+	putval = 0;
+	if(theval.get(fieldname) != null) putval = new BigDecimal(theval.get(fieldname));
+	inpbox.setValue(putval);
+}
+
+// Called by onSelect listener to update how many items per cat/group .. instead of listing out the wholelot
+void showNumberOfItems_PerCat()
+{
+	if(selected_stock_cat.equals("") || selected_stock_group.equals("")) return;
+
+	sqlstm = "select count(id) as stockcount from stockmasterdetails where stock_cat='" + selected_stock_cat + "' and groupcode='" + selected_stock_group + "'";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	kkre = sql.firstRow(sqlstm);
+	sql.close();
+
+	stockitemcount = 0;
+	if(kkre != null) stockitemcount = kkre.get("stockcount");
+	stockitems_lbl.setLabel("Items: " + selected_stockcat_name + " -> " + selected_stockgroup_name + " [ " + stockitemcount.toString() + " items]");
+
+	// Remove the prev items listbox if any
+	if(stockitems_holder.getFellowIfAny("stockitems_lb") != null) stockitems_lb.setParent(null);
+}
+
+// onSelect for populateStockCategory()
+class stockcatlb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_stock_cat = getListcellItemLabel(selitem,0);
+		selected_stockcat_name = getListcellItemLabel(selitem,1);
+		showNumberOfItems_PerCat();
+	}
+}
+
+// Show category from stockcategory
+void populateStockCategory()
+{
+	Object[] stockcat_headers = {
+	new listboxHeaderObj("Code",false),
+	new listboxHeaderObj("Cat.Description",true),
+	};
+
+	Listbox newlb = makeVWListbox(stockcat_holder,stockcat_headers,"stockcategory_lb",10);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct stock_cat,stock_cat_desc from stockcategory";
+	stkcats = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkcats.size() == 0) return;
+
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", new stockcatlb_Listener());
+	
+	for(dpi : stkcats)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("stock_cat"));
+		kabom.add(dpi.get("stock_cat_desc"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// onSelect for populateStockGroup()
+class stockgrouplb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_stock_group = getListcellItemLabel(selitem,0);
+		selected_stockgroup_name = getListcellItemLabel(selitem,1);
+		showNumberOfItems_PerCat();
+	}
+}
+
+// Show group from tblstockgroup
+void populateStockGroup()
+{
+	Object[] stockgroup_headers = {
+	new listboxHeaderObj("Code",false),
+	new listboxHeaderObj("Group.Description",true),
+	};
+
+	Listbox newlb = makeVWListbox(stockgroup_holder,stockgroup_headers,"stockgroup_lb",10);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct groupcode,id,description from tblstockgroup";
+	stkcats = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkcats.size() == 0) return;
+
+	newlb.setRows(15);
+	newlb.addEventListener("onSelect", new stockgrouplb_Listener());
+
+	for(dpi : stkcats)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("groupcode"));
+		kabom.add(dpi.get("description"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Clear all stock-items input boxes
+void clearStockItem_inputs()
+{
+	// clear global vars
+	selected_stock_id = "";
+	selected_stock_code = "";
+
+	si_stockcode.setValue("");
+	si_description.setValue("");
+	si_description2.setValue("");
+	si_product_details.setValue("");
+
+	si_cost_price.setValue("");
+	si_selling_price.setValue("");
+
+}
+
+// Show stock-item details
+void showStockItem_Metadata()
+{
+	if(selected_stock_id.equals("") || selected_stock_code.equals("")) return;
+
+	stkrec = lgk_getStockMasterDetails(selected_stock_id);
+
+	if(stkrec == null)
+	{
+		showMessageBox("[ERROR] cannot retrieve stock-item details..");
+		return;
+	}
+
+	kkb = checkNullString(stkrec.get("Supplier_Part_Number"));
+	si_supplier_part_number.setValue(kkb);
+	kkb = checkNullString(stkrec.get("BrandName"));
+	si_brandname.setValue(kkb);
+
+	si_stockcode.setValue(stkrec.get("Stock_Code"));
+
+	kkb = checkNullString(stkrec.get("Description"));
+	si_description.setValue(kkb);
+
+	kkm = "1. Stock Item";
+
+	if(!kkb.equals("")) kkm += " : " + kkb;
+	stockitem_lbl.setLabel(kkm);
+
+	kkb = checkNullString(stkrec.get("Description2"));
+	si_description2.setValue(kkb);
+
+	proddet = stkrec.get("Product_Detail");
+	if(proddet != null)
+	{
+		long length = proddet.length();
+		String prodstr = proddet.getSubString(1, (int)length);
+		si_product_details.setValue(prodstr);
+	}
+
+	if(stkrec.get("Supplier_Code") != null)
+	{
+		suppcode = stkrec.get("Supplier_Code");
+		si_supplier_code.setValue(suppcode);
+		if(!suppcode.equals(""))
+		{
+			supprec = getSupplier_Rec_ByCode(suppcode);
+			if(supprec != null)
+			{
+				suppname = checkNullString(supprec.get("SupplierName"));
+				supplier_name_lbl.setValue(suppname);
+			}
+		}
+	}
+
+	checkNullSet_DecimalBox(si_cost_price,stkrec,"Cost_Price");
+	checkNullSet_DecimalBox(si_selling_price,stkrec,"Selling_Price");
+	checkNullSet_DecimalBox(si_qty_in_stock,stkrec,"Qty_In_Stock");
+	checkNullSet_DecimalBox(si_qty_reorder_level,stkrec,"Qty_Reorder_Level");
+	checkNullSet_DecimalBox(si_qty_max_lever,stkrec,"Qty_Max_Lever");
+	checkNullSet_DecimalBox(si_qty_min_lever,stkrec,"Qty_Min_Lever");
+	
+	curcod = checkNullString(stkrec.get("CurCode"));
+	if(curcod.equals("")) curcod = "MYR";
+	matchListboxItems(si_curcode, curcod);
+	
+	warehse = checkNullString(stkrec.get("WarehouseCode"));
+	if(warehse.equals("")) warehse = THIS_WAREHOUSE;
+	matchListboxItems(si_warehousecode, warehse);
+	// show warehouse name by the site
+	selitem = si_warehousecode.getSelectedItem();
+	warehousename_lbl.setValue(getListcellItemLabel(selitem,1)); // 2nd item in listitem(in dropdown) is the warehouse-name
+}
+
+// Move selector in stockcategory/group listbox
+void ghostMoveCategorySub()
+{
+	if(selected_stock_id.equals("")) return;
+
+	sqlstm = "select stock_cat,groupcode from stockmasterdetails where id=" + selected_stock_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	stkrec = sql.firstRow(sqlstm);
+	sql.close();
+
+	if(stkrec == null) return;
+
+	stkgrp = stkrec.get("groupcode");
+	stkcat = stkrec.get("stock_cat");
+
+	matchListboxItemsColumn(stockgroup_lb,stkgrp,0);
+	matchListboxItemsColumn(stockcategory_lb,stkcat,0);
+}
+
+// onSelect for populateStockItems()
+class stockitemslb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		selected_stock_id = getListcellItemLabel(selitem,0);
+		selected_stock_code = getListcellItemLabel(selitem,2);
+		showStockItem_Metadata();
+		showDocumentsList(selected_stock_code);
+
+		// do ghost-move category/subcat
+		ghostMoveCategorySub();
+	}
+}
+
+// Show stock-items based on selected_stock_cat and selected_stock_group
+// searchtype : 1=by itemsearchstring , 2=all, 3=anything w/o selected_stock_cat and selected_stock_group
+void populateStockItems(int searchtype)
+{
+	Object[] stockitems_headers = {
+	new listboxHeaderObj("stock_id",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Stock.Code",true),
+	new listboxHeaderObj("Supplier",true),
+	new listboxHeaderObj("Item.Name",true),
+	new listboxHeaderObj("Item.Description",true),
+	};
+
+	if(selected_stock_cat.equals("") || selected_stock_group.equals("")) searchtype=3;
+
+	srchstr = replaceSingleQuotes(itemsearchstring.getValue());
+	if(srchstr.equals("") && searchtype == 1) return;
+
+	lastitems_searchtype = searchtype;
+
+	Listbox newlb = makeVWListbox(stockitems_holder,stockitems_headers,"stockitems_lb",5);
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	// default searchtype=1
+	sqlstm = "select top 200 stockmasterdetails.id,stockmasterdetails.stock_code,stockmasterdetails.description," +
+	"stockmasterdetails.description2,stockmasterdetails.qty_in_stock, supplierdetail.suppliername from stockmasterdetails " +
+	"left join supplierdetail on stockmasterdetails.supplier_code=supplierdetail.apcode " +
+	"where stockmasterdetails.stock_cat='" + selected_stock_cat + "' and stockmasterdetails.groupcode='" + selected_stock_group + "' " +
+	"and stockmasterdetails.description like '%" + srchstr + "%' " +
+	"order by stockmasterdetails.description";
+
+	if(searchtype == 2)
+	{
+	sqlstm = "select top 200 stockmasterdetails.id,stockmasterdetails.stock_code,stockmasterdetails.description," +
+	"stockmasterdetails.description2,stockmasterdetails.qty_in_stock, supplierdetail.suppliername from stockmasterdetails " +
+	"left join supplierdetail on stockmasterdetails.supplier_code=supplierdetail.apcode " +
+	"where stockmasterdetails.stock_cat='" + selected_stock_cat + "' and stockmasterdetails.groupcode='" + selected_stock_group + "' " +
+	"order by stockmasterdetails.description";
+	}
+
+	if(searchtype == 3)
+	{
+	sqlstm = "select top 200 stockmasterdetails.id,stockmasterdetails.stock_code,stockmasterdetails.description," +
+	"stockmasterdetails.description2,stockmasterdetails.qty_in_stock, supplierdetail.suppliername from stockmasterdetails " +
+	"left join supplierdetail on stockmasterdetails.supplier_code=supplierdetail.apcode " +
+	"where stockmasterdetails.description like '%" + srchstr + "%' or stockmasterdetails.description2 like '%" + srchstr + "%' " +
+	"order by stockmasterdetails.description";
+	}
+
+	stkitems = sql.rows(sqlstm);
+	sql.close();
+
+	if(stkitems.size() == 0) return;
+	newlb.setRows(20);
+	newlb.addEventListener("onSelect", new stockitemslb_Listener());
+	linecount = 1;
+
+	for(dpi : stkitems)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("id").toString());
+		kabom.add(linecount.toString());
+		kabom.add(dpi.get("stock_code"));
+
+		suppname = (dpi.get("suppliername") == null) ? "-----" : dpi.get("suppliername");
+		kabom.add(suppname);
+
+		stkdesc = (dpi.get("description") == null) ? "--UNDEF--" : dpi.get("description");
+		kabom.add(stkdesc);
+
+		stkdesc2 = (dpi.get("description2") == null) ? "--UNDEF--" : dpi.get("description2");
+		kabom.add(stkdesc2);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+		linecount++;
+	}
+
+}
+
+// Actually saving all the stock-items metadata
+void saveStockItem_details()
+{
+	if(selected_stock_id.equals("")) return;
+
+	supp_part_num = replaceSingleQuotes(si_supplier_part_number.getValue());
+	stokcode = replaceSingleQuotes(si_stockcode.getValue());
+	descr = replaceSingleQuotes(si_description.getValue());
+	descr2 = replaceSingleQuotes(si_description2.getValue());
+	prodet = replaceSingleQuotes(si_product_details.getValue());
+	brandname = replaceSingleQuotes(si_brandname.getValue());
+
+	costp = si_cost_price.getValue().toString();
+	sellp = si_selling_price.getValue().toString();
+	curcode = si_curcode.getSelectedItem().getLabel();
+
+	suppcode = si_supplier_code.getValue();
+
+	warehse = si_warehousecode.getSelectedItem().getLabel();
+	qtyinstock = si_qty_in_stock.getValue().toString();
+	qtyreorderlevel = si_qty_reorder_level.getValue().toString();
+	qtymaxlever = si_qty_max_lever.getValue().toString();
+	qtyminlever = si_qty_min_lever.getValue().toString();
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update stockmasterdetails set stock_code='" + stokcode + "',description='" + descr + "', description2='" + descr2 + "'," +
+	"product_detail='" + prodet + "',brandname='" + brandname + "',cost_price=" + costp + ", selling_price=" + sellp + ",curcode='" + curcode + "', " +
+	"supplier_code='" + suppcode + "', qty_in_stock=" + qtyinstock + ", qty_reorder_level=" + qtyreorderlevel + 
+	", qty_max_lever=" + qtymaxlever + ", qty_min_lever=" + qtyminlever + ", supplier_part_number='" + supp_part_num + "',warehousecode='" + warehse + "' where id=" + selected_stock_id;
+
+	sql.execute(sqlstm);
+	sql.close();
+}
+
+// Create/Update stock items
+void newupdateStockItem_clicker()
+{
+	if(selected_stock_cat.equals("") || selected_stock_group.equals("")) return;
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "insert into stockmasterdetails (stock_code,stock_cat,groupcode,item_type,warehousecode) values " +
+	"('--UNDEF--','" + selected_stock_cat + "','" + selected_stock_group + "','Stock Item','" + THIS_WAREHOUSE + "')";
+	sql.execute(sqlstm);
+	sql.close();
+
+	populateStockItems(lastitems_searchtype); // refresh
+}
+
+// Let user delete stock-item but need manager access level
+void deleteStockItem_clicker()
+{
+	if(selected_stock_id.equals("")) return;
+	if(useraccessobj.accesslevel < MODULE_MANAGER_LEVEL)
+	{
+		showMessageBox("[ERROR] Need manager access level to delete stock item..");
+		return;
+	}
+
+	if (Messagebox.show("Delete this stock item..", "Are you sure?", Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	sqlstm = "delete from stockmasterdetails where id=" + selected_stock_id;
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	sql.execute(sqlstm);
+	sql.close();
+	populateStockItems(lastitems_searchtype); // refresh
+}
+
+//----------- Supplier picker
+
+// From supplier's listbox- return the selected item and which column (icol, zero-start)
+// make use of: supplier_picker_div and suppliers_lb
+String getSupplierListBoxItem(int icol)
+{
+	retval = "";
+	if(supplier_picker_div.getFellowIfAny("suppliers_lb") == null) return retval;
+	if(suppliers_lb.getSelectedIndex() == -1) return retval;
+	supprec = suppliers_lb.getSelectedItem();
+	retval = getListcellItemLabel(supprec,icol);
+	return retval;
+}
+
+class supplierLB_DoubleClick_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//selitem = suppliers_lb.getSelectedItem();
+		suppapcode = getSupplierListBoxItem(1);
+		suppname = getSupplierListBoxItem(2);
+		si_supplier_code.setValue(suppapcode);
+		supplier_name_lbl.setValue(suppname);
+		suppliers_lb.clearSelection();
+		supplierpickerPopup.close();
+	}
+}
+
+// Populate supplier listbox
+// supplier_picker_div
+void populateSupplierPicker(String isupname)
+{
+Object[] supplierpicker_lb_headers = {
+
+	new listboxHeaderObj("id",false),
+	new listboxHeaderObj("APCode",true),
+	new listboxHeaderObj("Supplier.Name",true),
+	new listboxHeaderObj("Cont.person",true),
+	new listboxHeaderObj("Phone",true),
+	new listboxHeaderObj("Fax",true),
+};
+
+	sqlstm = "select top 50 ID,APCode,SupplierName,Phone,Fax,CPerson1 from SupplierDetail where " + 
+	"SupplierName like '%" + isupname + "%' or APCode like '%" + isupname + "%' order by SupplierName";
+
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	supprecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(supprecs.size() == 0)
+	{
+		showMessageBox("Cannot find supplier.. please try again");
+		return;
+	}
+
+	Listbox newlb = makeVWListbox(supplier_picker_div, supplierpicker_lb_headers, "suppliers_lb", 12);
+
+	for(supplier : supprecs)
+	{
+		ArrayList kabom = new ArrayList();
+
+		kabom.add(supplier.get("ID").toString());
+		kabom.add(supplier.get("APCode"));
+		kabom.add(supplier.get("SupplierName"));
+
+		cperson1 = (supplier.get("CPerson1") == null) ? "-----" : supplier.get("CPerson1");
+		cperson1 = trimListitemLabel(cperson1,20);
+		kabom.add(cperson1);
+
+		phone = (supplier.get("Phone") == null) ? "-----" : supplier.get("Phone");
+		phone = trimListitemLabel(phone,15);
+		kabom.add(phone);
+
+		fax = (supplier.get("Fax") == null) ? "-----" : supplier.get("Fax");
+		fax = trimListitemLabel(fax,15);
+		kabom.add(fax);
+
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+
+	dc_obj = new supplierLB_DoubleClick_Listener();
+	setDoubleClick_ListItems(newlb, dc_obj);
+}
+
+// Search supplier clicker for popup
+void searchSupplier_Clicker()
+{
+	supnameinp = sp_name_tb.getValue();
+	if(supnameinp.equals("")) return;
+	
+	populateSupplierPicker(supnameinp);
+}
+
+// Just populate the supplier-info popup with whatever supplier picked
+// suptype: retrieve 1=by supplierdetail.id, 2=by supplierdetail.apcode
+void populateViewSupplierInfo(String isuppid, int suptype)
+{
+	supprec = null;
+
+	if(suptype == 1)
+		supprec = getSupplier_Rec(isuppid);
+	else
+		supprec = getSupplier_Rec_ByCode(isuppid);
+
+	if(supprec == null) return;
+
+	//suppinfo_holder_lbl
+
+	cperson1 = (supprec.get("CPerson1") == null) ? "-----" : supprec.get("CPerson1");
+	phone = (supprec.get("Phone") == null) ? "-----" : supprec.get("Phone");
+	fax = (supprec.get("Fax") == null) ? "-----" : supprec.get("Fax");
+	email = (supprec.get("Email") == null) ? "-----" : supprec.get("Email");
+
+	suppinfo = 	supprec.get("SupplierName") + "\n" +
+		supprec.get("Supadd1") + "\n" +
+		supprec.get("Supadd2") + "\n" +
+		supprec.get("SupAdd3");
+
+	suppcontact = "Tel: " + phone + "\n" +
+		"Fax: " + fax + "\n" +
+		"Email: " + email + "\n" +
+		"Contact: " + cperson1;
+
+	suppinfo_apcode_lbl.setValue("AP Code: " +  supprec.get("APCode"));
+	suppinfo_fulladdr_lbl.setValue(suppinfo);
+	suppinfo_contact_lbl.setValue(suppcontact);
+}
+
+// from popup clicker, show supplier info only
+void viewSupplierInfo_Clicker()
+{
+	suppid = getSupplierListBoxItem(0);
+	if(suppid.equals("")) return;
+	populateViewSupplierInfo(suppid,1);
+	supplierinfo_popup.open(suppsearch_btn);
+}
+//----------- end of supplier picker
+
+// called by main program to show supplier-info, make use of the general-purpose stuff above
+void mainViewSupplierInfo_clicker()
+{
+	suppid = si_supplier_code.getValue();
+	if(suppid.equals("")) return;
+
+	populateViewSupplierInfo(suppid,2);
+	supplierinfo_popup.open(mainviewsuppinfo_btn);
+}
+
+//--- linking documents related funcs
+void doViewDoculinkPopup()
+{
+	// make sure something to look-for in table - 20/10/2010: customize this for other linking-id
+	if(selected_stock_code.equals("")) return;
+
+	documentLinkProp.global_eq_origid = selected_stock_code;
+	documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+
+	// show CRUD buttons for admin
+	if(useraccessobj.accesslevel == 9)
+	{
+		documentLinkProp.refreshListbox.showCrudButtons();
+		documentLinkProp.refreshListbox.showAdminButtons();
+	}
+
+	doculink_popup.open(viewdoculinks_btn);
+}
+
+// List all documents linked to supplier
+void showDocumentsList(String selected_id)
+{
+	Object[] documentLinks_lb_headers = {
+	new dblb_HeaderObj("origid",false,"origid",2),
+	new dblb_HeaderObj("Title",true,"file_title",1),
+	new dblb_HeaderObj("D.Created",true,"datecreated",3),
+	new dblb_HeaderObj("Owner",true,"username",1),
+	};
+
+	duclink = "DOCS" + selected_id;
+
+	ds_sql = lgk_DocumentStorage();
+	if(ds_sql == null) return;
+	sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+	"where docu_link='" + duclink + "' and deleted=0";
+
+	if(useraccessobj.accesslevel == 9) // admin can send everything..
+	{
+		sqlstm = "select origid,file_title,datecreated,username from DocumentTable " +
+		"where docu_link='" + duclink + "' ";
+	}
+
+	Listbox newlb = makeVWListbox_onDB(doculist_holder,documentLinks_lb_headers,"doculinks_lb",6,ds_sql,sqlstm);
+	newlb.setMultiple(true);
+	//newlb.addEventListener("onSelect", new doculinks_lb_Listener());
+	ds_sql.close();
+}
+
+void viewDocument()
+{
+	if(!check_ListboxExist_SelectItem(doculist_holder,"doculinks_lb")) return;
+	eorigid = doculinks_lb.getSelectedItem().getLabel();
+	theparam = "docid=" + eorigid;
+	uniqid = makeRandomId("vd");
+	globalActivateWindow("miscwindows","lgkglobal/viewlinkingdocument.zul", uniqid, theparam, useraccessobj);
+}
+
+//--- ENDOF linking documents related
+
+//--- Warehouse dropdown and stuff
+
+// onSelect for populateWarehouseDropdown()
+class warehousedd_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getReference();
+		wshname = getListcellItemLabel(selitem,1);
+
+		// customize here where to show warehouse-name
+		warehousename_lbl.setValue(wshname);
+	}
+}
+
+void populateWarehouseDropdown(Listbox ilistbox)
+{
+	Object[] warehousedd_headers = {
+	new listboxHeaderObj("",true),
+	new listboxHeaderObj("",false),
+	};
+
+	sqlstm = "select warehouse,description from stockwarehouse";
+	sql = lgk_mysoftsql();
+	if(sql == null) return;
+	wshrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(wshrecs.size() == 0) return;
+	ilistbox.addEventListener("onSelect", new warehousedd_Listener());
+	i = 1;
+	for(dpi : wshrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("warehouse"));
+		kabom.add(dpi.get("description"));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(ilistbox,strarray,"false");
+
+		// show the first warehouse name
+		if(i == 1) { warehousename_lbl.setValue(dpi.get("description")); i++; }
+	}
+
+	ilistbox.setSelectedIndex(0);
+}
+
+//--- ENDOF Warehouse dropdown and stuff
+
+]]>
+</zscript>
+
+<!-- document management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="lgkglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_stock_code); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of document management popup -->
+
+<!-- supplier-picker / info popup -->
+<popup id="supplierpickerPopup">
+<groupbox width="600px">
+<caption id="supplierpickerpopup_lbl" label="Pick a supplier" />
+<vbox>
+	<hbox>
+		<label value="Supplier name" style="font-size:9px" />
+		<textbox id="sp_name_tb" style="font-size:9px" />
+		<button id="suppsearch_btn" label="Search" style="font-size:9px" onClick="searchSupplier_Clicker()" />
+	</hbox>
+
+	<div id="supplier_picker_div" />
+
+	<hbox>
+		<button id="viewsuppinfo_btn" label="View supplier info" style="font-size:9px" onClick="viewSupplierInfo_Clicker()" />
+		<button label="Close" style="font-size:9px" onClick="supplierpickerPopup.close()" />
+	</hbox>
+</vbox>
+</groupbox>
+</popup>
+
+<popup id="supplierinfo_popup">
+<groupbox>
+	<caption label="Supplier info" />
+	<vbox>
+		<label id="suppinfo_apcode_lbl" style="background:#909090" />
+		<label id="suppinfo_fulladdr_lbl" multiline="true" width="300px" height="100px" value="-address-" />
+		<label id="suppinfo_contact_lbl" multiline="true" width="300px" height="100px" style="background:#909090" value="-contact-" />
+		<separator height="3px" />
+		<button label="Close" style="font-size:9px" onClick="supplierinfo_popup.close()" />
+	</vbox>
+</groupbox>
+</popup>
+
+<!-- end of supplier-picker / info popup -->
+
+<div width="1200px">
+<panel id="stockbrowser_panel" title="Stock Items - Control Panel" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+
+<vbox>
+<!-- stock category and sub-cat box-->
+<borderlayout height="245px" width="615px">
+	<west title="Category" size="305px"	collapsible="true">
+		<div style="padding:2px">
+			<div id="stockcat_holder" width="300px"/>
+		</div>
+	</west>
+	<center title="Sub-Category">
+		<div style="padding:2px">
+			<div id="stockgroup_holder" width="300px" />
+		</div>
+	</center>
+</borderlayout>
+
+<hbox>
+	<button id="extract_stocklist_btn" label="Extract stock-list" style="font-size:9px" />
+</hbox>
+
+<!-- end of stock category and sub-cat box -->
+
+<groupbox mold="3d" style="padding:2px">
+	<caption id="stockitems_lbl" label="Stock Items" />
+	<hbox>
+		<label value="Item.Name/description" style="font-size:9px" />
+		<textbox id="itemsearchstring" width="100px" style="font-size:9px" />
+		<button id="searchitems_btn" label="Search" style="font-size:9px" onClick="populateStockItems(1)" />
+		<button id="searchallitems_btn" label="Load all" style="font-size:9px" onClick="populateStockItems(2)" />
+		<label value="(Max. 200 recs per click)" style="font-size:9px" />
+	</hbox>
+	<separator height="5px" />
+	<div id="stockitems_holder" width="610px" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Clear" style="font-size:9px" onClick="clearStockItem_inputs()" />
+		<button id="newupdate_stockitem_btn" label="New item" style="font-size:9px" onClick="newupdateStockItem_clicker()" />
+		<button id="delete_stockitem_btn" label="Delete" style="font-size:9px" onClick="deleteStockItem_clicker()" />
+	</hbox>
+</groupbox>
+
+</vbox>
+
+<vbox>
+<tabbox mold="accordion">
+	<tabs>
+		<tab id="stockitem_lbl" label="1. Stock Item" />
+		<tab label="2. Stock Control / Supplier" />
+		<tab label="3. Units Record" />
+		<tab label="4. Medias / Documents" />
+		<tab label="5. Transaction Logs" />
+	</tabs>
+	<tabpanels>
+		<!-- stock item details entry -->
+		<tabpanel>
+			<grid>
+				<columns>
+					<column label="" />
+					<column label="" />
+				</columns>
+				<rows>
+				<row>
+					<label value="Mfg Part No." style="font-size:9px" />
+					<textbox id="si_supplier_part_number" width="200px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Stock.Code" style="font-size:9px" />
+					<textbox id="si_stockcode" width="200px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Brand.Name" style="font-size:9px" />
+					<textbox id="si_brandname" width="350px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Item.Name" style="font-size:9px" />
+					<textbox id="si_description" width="350px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Description" style="font-size:9px" />
+					<textbox id="si_description2" width="350px" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Details" style="font-size:9px" />
+					<textbox id="si_product_details" multiline="true" height="80px" width="350px" style="font-size:9px" />
+				</row>
+				<!--
+				<row>
+					<label value="Sales.Code" style="font-size:9px" />
+					<listbox id="si_nominal_code_lb" mold="select" style="font-size:9px" />
+				</row>
+				-->
+				<row>
+					<label value="Cost.Price" style="font-size:9px" />
+					<hbox>
+						<decimalbox id="si_cost_price" width="80px" format="#.#" style="font-size:9px" />
+						<separator width="5px" />
+						<label value="Sell.Price" style="font-size:9px" />
+						<decimalbox id="si_selling_price" width="80px" format="#.#" style="font-size:9px" />
+						<separator width="5px" />
+						<label value="Currency" style="font-size:9px" />
+						<listbox id="si_curcode" mold="select" style="font-size:9px" />
+						<zscript>
+							populateDropdownListbox(si_curcode,currencycode);
+						</zscript>
+					</hbox>
+				</row>
+				</rows>
+			</grid>
+		</tabpanel>
+		<!-- end of stock item details entry -->
+
+		<!-- Stock control panel -->
+		<tabpanel>
+			<grid>
+				<columns>
+					<column label="" />
+					<column label="" />
+					<column label="" />
+					<column label="" />
+				</columns>
+				<rows>
+				<row spans=",,2">
+					<label value="Warehouse" style="font-size:9px" />
+					<listbox id="si_warehousecode" mold="select" style="font-size:9px" />
+					<label id="warehousename_lbl" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Qty in-stock" style="font-size:9px" />
+					<decimalbox id="si_qty_in_stock" format="#" style="font-size:9px" />
+					<label value="Reorder limit" style="font-size:9px" />
+					<decimalbox id="si_qty_reorder_level" format="#" style="font-size:9px" />
+				</row>
+				<row>
+					<label value="Max.Qty to stock" style="font-size:9px" />
+					<decimalbox id="si_qty_max_lever" format="#" style="font-size:9px" />
+					<label value="Min.Qty in stock" style="font-size:9px" />
+					<decimalbox id="si_qty_min_lever" format="#" style="font-size:9px" />
+				</row>
+				</rows>
+			</grid>
+			<separator height="3px" />
+			<grid>
+				<columns>
+					<column label="" />
+					<column label="" />
+					<column label="" />
+				</columns>
+				<rows>
+				<row>
+					<label value="Supplier.Code" style="font-size:9px" />
+					<textbox id="si_supplier_code" style="font-size:9px" disabled="true" />
+					<button id="linksupplier_btn" label="Link supplier" style="font-size:9px" onClick="supplierpickerPopup.open(linksupplier_btn)" />
+				</row>
+				<row>
+					<label value="Supplier.Name" style="font-size:9px" />
+					<label id="supplier_name_lbl" style="font-size:9px" />
+					<button id="mainviewsuppinfo_btn" label="View supplier info" style="font-size:9px" onClick="mainViewSupplierInfo_clicker()" />
+				</row>
+				</rows>
+			</grid>
+
+		</tabpanel>
+		<!-- end of Stock control panel -->
+
+		<!-- Units record panel -->
+		<tabpanel>
+Work In Progress
+		</tabpanel>
+		<!-- endof Units record panel -->
+
+		<!-- medias and document panel -->
+		<tabpanel>
+		
+		<div id="doculist_holder" />
+		<separator height="3px" />
+		<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+		<button id="viewdoculinks_btn" label="Upload document" style="font-size:9px" onClick="doViewDoculinkPopup()" />
+
+		</tabpanel>
+		<!-- end of medias and document panel -->
+
+		<!-- transaction logs panel -->
+		<tabpanel>
+Work In Progress
+		</tabpanel>
+		<!-- end of transaction logs panel -->
+
+	</tabpanels>
+</tabbox>
+
+	<hbox>
+		<button label="Save details" style="font-size:9px" onClick="saveStockItem_details()" />
+	</hbox>
+</vbox>
+
+</hbox>
+
+</panelchildren>
+</panel>
+<zscript>
+<![CDATA[
+
+setTodayDatebox(hiddendatebox);
+
+//populateDropdownListbox(si_warehousecode,warehouseList);
+populateWarehouseDropdown(si_warehousecode);
+
+populateStockCategory();
+populateStockGroup();
+
+documentLinkProp.document_idprefix = "DOCS";
+lgk_setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+]]>
+</zscript>
+</div>
+</zk>

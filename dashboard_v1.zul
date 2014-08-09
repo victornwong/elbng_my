@@ -1,0 +1,614 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="dashboard_mod"?>
+<zk>
+<zscript src="alsglobal/alsglobaldefs.zs" />
+<style src="/alsglobal/victorstylesheet.css" />
+<zscript>
+<![CDATA[
+MYTITLE = "e-Labman Dashboard";
+MYVERSION = "v0.1";
+/*
+Title		: Dashboard with charts and so on
+Dated		: 06/09/2012
+Written by	: Victor Wong
+
+Revisions:
+*/
+/*
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import java.util.*;
+import java.text.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+gridhand = new GridHandler();
+
+DecimalFormat nf = new DecimalFormat("##.00");
+String sincewhen = "2013-01-01"; // change accordingly for next year
+Object muthaLoadNumbers = null;
+Object labmuthaLoad = null;
+Object labmuthaLoad2 = null;
+
+Object[] folderlb_headers = {
+	new listboxHeaderWidthObj("FolderNo",true,"60px"),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Status",true,"40px"),
+};
+
+void drillInto(Object mevent)
+{
+	icomp = mevent.getTarget();
+	iwhat = icomp.getId();
+	doit = false;
+
+	String[] thecats = {"CONSULTANT","TRIBOLOGY","FP","ENV"};
+	Object[] theholders = {consultant_holder,tribo_holder,food_holder,env_holder};
+	String[] thelbid = {"consult_lb","tribo_lb","fp_lb","env_lb"};
+	Object[] thelbls = {consultantlabel,tribolabel,foodlabel,envlabel};
+
+	sqlhead = 
+	"select top 250 jf.folderno_str,jf.folderstatus,jf.datecreated,cust.customer_name, csci.customer_name as cashcustomer " +
+	"from jobfolders jf " +
+	"left join customer cust on jf.ar_code = cust.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.datecreated >= '2012-01-01' and jf.deleted=0 ";
+
+	if(iwhat.equals("uncommitted_folders"))
+	{
+		sqlhead += "and jf.folderstatus in ('LOGGED') and cust.category=";
+		doit = true;
+	}
+
+	if(iwhat.equals("coa_notuploaded"))
+	{
+		sqlhead += "and (jf.coadate = '' or jf.coadate is null) and cust.category=";
+		doit = true;
+	}
+
+	if(doit)
+	{
+		for(i=0;i<4;i++)
+		{
+			sqlstm = sqlhead + "'" + thecats[i] + "'";
+			myrecs = sqlhand.gpSqlGetRows(sqlstm);
+			Listbox newlb = lbhand.makeVWListbox_Width(theholders[i], folderlb_headers, thelbid[i], 7);
+			fldco = 0;
+
+			for(dpi : myrecs)
+			{
+				fldco++;
+
+				ArrayList kabom = new ArrayList();
+				kabom.add(dpi.get("folderno_str"));
+				kabom.add(dpi.get("datecreated").toString().substring(0,10));
+
+				custn = dpi.get("customer_name");
+				if(custn.equals("CASH ACCOUNT") || custn.equals("SYABAS CONTRACTOR"))
+					custn = "CshAcct:" + kiboo.checkNullString(dpi.get("cashcustomer"));
+
+				kabom.add(custn);
+				kabom.add(dpi.get("folderstatus"));
+				strarray = kiboo.convertArrayListToStringArray(kabom);
+				lbhand.insertListItems(newlb,strarray,"false","");
+			}
+
+			thelbls[i].setValue("Folders: " + fldco.toString());
+		}
+
+		drilltitle.setValue(iwhat);
+		drill_popup.open(icomp);
+	}
+}
+
+class chartOnClick implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		drillInto(event);
+	}
+}
+
+void makeChart(Component idiv, String itype, String myid, String ititle, String iwidth, String iheight,
+boolean i3d, int ialpha, String ipanecolor, Object ipmodel)
+{
+	Chart inewchart = new Chart();
+	inewchart.setWidth(iwidth);
+	inewchart.setHeight(iheight);
+	inewchart.setTitle(ititle);
+	inewchart.setId(myid);
+	inewchart.setFgAlpha(ialpha);
+	inewchart.setThreeD(i3d);
+	inewchart.setType(itype);
+	//inewchart.setBgColor("#75507b");
+	inewchart.setPaneColor(ipanecolor);
+	inewchart.setModel(ipmodel);
+	inewchart.setShowTooltiptext(false);
+	inewchart.setParent(idiv);
+
+	inewchart.addEventListener("onClick", new chartOnClick());
+}
+
+// itype: 1=total folders since 2012-01-01,
+void alscharts(int itype)
+{
+	PieModel piemodel = new SimplePieModel();
+	//CategoryModel catmodel = new SimpleCategoryModel();
+
+	String ctitle = "";
+	String whichfield = "";
+	whichrow = null;
+	managementcharts = false;
+	labcharts = false;
+	cwidth = "450";
+	cheight ="300";
+
+	switch(itype)
+	{
+		case 1:
+			ctitle = "Total folders from " + sincewhen;
+			whichfield = "total_folders";
+			whichrow = row1;
+			managementcharts = true;
+			break;
+
+		case 2:
+			ctitle = "Uncommitted folders";
+			whichfield = "uncommitted_folders";
+			whichrow = row1;
+			managementcharts = true;
+			break;
+
+		case 3:
+			ctitle = "Folders without COA upload";
+			whichfield = "coa_notuploaded";
+			whichrow = row2;
+			managementcharts = true;
+			break;
+
+		case 4:
+			ctitle = "COA generated from system";
+			whichfield = "coa_fromsystem";
+			whichrow = row2;
+			managementcharts = true;
+			break;
+
+		case 5:
+			ctitle = "Unbilled folders";
+			whichfield = "unbilled";
+			whichrow = row3;
+			managementcharts = true;
+			break;
+
+		case 6: // overdue folders lab-chart
+			ctitle = "Overdue folders";
+			whichrow = row4;
+			whichfield = "overdue_folders";
+			labcharts = true;
+			cwidth = "800";
+			cheight ="500";
+
+			break;
+
+		case 7: // uncommited folders
+			ctitle = "Uncommitted folders";
+			whichrow = row5;
+			whichfield = "uncom_folders";
+			labcharts = true;
+			cwidth = "800";
+			cheight ="500";
+			break;
+	}
+
+	if(managementcharts)
+	{
+		for(dpi : muthaLoadNumbers)
+		{
+			kmt = dpi.get("category") + "=" + dpi.get(whichfield).toString();
+			piemodel.setValue(kmt , new Double(dpi.get(whichfield)) );
+		}
+	}
+
+	if(labcharts)
+	{
+		for(dpi : labmuthaLoad)
+		{
+			kmt = dpi.get("share_sample") + "=" + dpi.get(whichfield).toString();
+			piemodel.setValue(kmt , new Double(dpi.get(whichfield)) );
+		}
+	}
+
+	makeChart(whichrow,"pie",whichfield,ctitle,cwidth,cheight,true,128,"#3465a4",piemodel);
+}
+
+// make grid of major-customer-categories percentage of the nums from total-folders
+void alschartnotes(int itype)
+{
+	thegrid = new Grid();
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+	whichfield = "";
+	ctitle = "";
+
+	headrow = gridhand.gridMakeRow("","background:#729fcf","4",gridrows);
+	switch(itype)
+	{
+		case 2:
+			ctitle = "Uncommitted folders";
+			break;
+
+		case 3:
+			ctitle = "Folders without COA upload";
+			break;
+
+		case 4:
+			ctitle = "COA generated from system";
+			break;
+
+		case 5:
+			ctitle = "Unbilled folders";
+			break;
+	}
+
+	gridhand.makeLabelToParent(ctitle,"font-size:12px;font-weight:bold",headrow);
+
+	titrow = gridhand.gridMakeRow("","background:#ef2929","",gridrows);
+	gridhand.makeLabelToParent("Category","",titrow);
+	gridhand.makeLabelToParent("Total","",titrow);
+	gridhand.makeLabelToParent("###","",titrow);
+	gridhand.makeLabelToParent("Percentage","",titrow);
+
+	for(dpi : muthaLoadNumbers)
+	{
+		jjrow = gridhand.gridMakeRow("","","",gridrows);
+		gridhand.makeLabelToParent(dpi.get("category"),"",jjrow);
+
+		switch(itype)
+		{
+			case 2:
+			whichfield = "uncommitted_folders";
+			break;
+
+			case 3:
+			whichfield = "coa_notuploaded";
+			break;
+
+			case 4:
+			whichfield = "coa_fromsystem";
+			break;
+
+			case 5:
+			whichfield = "unbilled";
+			break;
+		}
+
+		kval = (float)dpi.get(whichfield);
+		ktot = (float)dpi.get("total_folders");
+
+		float perct = kval / ktot * 100.00;
+		// uncommitted folders
+		//if(itype == 2) perct = (float)(((ktot - kval) / ktot) * 100.00);
+
+		//mystr += nf.format(perct) + "::" + kval.toString() + " :: " + ktot.toString() + "\n";
+		
+		gridhand.makeLabelToParent(dpi.get("total_folders").toString(),"",jjrow);
+		gridhand.makeLabelToParent(dpi.get(whichfield).toString(),"",jjrow);
+		gridhand.makeLabelToParent(nf.format(perct) + "%" ,"",jjrow);
+	}
+
+	//debugbox.setValue(mystr);
+	thegrid.setParent(notesarea);
+
+	sepa = new Separator();
+	sepa.setHeight("5px");
+	sepa.setParent(notesarea);
+}
+
+void alslab_stuff()
+{
+	thegrid = new Grid();
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	headrow = gridhand.gridMakeRow("","background:#729fcf","4",gridrows);
+	gridhand.makeLabelToParent("Lab division stats","font-size:12px;font-weight:bold",headrow);
+
+	titrow = gridhand.gridMakeRow("","background:#ef2929","",gridrows);
+	gridhand.makeLabelToParent("ShareSample","",titrow);
+	gridhand.makeLabelToParent("Folders","",titrow);
+	gridhand.makeLabelToParent("Uncommitted","",titrow);
+	gridhand.makeLabelToParent("Overdues","",titrow);
+
+	for(dpi : labmuthaLoad)
+	{
+		jjrow = gridhand.gridMakeRow("","","",gridrows);
+		gridhand.makeLabelToParent(dpi.get("share_sample"),"",jjrow);
+		gridhand.makeLabelToParent(dpi.get("subdiv_folders").toString(),"",jjrow);
+		gridhand.makeLabelToParent(dpi.get("uncom_folders").toString(),"",jjrow);
+		gridhand.makeLabelToParent(dpi.get("overdue_folders").toString(),"",jjrow);
+	}
+
+	thegrid.setParent(labstuffholder);
+}
+
+void alslab_stuff2()
+{
+	thegrid = new Grid();
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	headrow = gridhand.gridMakeRow("","background:#729fcf","5",gridrows);
+	gridhand.makeLabelToParent("Unreleased results","font-size:12px;font-weight:bold",headrow);
+
+	titrow = gridhand.gridMakeRow("","background:#ef2929","",gridrows);
+	gridhand.makeLabelToParent("Division","",titrow);
+	gridhand.makeLabelToParent("Sub-division","",titrow);
+	gridhand.makeLabelToParent("Tests","",titrow);
+	gridhand.makeLabelToParent("Unreleased","",titrow);
+	gridhand.makeLabelToParent("Percentage","",titrow);
+
+	for(dpi : labmuthaLoad2)
+	{
+		stkcat = (dpi.get("stock_cat").equals("0")) ? "Misc" : dpi.get("stock_cat");
+		grpco = (dpi.get("groupcode").equals("0")) ? "Misc" : dpi.get("groupcode");
+		jjrow = gridhand.gridMakeRow("","","",gridrows);
+		gridhand.makeLabelToParent(stkcat,"",jjrow);
+		gridhand.makeLabelToParent(grpco,"",jjrow);
+		gridhand.makeLabelToParent(dpi.get("total_tests").toString(),"",jjrow);
+		gridhand.makeLabelToParent(dpi.get("unreleased_results").toString(),"",jjrow);
+
+		ktot = (float)dpi.get("total_tests");
+		kunr = (float)dpi.get("unreleased_results");
+
+		if(ktot > 0)
+		{
+			float perct = kunr / ktot * 100;
+			gridhand.makeLabelToParent(nf.format(perct) + "%","",jjrow);
+		}
+		else
+			gridhand.makeLabelToParent("","",jjrow);
+	}
+
+	thegrid.setParent(labstuffholder2);
+}
+
+
+void trymakepie()
+{
+	CategoryModel catmodel = new SimpleCategoryModel();
+	catmodel.setValue("2001", "Q1", new Integer(20));
+	catmodel.setValue("2001", "Q2", new Integer(35));
+	catmodel.setValue("2001", "Q3", new Integer(40));
+	catmodel.setValue("2001", "Q4", new Integer(55));
+	catmodel.setValue("2002", "Q1", new Integer(40));
+	catmodel.setValue("2002", "Q2", new Integer(60));
+	catmodel.setValue("2002", "Q3", new Integer(70));
+	catmodel.setValue("2002", "Q4", new Integer(90));
+	makeChart(row2,"bar","testbar1","what","450","300",true,128,catmodel);
+}
+
+]]>
+</zscript>
+
+<popup id="drill_popup">
+
+<hbox>
+	<button label="X Close" style="font-size:9px" onClick="drill_popup.close()" />
+	<div style="background:#2e3436;padding:3px;"><label id="drilltitle" style="color:#eeeeee;font-size:20px" /></div>
+	<label style="font-size:8px">
+		(Limit to 250 folders per drill..)
+	</label>
+</hbox>
+<separator height="3px" />
+
+<div style="background:#555753;padding:5px;-moz-box-shadow: 4px 5px 7px #000000;
+-webkit-box-shadow: 4px 5px 7px #000000;box-shadow: 4px 5px 7px #000000;margin:5px;" width="500px" >
+
+<hbox>
+	<div class="container">
+		<div class="head" style="background:#9485f0;">
+		    <div class="vert" style="background:#9485f0;">ENVIRONMENTAL</div>
+		</div>
+	</div>
+	<vbox>
+		<div id="env_holder" />
+		<label id="envlabel" style="color:#eeeeee" />
+	</vbox>
+</hbox>
+
+<separator height="5px" />
+
+<hbox>
+	<div class="container">
+		<div class="head" style="background:#4e9a06;">
+		    <div class="vert" style="background:#4e9a06;">FOOD/PHARMA</div>
+		</div>
+	</div>
+	<vbox>
+		<div id="food_holder" />
+		<label id="foodlabel" style="color:#eeeeee" />
+	</vbox>
+
+</hbox>
+
+<separator height="5px" />
+
+<hbox>
+	<div class="container">
+		<div class="head" style="background:#cc0000;">
+		    <div class="vert" style="background:#cc0000;">CONSULTANT</div>
+		</div>
+	</div>
+	<vbox>
+		<div id="consultant_holder" />
+		<label id="consultantlabel" style="color:#eeeeee" />
+	</vbox>
+</hbox>
+
+<separator height="5px" />
+
+<hbox>
+	<div class="container">
+		<div class="head" style="background:#c4a000;">
+		    <div class="vert" style="background:#c4a000;">TRIBOLOGY</div>
+		</div>
+	</div>
+	<vbox>
+		<div id="tribo_holder" />
+		<label id="tribolabel" style="color:#eeeeee" />
+	</vbox>
+
+</hbox>
+
+<separator height="5px" />
+
+</div>
+
+</popup>
+
+<div width="1200px">
+<panel id="checklist_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<div style="background:#204a87;padding:2px">
+<label style="color:#ffffff;font-size:14px;font-weight:bold">
+Charts on major customer categories
+</label>
+</div>
+<separator height="5px" />
+
+<!-- <textbox id="debugbox" multiline="true" width="400px" height="50px" /> -->
+
+<hbox>
+	<vbox>
+	<div id="notesarea" />
+
+	<div id="labstuffholder" />
+	<label style="font-size:9px">
+	(Uncommitted=no tests assigned, Overdues=from 2012-01-01)
+	</label>
+	
+	<div id="labstuffholder2" />
+	
+	</vbox>
+
+	<vbox>
+		<hbox id="row1" />
+		<hbox id="row2" />
+		<hbox id="row3" />
+		<hbox id="row4" />
+		<hbox id="row5" />
+	</vbox>
+</hbox>
+
+<!--
+<separator height="5px" />
+<div style="background:#204a87;padding:2px">
+<label style="color:#ffffff;font-size:14px;font-weight:bold">
+Lab related overview
+</label>
+</div>
+<separator height="5px" />
+-->
+
+
+
+<zscript>
+<![CDATA[
+
+// lab bigmutha
+sqlstm = "select distinct jf.share_sample," +
+"(select count(origid) from jobfolders where share_sample = jf.share_sample and datecreated > '" + sincewhen + "' " +
+"and deleted=0 and folderstatus='COMMITED') subdiv_folders," +
+"(select count(origid) from jobfolders where share_sample = jf.share_sample and datecreated > '" + sincewhen + "' " +
+"and deleted=0 and folderstatus<>'COMMITED') uncom_folders," +
+"count(jf.origid) as overdue_folders " +
+"from jobfolders jf where jf.datecreated > '" + sincewhen + "' and jf.duedate <= getdate() " +
+
+"and (jf.coadate = '' or jf.coadate is null) " +
+"and jf.deleted=0 and jf.folderstatus='COMMITED' " +
+"group by jf.share_sample order by jf.share_sample";
+
+labmuthaLoad = sqlhand.gpSqlGetRows(sqlstm);
+if(labmuthaLoad != null)
+{
+	alslab_stuff();
+}
+
+sqlstm = "select distinct smd.stock_cat, smd.groupcode, " +
+"(select count(jtp2.origid) from jobtestparameters jtp2 " +
+"left join stockmasterdetails smd2 on smd2.id = jtp2.mysoftcode " +
+"left join jobsamples js2 on jtp2.jobsamples_id = js2.origid " +
+"left join jobfolders jf2 on js2.jobfolders_id = jf2.origid " +
+"where smd2.stock_cat = smd.stock_cat and smd2.groupcode = smd.groupcode " +
+"and js2.deleted=0 and jf2.datecreated > '" + sincewhen + "') total_tests," +
+"(select count(jtp2.origid) from jobtestparameters jtp2 " +
+"left join stockmasterdetails smd2 on smd2.id = jtp2.mysoftcode " +
+"left join jobsamples js2 on jtp2.jobsamples_id = js2.origid " +
+"left join jobfolders jf2 on js2.jobfolders_id = jf2.origid " +
+"where smd2.stock_cat = smd.stock_cat and smd2.groupcode = smd.groupcode " +
+"and js2.deleted=0 and jf2.datecreated > '" + sincewhen + "' and jtp2.releasedby is null) unreleased_results " +
+"from stockmasterdetails smd order by smd.stock_cat, total_tests";
+
+labmuthaLoad2 = sqlhand.gpSqlGetRows(sqlstm);
+if(labmuthaLoad2 != null)
+{
+	alslab_stuff2();
+}
+
+sqlstm = "select distinct cust.category," +
+"(select count(origid) from jobfolders jf left join customer cst on cst.ar_code = jf.ar_code " +
+"where jf.datecreated > '" + sincewhen + "' and jf.deleted = 0 and cst.category = cust.category) as total_folders, " +
+"(select count(origid) from jobfolders jf left join customer cst on cst.ar_code = jf.ar_code " +
+"where jf.datecreated > '" + sincewhen + "' and jf.deleted = 0 and jf.folderstatus in ('LOGGED') and " + 
+"cst.category = cust.category) as uncommitted_folders, " +
+"(select count(coadate) from jobfolders jf left join customer cst on cst.ar_code = jf.ar_code " +
+"where jf.datecreated > '" + sincewhen + "' and jf.deleted = 0 and (jf.coadate = '' or jf.coadate is null) and " +
+"cst.category = cust.category) as coa_notuploaded, " +
+"(select count(origid) from jobfolders jf left join customer cst on cst.ar_code = jf.ar_code " + 
+"where jf.datecreated > '" + sincewhen + "' and jf.deleted = 0 and (jf.coaprintdate <> '1900-01-01') and " +
+"cst.category = cust.category) as coa_fromsystem, " +
+"(select count(origid) from jobfolders jf left join customer cst on cst.ar_code = jf.ar_code " +
+"where jf.datecreated > '" + sincewhen + "' and jf.deleted = 0 and (jf.uploadtomysoft = 0 or jf.uploadtomysoft is null) and " +
+"cst.category = cust.category) as unbilled " +
+"from customer cust where cust.category in ('CONSULTANT','TRIBOLOGY','FP','ENV') order by cust.category";
+
+muthaLoadNumbers = sqlhand.gpSqlGetRows(sqlstm);
+if(muthaLoadNumbers == null) // make sure something before drawing 'em charts
+	guihand.showMessageBox("ERR: Cannot access database to draw charts..");
+else
+{
+	alscharts(1);
+	alscharts(2);
+	alscharts(3);
+	alscharts(4);
+	alscharts(5);
+	
+	alscharts(6);
+	alscharts(7);
+	
+	alschartnotes(2);
+	alschartnotes(3);
+	alschartnotes(4);
+	alschartnotes(5);
+}
+
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

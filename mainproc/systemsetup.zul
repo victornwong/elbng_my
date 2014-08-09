@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="systemsetupPage"?>
+
+<!--
+
+System setup - setup all lookup tables and such
+
+Developer: Victor Wong
+(c)2009 Starlims Malaysia Sdn Bhd
+
+-->
+
+<zk>
+
+<zscript src="mirisglobal.zs" />
+<!-- include main database access functions -->
+<zscript src="mirisDb_API.zs" />
+<!-- include LookupTree class -->
+<zscript src="lookuptree.zs" />
+
+<zscript>
+void closeSystemSetupWindow()
+{
+	// refering back to main page, hardcoded for now.
+	Div contdiv = Path.getComponent("//main/mainWindow/thecontent");
+	Include thiswin = contdiv.getFellow("systemsetup");
+	
+	// just set the include source to empty, should remove this window
+	thiswin.setSrc("");
+}
+</zscript>
+
+<window id="systemsetupwin" title="Setup" width="900px" height="600px" position="center"
+ mode="overlapped" border="normal" closable="true"
+ onCancel="closeSystemSetupWindow()" onClose="closeSystemSetupWindow()"
+>
+<vbox>
+
+<tabbox width="880px" height="530px">
+ <tabs>
+  <tab label="Incident Types" />
+  <tab id="cfpanel" label="Contributory Factors" />
+  <tab id="lookuppanel" label="Lookups" />
+  <tab id="systempanel" label="System setup" />
+ </tabs>
+ 
+<tabpanels>
+ 
+<!-- Incident types panel -->
+<tabpanel>
+<include src="${MAINPROCPATH}/incidsetup.zul" />
+</tabpanel>
+<!-- end of Incident Types panel -->
+
+<!-- Contributory factors config panel -->
+<tabpanel fulfill="cfpanel.onSelect">
+<include src="${MAINPROCPATH}/contfactorsetup.zul"  deferred="true" />
+</tabpanel>
+<!-- end of Contributory factors config panel -->
+
+<!-- Other lookup tables config panel -->
+<tabpanel fulfill="lookuppanel.onSelect">
+<include src="${MAINPROCPATH}/otherlookups.zul"  deferred="true" />
+</tabpanel>
+
+<!-- System config panel -->
+<tabpanel fulfill="systempanel.onSelect">
+System configs
+</tabpanel>
+<!-- end of System config panel -->
+
+</tabpanels>
+ 
+</tabbox>
+
+<hbox>
+<button label="Close" onClick="closeSystemSetupWindow()" />
+</hbox>
+
+</vbox>
+
+</window>
+</zk>
+

@@ -1,0 +1,1176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="browsefolders_31"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/samplereg_funcs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript>
+<![CDATA[
+/*
+VERSION: 3.0
+
+Title: Folders browser for all users to find stuff
+Written by: Victor Wong
+
+**NOTES**
+
+16/10/2011: recode some sections - optimization
+03/08/2011: admin-stuff, change folder assigned customer to another..
+01/06/2011: added dig by salesman
+22/02/2011: job-notes stuff added - bump-up to version 2.5
+07/01/2011: added func to allow user to change shared-sample flag
+30/09/2010: added search by folder-number - added folder->samples->tests breakdown tree
+
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+boolean can_access = check_UsergroupAccess(useraccessobj.origid,SAMPREG_USERGROUP,1);
+if(!can_access)
+{
+	showAccessDenied_Box(useraccessobj);
+	globalClosePanel(myincludeid);
+}
+
+public class folderListObject
+{
+	public String origid;
+	public String folderno_str;
+	public String ar_code;
+	public String customer_name;
+	public int overdue; // 1=wip and not overdue, 2=overdue and in wip, 3=released
+}
+
+FOLDERPICK_COLOR = "background:#AAAAAA";
+OVERDUE_ROWCOLOR = "background:#F74623";
+RELEASED_ROWCOLOR = "background:#AEF520";
+
+last_foldersearch_type = 0;
+global_selected_arcode = "";
+global_selected_folderno = "";
+selected_folderno = ""; // used by repeatstuff.zs
+global_selected_origid = "";
+global_selected_customername = "";
+
+ArrayList mainFolderList;
+Object prevSelectedFolder = null;
+String prevSelectedFolder_style = "";
+
+foldermeta_area_toggler = false;
+foldermeta_loaded = false;
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+
+void showTestAssigned(String iorigid)
+{
+	// remove previous grid
+	if(foldertests_holder.getFellowIfAny("samplesgrid") != null) samplesgrid.setParent(null);
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, js.asma_id, js.asma_station, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.origid=" + iorigid + " and jf.deleted = 0 and js.deleted = 0";
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+
+	// grab samples + marking
+	therows = sql.rows(sqlstm);
+
+	if(therows.size() == 0) {sql.close(); return;}
+
+	thegrid = new Grid();
+	thegrid.setId("samplesgrid");
+
+	gridrows = gridMakeRows("","",thegrid);
+	testgrid_count = 1;
+
+	mainEntryList = new ArrayList();
+	
+	// get distinct test(mysoftcode) assigned and description, to speed-up through hashtable
+	sqlstm4 = "select distinct jtp.mysoftcode, smd.description " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where jf.origid=" + iorigid;
+
+	testdesclist = sql.rows(sqlstm4);
+	Hashtable testdescriptions = new Hashtable();
+	if(testdesclist.size() > 0)
+	{
+		for(tpi : testdesclist)
+		{
+			testdescriptions.put(tpi.get("mysoftcode").toString(),tpi.get("description"));
+		}
+	}
+	alert(testdesclist);
+	
+	for(dpi : therows)
+	{
+		//sampleid_row = gridMakeRow("","background-color:#333333","",gridrows);
+		sampleid_row = gridMakeRow("","background-color:#333333","",gridrows);
+
+		//makeLabelToParent(testgrid_count.toString() + ".","color:#ffffff",sampleid_row);
+		makeLabelToParent(dpi.get("js_origid").toString(),"color:#ffffff;font-weight:bold",sampleid_row);
+		makeLabelToParent(dpi.get("sampleid_str"),"color:#ffffff;font-weight:bold",sampleid_row);
+
+		samplemarking_row = gridMakeRow("","","",gridrows);
+
+		makeLabelToParent("Sample marking","",samplemarking_row);
+
+		// 13/10/2011: if ASMA samples, show sample-id and station
+		asmaextrainfo = "";
+		if(global_selected_arcode.equals("300A/008"))
+			asmaextrainfo = " [ ASMA-ID: " + checkNullString(dpi.get("asma_id")) + " Station: " + checkNullString(dpi.get("asma_station")) + " ]";
+
+		makeLabelToParent(dpi.get("samplemarking") + asmaextrainfo,"",samplemarking_row);
+		//samplemarkcell.setId("SMLBL" + dpi.get("js_origid").toString());
+
+		// show tests for sample-id
+		testsrow = gridMakeRow("","","3",gridrows);
+
+		testsgrid = new Grid();
+		testsgrid.setId("testgrid" + testgrid_count.toString()); // set ID for later usage
+		testsgrid.setParent(testsrow);
+
+		sqlstm2 = "select jtp.origid as jtp_origid, jtp.mysoftcode, jtp.assignedto, jtp.assigndate," + 
+			"smd.groupcode " +
+			"from jobtestparameters jtp " +
+			"left join jobsamples js on jtp.jobsamples_id = js.origid " +
+			"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+			"where js.origid=" + dpi.get("js_origid").toString();
+
+		testrecs = sql.rows(sqlstm2);
+		if(testrecs.size() != 0)
+		{
+			testgridrows = gridMakeRows("","",testsgrid);
+			headrow = gridMakeRow("","background:#FAD541","",testgridrows);
+
+			makeLabelToParent("Test","",headrow);
+			makeLabelToParent("Sect.","",headrow);
+			makeLabelToParent("Asgn.To","",headrow);
+			makeLabelToParent("Asgn.Date","",headrow);
+			makeLabelToParent("Res","",headrow);
+			makeLabelToParent("Units","",headrow);
+			makeLabelToParent("Keyin","",headrow);
+			makeLabelToParent("K.Date","",headrow);
+
+			for(kpi : testrecs)
+			{
+				tprow = gridMakeRow("","","",testgridrows);
+				//tprow.addEventListener("onClick", new testRowOnClick());
+
+				//makeLabelToParent(kpi.get("description"),"",tprow);
+				makeLabelToParent(testdescriptions.get(kpi.get("mysoftcode").toString()),"",tprow); // use Hashtable - to speedup
+				makeLabelToParent(kpi.get("groupcode"),"",tprow);
+				makeLabelToParent(checkNullString(kpi.get("assignedto")),"",tprow);
+
+				asdatestr = "";
+				asdate = kpi.get("assigndate");
+				if(asdate != null) asdatestr = asdate.toString().substring(0,10);
+				makeLabelToParent(asdatestr,"",tprow);
+
+				// get last result-entered/units if any
+				sqlstm3 = "select top 1 result_unit,final,username,analysed_date from elb_chemistry_results " +
+				"where jobtestparameter_id=" + kpi.get("jtp_origid").toString() + " and mysoftcode=" + kpi.get("mysoftcode").toString() + 
+				"order by origid desc";
+
+				prevrec = sql.firstRow(sqlstm3);
+
+				if(prevrec != null)
+				{
+					oldres = (prevrec.get("final") == null) ? "" : prevrec.get("final");
+					oldunit = (prevrec.get("result_unit") == null) ? "" : prevrec.get("result_unit");
+
+					makeLabelToParent(oldres,"",tprow);
+					makeLabelToParent(oldunit,"",tprow);
+					makeLabelToParent(prevrec.get("username"),"",tprow);
+					makeLabelToParent(prevrec.get("analysed_date").toString().substring(0,10),"",tprow);
+				}
+				else // blank previous results labels
+				{
+					for(i=0;i<4;i++)
+					{
+					makeLabelToParent("","",tprow);
+					}
+				}
+			}
+		}
+
+		testgrid_count++;
+		selected_folderno = dpi.get("folderno_str");
+	}
+
+	sql.close();
+	thegrid.setParent(foldertests_holder);
+	foldertests_holder.setVisible(true);
+}
+
+class foldersOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow)
+			{
+				if(prevSelectedFolder_style.equals(""))
+					prevSelectedFolder.setStyle(null);
+				else
+					prevSelectedFolder.setStyle(prevSelectedFolder_style);
+			}
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder_style = (selrow.getStyle() == null) ? "" : selrow.getStyle();
+		prevSelectedFolder = selrow;
+		selrow.setStyle(FOLDERPICK_COLOR);
+
+		selid = selrow.getId();
+		selid = selid.substring(2,selid.length());
+		
+		for(dpi : mainFolderList)
+		{
+			if(dpi.origid.equals(selid))
+			{
+				global_selected_origid = dpi.origid;
+				global_selected_arcode = dpi.ar_code;
+				global_selected_folderno = dpi.folderno_str;
+				selected_folderno = dpi.folderno_str;
+				global_selected_customername = dpi.customer_name;
+
+				showTestAssigned(global_selected_origid);
+
+				foldermeta_area_toggler = false;
+				foldermeta_loaded = false;
+				foldermeta_area.setVisible(false);
+				
+				showJobNotes(global_selected_origid);
+
+				// folder->tests caption
+				foldercaption_lbl.setValue(global_selected_folderno);
+				companyname_lbl.setValue(global_selected_customername);
+
+				break;
+			}
+		}
+	}
+}
+
+String[] folderListHeaders = {"Folder","Dated","Due","Customer","SC","F.Status","LabStat","Brh","PKD","Share" };
+
+// recoded from startFolderJobsSearch() in v2 - cleaner and uses grid instead of listbox
+// itype: 1=by date and searchtext, 2=by folder no, 3=by sample id, 4=by share-sample,5=by pkd,6=by salesman, 7=by credit-term
+void loadFoldersList(int itype)
+{
+	last_foldersearch_type = itype;
+
+	sdate = getDateFromDatebox(startdate);
+    edate = getDateFromDatebox(enddate);
+	searchtext = replaceSingleQuotes(customer_tb.getValue());
+	byfold = replaceSingleQuotes(byfolder_tb.getValue());
+	bysamp = replaceSingleQuotes(bysampleid_tb.getValue());
+	sharesmp = share_sample.getSelectedItem().getLabel();
+	creditm = customer_terms_lb.getSelectedItem().getLabel();
+
+	sqlstm_head = "select top 300 jf.origid, jf.ar_code, jf.datecreated, jf.folderstatus, jf.branch," + 
+	"jf.duedate, jf.tat, jf.folderno_str, jf.labfolderstatus, jf.pkd_samples, jf.share_sample, jf.coadate, " +
+	"customer.customer_name, csci.customer_name as cashcustomer " +
+	"from jobfolders jf " +
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.deleted=0 and jf.folderstatus in ('" + FOLDERCOMMITED + "','" + FOLDERLOGGED + "') ";
+	
+	sqlstm_foot = "group by jf.origid, jf.ar_code, jf.datecreated, jf.folderstatus, jf.branch," + 
+	"jf.duedate, jf.tat, jf.folderno_str, jf.labfolderstatus, jf.pkd_samples, jf.share_sample, jf.coadate, " +
+	"customer.customer_name, csci.customer_name " +
+	"order by jf.datecreated desc";
+
+	bystext = "";
+	bydate = "and jf.datecreated between '" + sdate + "' and '" + edate + "' ";
+	switch(itype)
+	{
+		case 2:
+			bydate = " ";
+			bystext = "and jf.folderno_str like '%" + byfold + "%' ";
+			break;
+
+		case 3:
+			bydate = " ";		
+			bystext = "and js.sampleid_str like '_________%" + bysamp + "%' ";
+			break;
+			
+		case 4:
+			bystext = "and jf.share_sample='" + sharesmp + "' ";
+			break;
+			
+		case 5:
+			bystext = "and pkd_samples=1 ";
+			break;
+			
+		case 6:
+			selitem = qt_salesperson.getSelectedItem();
+			salesp = getListcellItemLabel(selitem,1);
+			if(salesp.equals("None")) return;
+			bystext = "and customer.salesman_code='" + salesp + "' ";
+			break;
+			
+		case 7: // by credit-term
+			bystext = "and customer.credit_period='" + creditm + "' ";
+			break;
+
+		default:
+			if(!searchtext.equals("")) bystext = "and (customer.customer_name like '%" + searchtext + "%' " + 
+			"or csci.customer_name like '%" + searchtext + "%') ";
+			break;
+	}
+
+	sqlstm = sqlstm_head + bydate + bystext + sqlstm_foot;
+
+    sql = als_mysoftsql();
+    if(sql == NULL) return;
+    therecs = sql.rows(sqlstm);
+
+	if(therecs.size() == 0) { sql.close(); return; }
+	
+	// remove previous grid
+	if(folders_searchdiv.getFellowIfAny("folders_lb") != null) folders_lb.setParent(null);
+
+	mainFolderList = new ArrayList();
+
+	thegrid = new Grid();
+	thegrid.setId("folders_lb");
+
+	gridrows = gridMakeRows("","",thegrid);
+	makeGridHeaderColumns(folderListHeaders, thegrid);
+
+	todate = hiddendatebox.getValue();
+	overduecount=0;
+	releasedcount=0;
+
+	for(dpi : therecs)
+	{
+		// Store folder metadata
+		ifolder = new folderListObject();
+		ifolder.origid = dpi.get("origid").toString();
+		ifolder.folderno_str = dpi.get("folderno_str");
+		ifolder.ar_code = dpi.get("ar_code");
+
+		if(dpi.get("ar_code").equals("CASH"))
+			ifolder.customer_name = dpi.get("cashcustomer");
+		else
+			ifolder.customer_name = dpi.get("customer_name");
+
+		// process overdue bar-color
+		duedate = dpi.get("duedate");
+
+		ifolder.overdue = 1;
+		if(todate.compareTo(duedate) >= 0 && dpi.get("labfolderstatus").equals("WIP"))
+			ifolder.overdue = 2;
+		else
+			ifolder.overdue = 3;
+
+		overduestyle = "";
+		labelstyle = "";
+
+		switch(ifolder.overdue)
+		{
+			case 2:
+				overduestyle = OVERDUE_ROWCOLOR;
+				labelstyle = "color:#ffffff;font-size:9px;font-weight:bold";
+				overduecount++;
+				break;
+			case 3:
+				if(dpi.get("labfolderstatus").equals("RELEASED"))
+				{
+					overduestyle= RELEASED_ROWCOLOR;
+					labelstyle = "color:#222222;font-size:9px";
+					releasedcount++;
+				}
+				break;
+		}
+
+		mainFolderList.add(ifolder);
+
+		theid = "FR" + ifolder.origid;
+		folder_row = gridMakeRow(theid,overduestyle,"",gridrows);
+		//folder_row.setStyle("background:#AA0000");
+		folder_row.addEventListener("onClick", new foldersOnSelect());
+		
+		makeLabelToParent(dpi.get("folderno_str"),labelstyle,folder_row);
+		makeLabelToParent(dpi.get("datecreated").toString().substring(0,10),labelstyle,folder_row);
+		makeLabelToParent(dpi.get("duedate").toString().substring(0,10),labelstyle,folder_row);
+
+		icompanyname = "Undefined";
+		iar_code = dpi.get("ar_code");
+
+		if(iar_code != null)
+		{
+			iar_code = iar_code.toUpperCase().trim();
+
+			if(iar_code.equals("CASH") || iar_code.equals("CASH USD") || iar_code.equals("300S-550"))
+			{
+				icompanyname = "CshAcct: ";
+				if(iar_code.equals("300S-550")) // syabas contractor
+					icompanyname = "Syabas: ";
+
+				if(dpi.get("cashcustomer") != null)
+					icompanyname += dpi.get("cashcustomer");
+				else
+					icompanyname += "UNKNOWN";
+			}
+			else
+				icompanyname = checkNullString_RetWat(dpi.get("customer_name"),"Undefined");
+		}
+
+		makeLabelToParent(icompanyname,labelstyle,folder_row);
+
+		// Count num of samples in folder
+		sqlstm3 = "select count(js.origid) as samplecount from jobsamples js " +
+		"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+		"where js.deleted=0 and jf.origid=" + ifolder.origid;
+		
+		scs = sql.firstRow(sqlstm3);
+		scount = 0;
+		if(scs != null) scount = scs.get("samplecount");
+		makeLabelToParent(scount.toString(),labelstyle,folder_row);		
+
+		makeLabelToParent(dpi.get("folderstatus"),labelstyle,folder_row);
+		makeLabelToParent(checkNullString(dpi.get("labfolderstatus")),labelstyle,folder_row);
+
+		makeLabelToParent(dpi.get("branch"),labelstyle,folder_row);
+
+		pkdwop = "---";
+		if(dpi.get("pkd_samples") != null) pkdwop = (dpi.get("pkd_samples") == 0) ? "---" : "-Y-";
+		makeLabelToParent(pkdwop,labelstyle,folder_row);
+		makeLabelToParent(checkNullString_RetWat(dpi.get("share_sample"),"---"),labelstyle,folder_row);
+	
+	}
+
+	sql.close();
+
+	numofsamples_lbl.setValue(therecs.size().toString());
+	overdue_count_lbl.setValue(overduecount.toString());
+	released_count_lbl.setValue(releasedcount.toString());
+	wip_lbl.setValue((therecs.size()-releasedcount).toString()); 
+
+	thegrid.setParent(folders_searchdiv);
+
+	folderworkbutts.setVisible(true);
+	folderworkarea.setVisible(true);
+}
+
+// 7/1/2011: change share-folder flag
+void changeShareSample_clicker()
+{
+	if(global_selected_origid.equals("")) return;
+	newss = share_sample2.getSelectedItem().getLabel();
+	sql = als_mysoftsql();
+	if(sql == NULL) return;
+	sqlstm = "update JobFolders set share_sample='" + newss + "' where origid=" + global_selected_origid;
+	sql.execute(sqlstm);
+	sql.close();
+	loadFoldersList(last_foldersearch_type); // refresh
+}
+
+// generate/print draft-report
+void printDraftReport()
+{
+	if(global_selected_origid.equals("")) return;
+	theparam = "folder_no=" + global_selected_origid;
+	uniqwindowid = makeRandomId("pdrf");
+	globalActivateWindow("miscwindows","lab/print_drafttemplate.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// Same wrapper func to print SRA .. 
+void printSRA_Wrapper()
+{
+	if(global_selected_folderno.equals("")) return;
+	printSRA(global_selected_folderno); // samplereg_funcs.zs
+}
+
+//--- 15/05/2011: folder cancellation funcs --
+
+selected_cancel_origid = "";
+selected_cancel_folder = "";
+selected_cancel_client = "";
+cancel_reason = "";
+
+void sendCancelFolderNotification(String ifolder, String icancelreason, String iclient, String iuser)
+{
+	to_string = convertStringArrayToString(cashacct_email_notification);
+    subj = "[NOTIFICATION] FOLDER CANCELLED : " + ifolder;
+    emailbody = 
+    "Client : " + iclient + "\n" +
+    "Folder " + ifolder + " has been cancelled by " + iuser + " .\n\n" +
+    "With cancellation reason:\n\n" +
+    icancelreason + "\n\n" +
+    "**PLEASE TAKE NOTE AND DO WHATEVER NECESSARY**\n" +
+    "**THIS NOTIFICATION IS AUTO-GEN - DONT REPLY**";
+
+	//simpleSendEmail(SMTP_SERVER,"info@alsglobal.com.my", to_string, subj, emailbody);
+	simpleSendEmail(SMTP_SERVER,"elabman@alsglobal.com.my", to_string,subj,emailbody);
+}
+
+// 15/05/2011: cancel folder and keep track on cancelation date
+void cancelFolder()
+{
+	if(!validSupervisor(useraccessobj.username)) return;
+
+	if(global_selected_origid.equals("")) return;
+
+	selected_cancel_folder = global_selected_folderno;
+	selected_cancel_origid = global_selected_origid;
+	selected_cancel_client = global_selected_customername;
+	cancelfolder_lbl.setValue("Cancelling " + selected_cancel_folder);
+	cancelreason.setValue("");
+	cancelfolder_popup.open(cancelfolder_btn);
+}
+
+void realCancelFolder()
+{
+	if(selected_cancel_origid.equals("")) return;
+	canreason = replaceSingleQuotes(cancelreason.getValue());
+	if(canreason.equals("") || canreason.length() < 10 )
+	{
+		showMessageBox("Please enter some valid reason why you want to cancel this folder..");
+		return;
+	}
+
+	if (Messagebox.show("Really cancel this folder " + selected_cancel_folder + " ??", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	todate = getDateFromDatebox(hiddendatebox);
+
+	sqlstm = "update jobfolders set canceldate='" + todate + "', cancelreason='" + canreason + "'," + 
+	"canceluser='" + useraccessobj.username + "',deleted=1 where origid=" + selected_cancel_origid;
+
+	sql = als_mysoftsql();
+	if(sql == null ) return;
+	sql.execute(sqlstm);
+	sql.close();
+
+	loadFoldersList(last_foldersearch_type); // refresh
+
+	//cancelfolder_popup.close();
+	showMessageBox("FOLDER CANCELLED");
+
+	// send email-notification on folder cancellation
+	sendCancelFolderNotification(selected_cancel_folder,canreason,selected_cancel_client,useraccessobj.username);	
+}
+
+// ENDOF folder cancellation funcs
+
+//******** this customer picker thing can be used for other mods
+// Populate customer lil listbox
+void populateCustomerPicker(String icustname)
+{
+	Object[] customerpicker_lb_headers = {
+	new listboxHeaderObj("AR CODE",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Longname",true),
+	new listboxHeaderObj("Address1",true),
+	};
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select top 50 ar_code,customer_name,address1,foreignname from customer " + 
+	"where customer_name like '%" + icustname + "%' or address1 like '%" + icustname + "%' " + 
+	"order by customer_name";
+
+	customerrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(customerrecs.size() == 0)
+	{
+		showMessageBox("Cannot find anything.. please try again");
+		return;
+	}
+
+	Listbox newlb = makeVWListbox(customer_picker_div, customerpicker_lb_headers, "customers_lb", 12);
+
+	for(custrec : customerrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(checkNullString(custrec.get("ar_code")));
+		kabom.add(checkNullString(custrec.get("customer_name")));
+		kabom.add(checkNullString(custrec.get("foreignname")));
+		kabom.add(checkNullString(custrec.get("address1")));
+		strarray = convertArrayListToStringArray(kabom);
+		insertListItems(newlb,strarray,"false");
+	}
+}
+
+// Search csutomer clicker for popup
+void searchCustomer_Clicker()
+{
+	custnameinp = cs_name_tb.getValue();
+	if(custnameinp.equals("")) return;
+	populateCustomerPicker(custnameinp);
+}
+
+// Part of the customer picker popup thing, customize this section to update whatever table in other mods
+// 10/10/2011: save date and user who convert cash account folder to non-cash acct.
+void pickCustomerDi()
+{
+	if(!check_ListboxExist_SelectItem(customer_picker_div,"customers_lb")) return;
+	if(global_selected_origid.equals("")) return;
+
+	forigid = global_selected_origid;
+	iar_code = customers_lb.getSelectedItem().getLabel(); // first column is the ar_code
+	todate = getDateFromDatebox(hiddendatebox);
+
+	sql = als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update jobfolders set ar_code='" + iar_code + "', " + 
+	"cashconvertdate='" + todate + "', cashconvertuser='" + useraccessobj.username + "' where origid=" + forigid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	customerpickerPopup.close();
+	loadFoldersList(last_foldersearch_type); // refresh
+}
+
+// Clicker called by UI
+void popupCustomerPicker_clicker()
+{
+	// make sure something selected - mod-dependant
+	if(global_selected_folderno.equals("")) return;
+	customerpickerPopup.open(ass_customer_btn); // ass_customer_btn def in UI
+}
+
+//***** end of customer picker thing
+
+// 11/8/2010: to show cash-account details, stored in a diff table mah..
+void showCashAccountDetails_clicker()
+{
+	if(global_selected_folderno.equals("")) return;
+	
+	// clear 'em boxes
+	ca_customer_name_tb.setValue("");
+	ca_contact_person1_tb.setValue("");
+	ca_address1_tb.setValue("");
+	ca_address2_tb.setValue("");
+	ca_city_tb.setValue("");
+	ca_zipcode_tb.setValue("");
+	ca_state_tb.setValue("");
+	ca_country_tb.setValue("");
+	ca_telephone_tb.setValue("");
+	ca_fax_tb.setValue("");
+	ca_email_tb.setValue("");
+
+	csrec = getCashSalesCustomerInfo_Rec(global_selected_folderno);
+	if(csrec == null) return;
+	ca_customer_name_tb.setValue(csrec.get("customer_name"));
+	ca_contact_person1_tb.setValue(csrec.get("contact_person1"));
+	ca_address1_tb.setValue(csrec.get("address1"));
+	ca_address2_tb.setValue(csrec.get("address2"));
+	ca_city_tb.setValue(csrec.get("city"));
+	ca_zipcode_tb.setValue(csrec.get("zipcode"));
+	ca_state_tb.setValue(csrec.get("state"));
+	ca_country_tb.setValue(csrec.get("country"));
+	ca_telephone_tb.setValue(csrec.get("telephone"));
+	ca_fax_tb.setValue(csrec.get("fax"));
+	ca_email_tb.setValue(csrec.get("email"));
+
+	cashfolder_details.setVisible(true);
+}
+
+void showFolderMetadata()
+{
+	if(global_selected_origid.equals("")) return;
+	if(!foldermeta_loaded)
+	{
+		cashfolder_details.setVisible(false);
+		if(global_selected_arcode.equals("CASH") || global_selected_arcode.equals("CASH USD") || global_selected_arcode.equals("300S-550"))
+			showCashAccountDetails_clicker(); // load cash-account details if this folder is
+
+		showDocumentsList(global_selected_folderno);
+
+		foldermeta_loaded = true;
+	}
+
+	foldermeta_area_toggler = (foldermeta_area_toggler) ? false : true;
+	foldermeta_area.setVisible(foldermeta_area_toggler);
+}
+
+void showFolderDetails()
+{
+	if(global_selected_origid.equals("")) return;
+	theparam = "folderno=" + global_selected_folderno;
+	uniqwindowid = makeRandomId("ldx");
+	globalActivateWindow("miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+}
+
+// export list of folders to Excel
+// can make this into multi-purpose func later
+void kasiExport_clicker()
+{
+	gridrows = null;
+	
+	for(kobj : folders_lb.getChildren())
+	{
+		if(kobj instanceof Rows) gridrows = kobj;
+	}
+
+	if(gridrows == null) return;
+
+	
+	ifilename = "folderslist.xls";
+	isheetname = "FoldersList";
+
+	// Uses Apache POI stuff
+	HSSFWorkbook wb = new HSSFWorkbook();
+	thefn = session.getWebApp().getRealPath("tmp/" + ifilename);
+	FileOutputStream fileOut = new FileOutputStream(thefn);
+	sheet = wb.createSheet(isheetname);
+
+	stylo = wb.createCellStyle();
+	stylo.setFillBackgroundColor((short)210);
+	
+	// Header row - folderListHeaders def above
+	row1 = sheet.createRow(0);
+	for(i=0; i < folderListHeaders.length; i++)
+	{
+		hedc = row1.createCell(i);
+		hedc.setCellValue(folderListHeaders[i]);
+		hedc.setCellStyle(stylo);
+	}
+
+	cellstylo = wb.createCellStyle();
+	cellstylo.setWrapText(true);
+
+	rowcount = 1;
+
+	for(robj : gridrows.getChildren())
+	{
+		if(robj instanceof Row)
+		{
+			row = sheet.createRow(rowcount);
+
+			colcount = 0;
+			for(lobj : robj.getChildren())
+			{
+				if(lobj instanceof Label)
+				{
+					labelval = lobj.getValue();
+					row.createCell(colcount).setCellValue(labelval);
+				}
+				colcount++;
+			}
+
+			rowcount++;
+		}	
+	}
+	
+	ps = sheet.getPrintSetup();
+	ps.setScale((short)70);
+
+	wb.write(fileOut);
+	fileOut.close();
+
+	// long method to let user download a file	
+	File f = new File(thefn);
+	fileleng = f.length();
+	finstream = new FileInputStream(f);
+	byte[] fbytes = new byte[fileleng];
+	finstream.read(fbytes,0,(int)fileleng);
+
+	AMedia amedia = new AMedia(ifilename, "xls", "application/vnd.ms-excel", fbytes);
+	Iframe newiframe = new Iframe();
+	newiframe.setParent(kasiexport_holder);
+	newiframe.setContent(amedia);
+}
+
+]]>
+</zscript>
+
+<!-- Job notes related popup -->
+
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" style="font-size:9px" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" style="font-size:9px" />
+</hbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+
+<!-- end of Job notes related popup -->
+
+<!-- cancel folder popup -->
+<popup id="cancelfolder_popup">
+<groupbox mold="3d" width="350px">
+	<label id="cancelfolder_lbl" />
+	<separator height="3px" />
+	<label value="Cancel reason" style="font-size:9px" />
+	<textbox id="cancelreason" style="font-size:9px" multiline="true" width="99%" height="40px" />
+	<separator height="3px" />
+	<hbox>
+		<button label="Confirm cancel" style="font-size:9px" onClick="realCancelFolder()" />
+		<button label="Close" style="font-size:9px" onClick="cancelfolder_popup.close()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- ENDOF cancel folder popup -->
+
+<!-- Customer picker popup -->
+<popup id="customerpickerPopup">
+<groupbox width="700px">
+<caption id="customerpickerpopup_lbl" label="Change customer - pick one" />
+	<vbox>
+		<hbox>
+			<label value="Search customer" style="font-size:9px" />
+			<textbox id="cs_name_tb" style="font-size:9px" width="200px" />
+			<button id="custsearch_btn" label="Search" style="font-size:9px" onClick="searchCustomer_Clicker()" />
+		</hbox>
+
+		<div id="customer_picker_div" />
+
+		<hbox>
+			<button label="Select" style="font-size:9px" onClick="pickCustomerDi()" />
+			<button label="Close" style="font-size:9px" onClick="customerpickerPopup.close()" />
+		</hbox>
+	</vbox>
+</groupbox>
+</popup>
+<!-- end of customer picker popup -->
+
+<!-- result worksheets management popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" style="font-size:9px" />
+</hbox>
+</div>
+</popup>
+<!-- end of result worksheets management popup -->
+
+<div width="1200px">
+<panel id="browsejobs_panel" title="Folders/Jobs Browser v.3.1" border="normal" collapsible="true" closable="true">
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+
+<vbox>
+<groupbox mold="3d" width="100%">
+<!-- search boxes -->
+<hbox>
+	<grid width="300px">
+		<rows>
+			<row>
+				<label value="Start date" style="font-size:9px" />
+				<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" />
+				<label value="End date" style="font-size:9px" />
+				<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" />
+			</row>
+			<row spans=",2,">
+				<label value="Customer" style="font-size:9px" />
+				<textbox id="customer_tb" width="99%" style="font-size:9px" />
+				<button label="Load" style="font-size:9px" onClick="loadFoldersList(1)" />
+			</row>
+			<row spans="4">
+				<label style="font-size:8px">
+				Will only load LOGGED or COMMITTED folders - If you cannot find the folder here, most probably it is in DRAFT.
+				(Max. 200 folders per click)
+				</label>
+			</row>
+		</rows>
+	</grid>
+	<grid width="250px">
+		<rows>
+			<row>
+				<label value="By folder" style="font-size:9px" />
+				<textbox id="byfolder_tb" style="font-size:9px" />
+				<button label="Dig" style="font-size:9px" onClick="loadFoldersList(2)" />
+			</row>
+			<row>
+				<label value="By sample.ID" style="font-size:9px" />
+				<textbox id="bysampleid_tb" style="font-size:9px" />
+				<button label="Dig" style="font-size:9px" onClick="loadFoldersList(3)" />
+			</row>
+			<row spans="3">
+				<button label="Dig by PKD" style="font-size:9px" onClick="loadFoldersList(5)" />
+			</row>
+		</rows>
+	</grid>
+	<grid width="300px">
+		<rows>
+			<row>
+				<listbox id="share_sample" mold="select" style="font-size:9px" />
+				<zscript>
+					populateDropdownListbox(share_sample,sharesamplechop);
+				</zscript>
+				<button label="Dig by share-samples" style="font-size:9px" onClick="loadFoldersList(4)" />
+			</row>
+			<row>
+				<div id="salesman_holder" />
+				<button label="Dig by salesman" style="font-size:9px" onClick="loadFoldersList(6)" />
+			</row>
+			<row>
+				<div id="customerterms_holder" />
+				<button label="Dig by credit-terms" style="font-size:9px" onClick="loadFoldersList(7)" />
+			</row>
+		</rows>
+	</grid>
+</hbox> 
+<!-- ENDOF search boxes -->
+<separator height="2px" />
+
+<div id="folderworkbutts" visible="false">
+	<div id="adminstuffy" style="padding:2px;background:#bb1122" visible="false">
+		<hbox>
+			<label value="AdminStuff:" style="color:#ffffff;font-weight:bold" />
+			<separator width="5px" />
+			<button id="cancelfolder_btn" label="Cancel folder" style="font-size:9px" onClick="cancelFolder()" />
+			<button id="ass_customer_btn" label="Change customer" style="font-size:9px" onClick="popupCustomerPicker_clicker()" />
+
+			<!-- <button label="Notify unmod cashfolder" style="font-size:9px" onClick="admin_NotifyCashFolders()" /> -->
+			<!-- <textbox id="adminboxi" multiline="true" width="250px" height="80px" style="font-size:9px" /> -->
+			<!-- <button id="sendsrn_button" label="sendSRN" visible="false" style="font-size:9px" onClick="sendSRN_email()" /> -->
+		</hbox>
+	</div>
+	<separator height="2px" />
+	<hbox>
+		<button label="Folder details / CashAcct / Documents" style="font-size:9px" onClick="showFolderMetadata()" />
+		<button label="Print SRA" style="font-size:9px" onClick="printSRA_Wrapper()" />
+		<button label="Generate Draft-Report" style="font-size:9px" onClick="printDraftReport()" />
+		<button id="exportlist_btn" label="Export list to Excel" style="font-size:9px" onClick="kasiExport_clicker()" />
+
+		<label value="Reset Share-Sample" style="font-size:9px" />
+		<listbox id="share_sample2" mold="select" style="font-size:9px" />
+		<zscript>
+			populateDropdownListbox(share_sample2,sharesamplechop);
+		</zscript>
+		<button label="Change" style="font-size:9px" onClick="changeShareSample_clicker()" />
+
+	</hbox>
+</div>
+<!-- ENDOF folder handling buttons -->
+
+</groupbox>
+
+<!-- folder metadata area -->
+<groupbox id="foldermeta_area" mold="3d" visible="false">
+<hbox>
+
+<button label="More folder details" style="font-size:9px" onClick="showFolderDetails()" />
+
+<groupbox mold="3d" width="300px">
+	<div id="doculist_holder" />
+	<separator height="3px" />
+	<button label="View document" style="font-size:9px" onClick="viewDocument()" />
+	<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" style="font-size:9px" />
+	<!-- <button id="sendemail_doc_btn" label="E-Mail" style="font-size:9px" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
+</groupbox>
+
+<grid id="cashfolder_details" visible="false">
+	<rows>
+		<row spans="4" style="background:#555555">
+			<label value="Cash account customer details" style="color:#ffffff" />
+		</row>
+		<row>
+			<label value="Cust.Name" style="font-size:9px" />
+			<textbox id="ca_customer_name_tb" width="200px" style="font-size:9px" />
+			<label value="Cont.Person" style="font-size:9px" />
+			<textbox id="ca_contact_person1_tb" width="200px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address1" style="font-size:9px" />
+			<textbox id="ca_address1_tb" width="200px" style="font-size:9px" />
+			<label value="City" style="font-size:9px" />
+			<textbox id="ca_city_tb" width="200px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Address2" style="font-size:9px" />
+			<textbox id="ca_address2_tb" width="200px" style="font-size:9px" />
+			<label value="Zipcode" style="font-size:9px" />
+			<textbox id="ca_zipcode_tb" width="200px" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="State" style="font-size:9px" />
+			<textbox id="ca_state_tb" width="200px" style="font-size:9px" />
+			<label value="Country" style="font-size:9px" />
+
+			<textbox id="ca_country_tb" width="200px" style="font-size:9px" />		
+		</row>
+		<row>
+			<label value="Telephone" style="font-size:9px" />
+			<textbox id="ca_telephone_tb" width="200px" style="font-size:9px" />
+			<label value="Fax" style="font-size:9px" />
+			<textbox id="ca_fax_tb" width="200px" style="font-size:9px" />		
+		</row>
+		<row>
+			<label value="Email" style="font-size:9px" />
+			<textbox id="ca_email_tb" width="200px" style="font-size:9px" />		
+		</row>
+	</rows>
+</grid>
+
+<groupbox mold="3d">
+<caption label="Job Notes" />
+<div id="jobnotes_found_div" />
+<separator height="3px" />
+<grid>
+	<columns>
+		<column label="" width="100px" />
+		<column label="" />
+	</columns>
+	<rows>
+		<row>
+		<label value="Job notes / Excuses for delay TAT" style="font-size:9px" />
+		<textbox id="jobnotes_tb" style="font-size:9px" multiline="true" width="300px" height="100px" />
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+<hbox>
+<button label="Save notes" style="font-size:9px" onClick="saveUpdateJobNotes()" />
+<button id="noteshistory_btn" label="Notes history" style="font-size:9px" onClick="jobNotesHistory_clicker()" />
+</hbox>
+</groupbox>
+
+</hbox>
+</groupbox>
+<!-- ENDOF folder metadata area -->
+
+<!-- search results box and tests box -->
+<div id="folderworkarea" style="padding:2px" visible="false">
+<hbox>
+	<vbox>
+		<grid>
+			<rows>
+				<row style="background:#CCCCCC">
+					<div style="background:#FAC116">
+					<label value="Found" />
+					<label id="numofsamples_lbl" />
+					</div>
+
+					<div style="background:#F74623">
+						<label value="OVERDUES" />
+						<label id="overdue_count_lbl" style="color:#ffffff;font-weight:bold"/>
+					</div>
+
+					<div style="background:#AEF520">
+						<label value="Released" />
+						<label id="released_count_lbl" style="color:#222222;font-weight:bold"/>
+					</div>
+
+					<div style="background:#FAC116">
+					<label value="WIP" />
+					<label id="wip_lbl" />
+					</div>
+					
+					<label style="font-size:9px;font-weight:bold">
+(RED = OVERDUE folders, GREEN = RELEASED folders)
+</label>
+					
+				</row>
+			</rows>
+		</grid>
+
+		<div id="folders_searchdiv" width="700px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+	</vbox>
+	
+	<vbox>
+		<grid>
+			<rows>
+				<row style="background:#333333">
+					<label id="foldercaption_lbl" style="font-weight:bold;color:#ffffff" />
+					<label id="companyname_lbl" style="font-weight:bold;color:#ffffff" />
+				</row>
+				<row spans="2">
+					<label id="delayexcuses_lbl" />
+				</row>
+				<row>
+					<label value="Delay excuses" style="font-size:9px" />
+					<hbox>
+						<listbox id="delayexcuses_dd" style="font-size:9px" mold="select" />
+						<button label="Insert excuse" style="font-size:9px" />
+					</hbox>
+				</row>
+			</rows>
+		</grid>
+		<div id="foldertests_holder" width="400px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+	</vbox>
+</hbox>
+</div>
+<!-- ENDOF search results box and tests box -->
+
+</vbox>
+
+</hbox>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+setTodayDatebox(startdate);
+setTodayDatebox(enddate);
+setTodayDatebox(hiddendatebox);
+
+populateSalesman_dropdown(salesman_holder); // repeatstuff.zs
+populateCustomerTerms_dropdown(customerterms_holder);
+
+//startFolderJobsSearch(startdate,enddate,customer_tb,1);
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+if(useraccessobj.accesslevel == 9 || validSupervisor(useraccessobj.username))
+{
+	adminstuffy.setVisible(true);
+//	sendemail_doc_btn.setVisible(true);
+//	sendsrn_button.setVisible(true);
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

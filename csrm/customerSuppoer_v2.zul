@@ -1,0 +1,462 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="customersupportmod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript src="../alsglobal/searchcustomer_panel.zs" />
+<zscript src="./custsuppf/custsupport_funcs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Customer Sales/Support/Services";
+MYVERSION = "v0.1";
+MYPANEL = "custsersuppan";
+/*
+Title		: Customer service/support -- super folder/quotes/invoices .. tracker
+Written by	: Victor Wong
+Dated: 29/06/2014
+Revisions:
+New version -- major changes
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+glob_sel_tracki = glob_sel_arcode = glob_sel_inttask = glob_sel_quote = glob_sel_folder = "";
+glob_username = useraccessobj.username;
+glob_user_branch = useraccessobj.branch;
+
+// just populate 1-mcnt numbers .. call it months, might make sense
+void popMonthsAgoDropDown(Object ilb, int mcnt)
+{
+	String[] sta = new String[1];
+	for(i=1; i<=mcnt; i++)
+	{
+		sta[0] = i.toString();
+		lbhand.insertListItems(ilb,sta,"false","");
+	}
+	ilb.setSelectedIndex(0);
+}
+
+Object getNextAction_data(String agner, String agnee, String ilnkc, String isublnk)
+{
+	sqlstm = "select nextactiondate,nextaction from rw_int_tasks " +
+	"where assigner='" + agner + "' and assignee='" + agnee + "' and linking_code='" + ilnkc + "' and linking_sub='" + isublnk + "'";
+	return sqlhand.gpSqlFirstRow(sqlstm);
+}
+
+void searchCustomer_callback(Object crec)
+{
+	String[] fl = { "ar_code", "customer_name", "contact_person1", "telephone_no", "fax_no", "E_mail",
+	"credit_period", "Salesman_code", "CurCode" };
+
+	sqlstm = "if exists (select ar_code from elb_usertracki where ar_code='" + crec.get("ar_code") + "' " + 
+	"and username='" + glob_username + "') " +
+	"print 'exist' ELSE " +
+	"insert into elb_usertracki (ar_code,username,linkcode,linksub) values ('" + crec.get("ar_code") + "','" + glob_username + "','','')";
+	sqlhand.gpSqlExecuter(sqlstm);
+	manListTracki(glob_username);
+	trackiman_pop.open(mantracki_b); // reopen man-tracki popup
+}
+
+String JN_linkcode()
+{
+	return "";
+}
+
+Object[] whlhds =
+{
+	new listboxHeaderWidthObj("AR_Code",true,"90px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Folders",true,"60px"),
+	new listboxHeaderWidthObj("Commit",true,"60px"),
+	new listboxHeaderWidthObj("Logged",true,"60px"),
+	new listboxHeaderWidthObj("COA",true,"60px"),
+	new listboxHeaderWidthObj("INV",true,"60px"),
+	new listboxHeaderWidthObj("QT",true,"60px"),
+	new listboxHeaderWidthObj("NxtAD",true,"70px"),
+	new listboxHeaderWidthObj("NxtAct",true,""),
+
+};
+
+class whlcliker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_sel_arcode = lbhand.getListcellItemLabel(isel,0);
+		showTrackiTasks(glob_sel_arcode);
+
+		tracki_tit.setValue( lbhand.getListcellItemLabel(isel,1) );
+
+		removeAnyChildren(folders_holder);
+		removeAnyChildren(quotes_holder);
+		quotation_workarea.setVisible(false);
+		workarea.setVisible(true);
+	}
+}
+whlistcliker = new whlcliker();
+
+void suppWholeList()
+{
+	mg = "-" + monthsago_lb.getSelectedItem().getLabel();
+	Listbox newlb = lbhand.makeVWListbox_Width(wholelist_holder, whlhds, "wholelist_lb", 3);
+
+	sqlstm = "select t.ar_code, c.customer_name, " +
+	"(select count(origid) from jobfolders where ar_code=t.ar_code and datecreated >= dateadd(m," + mg + ",getdate()) ) as folders, " +
+	"(select count(origid) from jobfolders where ar_code=t.ar_code and datecreated >= dateadd(m," + mg + ",getdate()) " +
+	"and folderstatus='COMMITED') as comfolders, " +
+	"(select count(origid) from jobfolders where ar_code=t.ar_code and datecreated >= dateadd(m," + mg + ",getdate()) " +
+	"and (coadate<>'' or coadate is not null or coadate<>'1900-01-01') ) as folderscoa, " +
+	"(select count(origid) from jobfolders where ar_code=t.ar_code and datecreated >= dateadd(m," + mg + ",getdate()) " +
+	"and folderstatus='LOGGED') as logfolders, " +
+	"(select count(id) from invoice where code=t.ar_code and invoicedate >= dateadd(m," + mg + ",getdate()) ) as invoices, " +
+	"(select count(origid) from elb_quotations where ar_code=t.ar_code and qstatus in ('COMMITTED','COMITTED') and " +
+	"datecreated >= dateadd(m," + mg + ",getdate()) ) as qtcount " +
+	"from elb_usertracki t left join customer c on c.ar_code = t.ar_code " +
+	"where t.username='" + glob_username + "' " +
+	"order by c.customer_name" ;
+
+	recs = sqlhand.gpSqlGetRows(sqlstm);
+	if(recs.size() == 0) return;
+	newlb.setRows(21);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", whlistcliker );
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "ar_code", "customer_name", "folders", "comfolders", "logfolders", "folderscoa", "invoices", "qtcount" };
+	String[] fl2 = { "nextactiondate", "nextaction" };
+	for(d : recs)
+	{
+		popuListitems_Data(kabom,fl,d);
+
+		ko = getNextAction_data("ELB", "ELB", "TRACKI", d.get("ar_code") );
+		popuListitems_Data(kabom,fl2,ko);
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+class fldercliker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_sel_folder = lbhand.getListcellItemLabel(isel,FOLDERNO_IDX);
+	}
+}
+folderclick = new fldercliker();
+
+Object[] fldhds =
+{
+	new listboxHeaderWidthObj("origid",false,""),
+	new listboxHeaderWidthObj("Dated",true,"80px"),
+	new listboxHeaderWidthObj("Folder",true,"100px"),
+	new listboxHeaderWidthObj("Client",true,""),
+	new listboxHeaderWidthObj("Status",true,"70px"),
+	new listboxHeaderWidthObj("SC",true,"50px"),
+	new listboxHeaderWidthObj("Due",true,"80px"),
+	new listboxHeaderWidthObj("Share",true,""),
+	new listboxHeaderWidthObj("SubC",true,"50px"),
+	new listboxHeaderWidthObj("COA",true,"80px"),
+	new listboxHeaderWidthObj("INV",true,"80px"),
+	new listboxHeaderWidthObj("INV.Date",true,"80px"),
+};
+FOLDERNO_IDX = 2;
+COADATE_IDX = 9;
+// Load folders + invoices by how many months back
+// itype: 1=by how many months, 2=by date-range
+void loadFoldersInv(int itype)
+{
+	mg = "-" + fldmonthago_lb.getSelectedItem().getLabel();
+	daterange = "and jf.datecreated >= dateadd(m, " + mg + ", getdate()) ";
+
+	if(itype == 2) // by date-range
+	{
+		sdate = kiboo.getDateFromDatebox(startdate);
+		edate = kiboo.getDateFromDatebox(enddate);
+		daterange = "and jf.datecreated between '" + sdate + "' and '" + edate + "' ";
+	}
+
+	sqlstm = "select jf.origid, jf.datecreated, jf.folderno_str, jf.folderstatus, jf.coadate, jf.duedate, csi.customer_name as csname, " +
+	"(select count(origid) from jobsamples where jobfolders_id=jf.origid and deleted=0) as smpcount, iv.voucherno as invno, iv.invoicedate, " +
+	"jf.subcon_flag, jf.share_sample " +
+	"from jobfolders jf left join invoice iv on iv.voucherno=jf.folderno_str " +
+	"left join cashsales_customerinfo csi on csi.folderno_str = jf.folderno_str " +
+	"where jf.ar_code='" + glob_sel_arcode + "' " +
+	daterange +
+	"and jf.branch='" + glob_user_branch + "' " +
+	"order by jf.origid";
+
+	Listbox newlb = lbhand.makeVWListbox_Width(folders_holder, fldhds, "foldersinv_lb", 3);
+	recs = sqlhand.gpSqlGetRows(sqlstm);
+	if(recs.size() == 0) return;
+	newlb.setRows(21);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", folderclick );
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "origid", "datecreated", "folderno_str", "csname", "folderstatus", "smpcount", "duedate",
+	"share_sample", "subcon_flag" , "coadate", "invno", "invoicedate" };
+	for(d : recs)
+	{
+		popuListitems_Data(kabom,fl,d);
+		//ko = getNextAction_data("ELB", "ELB", "TRACKI", d.get("ar_code") );
+		ki = lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		if(dtf2.format(d.get("coadate")).equals("1900-01-01")) lbhand.setListcellItemLabel(ki,COADATE_IDX,"");
+		kabom.clear();
+	}
+}
+
+void runFolderDriller()
+{
+	if(glob_sel_folder.equals("")) return;
+	theparam = "folderno=" + glob_sel_folder; // knockoff from browsejobs_v3_4.zul
+	workfn = "samplereg/folderjobs_driller.zul";
+	guihand.globalActivateWindow(mainPlayground,"miscwindows",workfn, kiboo.makeRandomId("ldx"), theparam, useraccessobj);
+}
+
+Object[] qthds =
+{
+	new listboxHeaderWidthObj("QT",true,"70px"),
+	new listboxHeaderWidthObj("Dated",true,"80px"),
+	new listboxHeaderWidthObj("Client",true,""),
+	new listboxHeaderWidthObj("User",true,"100px"),
+	new listboxHeaderWidthObj("Status",true,"70px"),
+	new listboxHeaderWidthObj("Amt",true,"80px"),
+	new listboxHeaderWidthObj("WinLose",true,""),
+	new listboxHeaderWidthObj("Ver",true,"50px"),
+};
+
+class qtlbcliker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_sel_quote = lbhand.getListcellItemLabel(isel,0);
+		digShowQuotation(glob_sel_quote, quoteitems_holder, "quoteitems_lb", 1);
+	}
+}
+qutecliker = new qtlbcliker();
+
+void loadQuotes()
+{
+	mg = "-" + qtmonthago_lb.getSelectedItem().getLabel();
+	sqlstm = "select qt.origid, qt.datecreated, qt.qstatus, qt.customer_name, qt.username, qt.quote_net, qt.winloseflag, qt.version " +
+	"from elb_quotations qt  where qt.ar_code='" + glob_sel_arcode + "' " +
+	"and qt.datecreated >= dateadd(m," + mg + ",getdate()) and deleted=0 order by qt.origid desc";
+
+	Listbox newlb = lbhand.makeVWListbox_Width(quotes_holder, qthds, "quotes_lb", 3);
+	recs = sqlhand.gpSqlGetRows(sqlstm);
+	if(recs.size() == 0) return;
+	newlb.setRows(21);
+	newlb.setMold("paging");
+	newlb.addEventListener("onSelect", qutecliker );
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "origid", "datecreated", "customer_name", "username", "qstatus", "quote_net", "winloseflag", "version" };
+	for(d : recs)
+	{
+		popuListitems_Data(kabom,fl,d);
+		//ko = getNextAction_data("ELB", "ELB", "TRACKI", d.get("ar_code") );
+		ki = lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		//if(dtf2.format(d.get("coadate")).equals("1900-01-01")) lbhand.setListcellItemLabel(ki,5,"");
+		kabom.clear();
+	}
+}
+
+]]>
+</zscript>
+
+<!-- select customer popup -->
+<popup id="selectcustomer_popup">
+<div sclass="shadowbox" style="background:#2B276E;">
+<hbox>
+	<textbox id="cust_search_tb" width="150px" sclass="k9" />
+	<button label="Find customer" sclass="k9" onClick="searchCustomers()" />
+</hbox>
+<separator height="3px" />
+
+<hbox>
+	<div id="foundcustomer_holder" width="300px" />
+	<groupbox width="300px">
+	<label id="selectcustomer_meta_lbl" multiline="true" sclass="k9b" />
+	</groupbox>
+</hbox>
+</div>
+</popup> <!-- ENDOF select customer popup -->
+
+<popup id="trackiman_pop">
+<div sclass="shadowbox" style="background:#2e3436;" width="700px">
+<hbox>
+	<vbox>
+		<button id="addtracki_b" sclass="k9" label="Add customer" onClick="selectcustomer_popup.open(self)" />
+		<button id="deltracki_b" sclass="k9" label="Remove" onClick="trackiFunc(self.getId())" />
+	</vbox>
+	<div id="mtrackiholder" />
+</hbox>
+</div>
+</popup>
+
+<style src="/real-word.css" />
+
+<div width="${PANELWIDTH}">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren style="background:#ea7724">
+
+<div sclass="shadowbox" style="background:#2e3436;" >
+<hbox>
+	<listbox id="monthsago_lb" mold="select" sclass="k9" />
+	<label value="months ago" sclass="k9b" />
+	<button label="Load tracki" sclass="k9mo" onClick="suppWholeList()" />
+	<button id="mantracki_b" label="Manage my tracki" sclass="k9mo" onClick="manListTracki(glob_username); trackiman_pop.open(self)" />
+</hbox>
+</div>
+<separator height="3px" />
+
+<hbox>
+	<button sclass="k9" label="-" onClick="blindTings(self,wholelist_workarea)" />
+	<div sclass="shadowbox" style="background:#2e3436;" id="wholelist_workarea" >
+		<label sclass="k9b" value="(Listing from all branches)" />
+		<div id="wholelist_holder" />
+	</div>
+</hbox>
+
+<separator height="3px" />
+
+<div id="workarea" sclass="shadowbox" style="background:#2e3436;" visible="false">
+
+<div sclass="shadowbox" style="background:#026ECC">
+	<label id="tracki_tit" sclass="subhead1" />
+</div>
+<separator height="3px" />
+
+	<tabbox>
+		<tabs>
+			<tab label="Tracki" />
+			<tab label="Folders/Invoices" />
+			<tab label="Quotations" />
+		</tabs>
+		<tabpanels>
+			<tabpanel> <!-- Tracki -->
+				<hbox>
+					<textbox id="t_nextaction" width="400px" sclass="k9" />
+					<datebox id="t_nextactiondate" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+					<button id="setnxtactd_b" label="Set next action-date" sclass="k9" onClick="taskerFunc(self.getId())" />
+				</hbox>
+				<separator height="3px" />
+				<hbox>
+					<textbox id="addaction_tb" width="520px" sclass="k9" />
+					<button id="addaction_b" label="+ action" sclass="k9" onClick="taskerFunc(self.getId())" />
+				</hbox>
+				<separator height="3px" />
+				<div id="actions_holder" width="650px" />
+			</tabpanel> <!-- ENDOF Tracki -->
+
+			<tabpanel> <!-- Folders/Invoices -->
+				<hbox>
+					<listbox id="fldmonthago_lb" mold="select" sclass="k9" />
+					<label value="months ago" sclass="k9b" />
+					<button label="Load folders" sclass="k9mo" onClick="loadFoldersInv(1)" />
+					<button label="View folder details" sclass="k9mo" onClick="runFolderDriller()" />
+					<separator width="10px" />
+					<label value="Start" sclass="k9b" />
+					<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+					<label value="End" sclass="k9b" />
+					<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+					<button label="by date-range" sclass="k9mo" onClick="loadFoldersInv(2)" />
+				</hbox>
+				<separator height="3px" />
+				<div id="folders_holder" />
+			</tabpanel> <!-- ENDOF Folders/Invoices -->
+
+			<tabpanel> <!-- quotations -->
+				<hbox>
+					<listbox id="qtmonthago_lb" mold="select" sclass="k9" />
+					<label value="months ago" sclass="k9b" />
+					<button label="Load quotations" sclass="k9mo" onClick="loadQuotes()" />
+				</hbox>
+				<separator height="3px" />
+				<div id="quotes_holder" />
+
+				<separator height="3px" />
+				<div id="quotation_workarea" visible="false">
+					<hbox>
+						<div width="750px">
+							<grid>
+								<rows>
+									<row>
+										<label value="Quote Ref#" sclass="k9" />
+										<label id="qt_origid" sclass="k9" />
+										<label value="Dated" sclass="k9" />
+										<label id="qt_datecreated" sclass="k9" />
+									</row>
+									<row spans="1,3">
+										<label value="Customer" sclass="k9" />
+										<label id="qt_customer_name" sclass="k9" />
+									</row>
+									<row>
+										<label value="Quoter" sclass="k9" />
+										<label id="qt_username" sclass="k9" />
+										<label value="Salesperson" sclass="k9" />
+										<label id="qt_salesperson" sclass="k9" />
+									</row>
+								</rows>
+							</grid>
+							<separator height="3px" />
+							<div id="quoteitems_holder" />
+						</div>
+
+						<vbox>
+							<label value="Quotation win/lose" sclass="k9b" />
+							<listbox id="quote_winloseflag" mold="select" sclass="k9" />
+							<button label="Update flag" sclass="k9" onClick="updateWinLoseFlag_clicker()" />
+						</vbox>
+
+					</hbox>
+				</div>
+
+			</tabpanel> <!-- ENDOF quotations -->
+
+		</tabpanels>
+	</tabbox>
+</div>
+
+<zscript>
+<![CDATA[
+
+void updateWinLoseFlag_clicker() // knockoff from quotetracker_funcs.zs, modded 
+{
+	if(glob_sel_quote.equals("")) return;
+	theflag = quote_winloseflag.getSelectedItem().getLabel();
+	sqlstm = "update elb_quotations set winloseflag='" + theflag + "', userpostwinlose='" + useraccessobj.username + "'," + 
+	"postwinlosedate='" + kiboo.todayISODateTimeString() + "' where origid=" + glob_sel_quote;
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadQuotes(); // refresh
+}
+
+popMonthsAgoDropDown(monthsago_lb,6);
+popMonthsAgoDropDown(fldmonthago_lb,6);
+popMonthsAgoDropDown(qtmonthago_lb,6);
+
+luhand.populateListbox_ByLookup(quote_winloseflag, "QUOTE_WINLOSE_FLAGS",2);
+quote_winloseflag.setSelectedIndex(0);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="manageUsersPage"?>
+
+<!--
+Manage MIRIS users database
+Version				: 
+Coding began date	: 4/2/2009
+Developers			: Victor Wong
+
+-->
+
+<zk>
+<zscript src="mirisglobal.zs" />
+<zscript src="mirisDb_API.zs" />
+
+<zscript>
+// Some security checking codes here
+useraccessobj = getUserAccessObject();
+
+class uInputForm
+{
+public Textbox username;
+public Textbox password;
+public Textbox hospitalid;
+public Textbox fname;
+public Textbox lname;
+public Listbox accesslevel;
+public Intbox role;
+public Textbox position;
+public Listbox department;
+public Listbox ward;
+public Checkbox retired;
+
+    public uInputForm(Textbox ihospitalid, Textbox iusername, Textbox ipassword, Textbox ifname, Textbox ilname,
+		Listbox iaccesslevel, Intbox irole, Textbox iposition, Listbox idepartment,
+		Listbox iward, Checkbox iretired)
+    {
+	
+	hospitalid = ihospitalid;
+	username = iusername;
+	password = ipassword;
+	fname = ifname;
+	lname = ilname;
+	accesslevel = iaccesslevel;
+	role = irole;
+	position = iposition;
+	department = idepartment;
+	ward = iward;
+	retired = iretired;
+
+    }
+
+}
+
+// Populate the users listbox. will list for selected hospital when login
+// make use of useraccessobj
+void populateUsernameListbox(Listbox thelistbox)
+{
+	try
+	{
+		sql = mirisSQL();
+
+		sqlstatem = "select * from mirisuser where hospitalid='" + useraccessobj.hospitalid + "'";
+		catlist = sql.rows(sqlstatem);
+
+		if(catlist.size() > 0)
+		{
+			for(cato : catlist)
+			{
+				String cat_uid = new String(cato.get("username"));
+
+				// Only list if not hardcoded sysadmin account
+				if(!cat_uid.equals("sysadmin"))
+				{
+					Listitem mylistitem = new Listitem();
+					cat_uname = cato.get("fname") + " " + cato.get("lname");
+
+					mylistitem.setLabel(cat_uname);
+					mylistitem.setId(cat_uid);
+					mylistitem.setParent(thelistbox);
+				}
+			}
+		}
+	}
+	catch (SQLException se) {}
+
+	sql.close();
+}
+
+
+// Return true if username exist in database else false
+boolean usernameExist(String iusername)
+{
+    boolean retval = false;
+
+    try
+    {
+        sql = mirisSQL();
+        sqlstatem = "select username from mirisuser where username='" + iusername + "'";
+        subchild = sql.rows(sqlstatem);
+
+		if(subchild.size() > 0)
+			retval = true;
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+
+    return retval;
+}
+
+// Access database table to get user details and then populate
+void populateUserDetails(Listbox mListbox)
+{
+    st_username = mListbox.getSelectedItem().getId();
+    toshowname = mListbox.getSelectedItem().getLabel();
+
+    // set groupbox caption, hardcoded gb_username
+    gb_username.setLabel("Selected: " + toshowname);
+
+    hiBoxes.username.setValue(st_username);
+
+    try
+    {
+
+    sql = mirisSQL();
+    sqlstatem = "select * from mirisuser where username='" + st_username + "'";
+
+    therec = sql.firstRow(sqlstatem);
+
+    // super plumbing code to get data into entry-form
+	
+	hiBoxes.hospitalid.setValue(therec.get("hospitalid"));
+	
+	hiBoxes.password.setValue(therec.get("password"));
+	hiBoxes.fname.setValue(therec.get("fname"));
+	hiBoxes.lname.setValue(therec.get("lname"));
+	
+	acslvl = therec.get("accesslevel");
+	hiBoxes.accesslevel.setSelectedIndex(acslvl);
+	
+	hiBoxes.role.setValue(therec.get("role"));
+	hiBoxes.position.setValue(therec.get("position"));
+
+	// findListitemById() in mirisDb_API.zs
+	
+	t_department = therec.get("department");
+	t_ward = therec.get("ward");
+	
+	// Always start with listitem index 0
+	hiBoxes.department.setSelectedIndex(0);
+	hiBoxes.ward.setSelectedIndex(0);
+	
+	if(t_department != null)
+		hiBoxes.department.setSelectedIndex(findListitemById(hiBoxes.department,t_department));
+		
+	if(t_ward != null)
+		hiBoxes.ward.setSelectedIndex(findListitemById(hiBoxes.ward,t_ward));
+
+	retiredcheck = therec.get("retired");
+	hiBoxes.retired.setChecked((retiredcheck == 1) ? true : false);
+
+    }
+    catch(SQLException se) {}
+
+    sql.close();
+}
+
+// Update details into database. update button onClick
+void updateUserDetails()
+{
+	//alert("depart id : " + hiBoxes.department.getSelectedItem().getId());
+	
+    try
+    {
+        sql = mirisSQL();
+
+sqlstatem = "update mirisuser set " +		
+"password='" + hiBoxes.password.getValue() + "'," +
+"fname='" + hiBoxes.fname.getValue() + "'," +
+"lname='" + hiBoxes.lname.getValue() + "'," +
+"accesslevel=" + hiBoxes.accesslevel.getSelectedItem().getIndex() + "," +
+"role=" + hiBoxes.role.getValue() + "," +
+"position='" + hiBoxes.position.getValue() + "'," +
+"department='" + hiBoxes.department.getSelectedItem().getId() + "'," +
+"ward='" + hiBoxes.ward.getSelectedItem().getId() + "'," +
+"retired=" + hiBoxes.retired.isChecked() +
+" where username='" + hiBoxes.username.getValue() + "'";
+		
+            sql.execute(sqlstatem);
+
+            showMessageBox("Update completed..");
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+}
+
+void deleteUser(Listbox tlistbox)
+{
+    hospname = tlistbox.getSelectedItem().getLabel();
+    hospid = tlistbox.getSelectedItem().getId();
+
+	if(hospname == "" || hospid == "") return;
+
+    if(Messagebox.show("Are you sure?","Delete hospital",
+		Messagebox.YES|Messagebox.NO,Messagebox.QUESTION) == Messagebox.NO)
+	{
+		// need to put auditing codes here
+		return;
+	}
+
+	try
+	{
+		sql = mirisSQL();
+		sqlstatem = "delete from hospitals where hospitalid='" + hospid + "'";
+        /*
+		sql.execute(sqlstatem);
+
+		Listitem torem = tlistbox.getFellow(hospid);
+		torem.setParent(null);
+		tlistbox.invalidate();
+
+		showMessageBox("Hospital deleted..");
+        */
+
+	}
+	catch (SQLException se) {}
+
+	sql.close();
+
+}
+
+// Add new user to database. The rest of the fields to be handled by other section
+void addNewUser(Textbox ifname, Textbox ilname,
+	Textbox iusername, Textbox ipassword, Listbox iaccesslevel)
+{
+    username = iusername.getValue();
+    password = ipassword.getValue();
+	
+	fname = ifname.getValue();
+	lname = ilname.getValue();
+	
+	if(fname == "" || lname == "" || username == "" || password == "")
+	{
+		showMessageBox("Fields incomplete");
+		return;
+	}
+	
+	// Never select an access level, just return
+	if(iaccesslevel.getSelectedItem() == null) return;
+	
+	// findListitemById() from mirisDb_API.zs
+	accesslvl = findListitemById(iaccesslevel,iaccesslevel.getSelectedItem().getId());
+	
+    // make sure username not exist in database
+    if(usernameExist(username))
+    {
+        showMessageBox("Username exist in database");
+        return;
+    }
+
+    try
+    {
+        sql = mirisSQL();
+
+		// hardcoded HSGBULOH for now
+		hospid = useraccessobj.hospitalid;
+        sqlstatem = "insert into mirisuser (username,password,fname,lname,accesslevel,hospitalid) values ('" +
+			username + "','" + password + "','" + fname + "','" + lname + "'," + accesslvl + ",'" + hospid + "')";
+			
+		//alert(sqlstatem);
+
+        sql.execute(sqlstatem);
+    }
+    catch (SQLException se) {}
+
+    sql.close();
+
+	Listitem mylistitem = new Listitem();
+	
+	disp_uname = fname + " " + lname;
+	mylistitem.setLabel(disp_uname);
+	mylistitem.setId(username);
+	mylistitem.setParent(username_list);
+
+    username_list.invalidate();
+
+}
+
+</zscript>
+
+<!-- tooltips -->
+<popup id="hospitalidnochange">
+Hospital cannot be changed
+</popup>
+
+<popup id="usernamenochange">
+Username cannot be changed
+</popup>
+
+<popup id="mustbeunique">
+Must be unique
+</popup>
+
+<!-- end of tooltips -->
+
+<!-- Add new user, we use popup instead of creating extra window -->
+<popup id="addUser">
+
+<groupbox mold="3d" width="350px">
+    <caption label="Add new user" style="font-weight:bold" />
+    <grid>
+        <columns>
+            <column label=""/>
+            <column label=""/>
+        </columns>
+        <rows>
+		
+			<row>
+                <label value="Hospital" />
+                <textbox id="ah_hospname" disabled="true" />
+            </row>
+			
+		    <row>
+                <label value="First name" />
+                <textbox id="ah_fname" />
+            </row>
+			
+			<row>
+                <label value="Last name" />
+                <textbox id="ah_lname" />
+            </row>
+			
+            <row>
+                <label value="Username" tooltip="mustbeunique" />
+                <textbox id="ah_username" />
+            </row>
+            <row>
+                <label value="Password" />
+                <textbox id="ah_password" />
+            </row>
+			
+			<row>
+				<label value="Access Level" />
+				<listbox id="ah_accesslevel" mold="select">
+					<listitem label="NONE" />
+					<listitem id="ah_al_1" label="1 - Normal user" />
+					<listitem id="ah_al_2" label="2 - Head of department" />
+					<listitem id="ah_al_3" label="3 - Manager" />
+				</listbox>
+			</row>
+			
+        </rows>
+    </grid>
+</groupbox>
+
+<separator />
+<hbox>
+    <button id="adduserbutt" label="Add"
+		onClick="addNewUser(ah_fname,ah_lname,ah_username,ah_password,ah_accesslevel); addUser.close()" />
+		
+    <button label="Cancel" onClick="addUser.close()" />
+</hbox>
+
+</popup>
+<!-- end of add new username popup -->
+
+<groupbox mold="3d" width="100%">
+    <caption label="Please select a user" style="font-weight:bold"/>
+
+
+<div width="100%">
+
+<!-- put listbox for all users in database  -->
+<listbox id="username_list" rows="8" onSelect="populateUserDetails(username_list)" />
+<zscript>
+populateUsernameListbox(username_list);
+</zscript>
+
+</div>
+
+<separator />
+<hbox>
+    <button label="New user" popup="addUser" />
+    <button label="Delete" onClick="deleteUser(username_list)" />
+</hbox>
+
+</groupbox>
+
+<separator />
+
+<!-- hospital details entry form -->
+
+<groupbox mold="3d">
+    <caption id="gb_username" label="" style="font-weight:bold" />
+
+<grid>
+    <columns width="100px,">
+        <column label=""/>
+        <column label=""/>
+        <column label=""/>
+        <column label=""/>
+    </columns>
+
+	<rows>
+		<row>
+			<label value="Hospital" />
+			<textbox id="tb_hospitalid" disabled="true" tooltip="hospitalidnochange" />
+		</row>
+		<row>
+           <label value="Username" />
+           <textbox id="tb_username" disabled="true" tooltip="usernamenochange" />
+
+           <label value="Password" />
+           <textbox id="tb_password" cols="30" />
+           <!-- might need to hide this one and encrypted too -->
+        </row>
+
+        <row>
+           <label value="First name" />
+           <textbox id="tb_fname" cols="30" />
+
+           <label value="Last name" />
+           <textbox id="tb_lname" cols="30" />
+        </row>
+
+        <row>
+           <label value="Access Level" />
+           <listbox id="tb_accesslevel" mold="select">
+				<listitem label="NONE" />
+                <listitem id="al_1" label="1 - Normal user" />
+                <listitem id="al_2" label="2 - Head of department" />
+                <listitem id="al_3" label="3 - Manager" />
+           </listbox>
+
+           <label value="Role" />
+           <intbox id="tb_role" />
+        </row>
+
+        <row>
+           <label value="Position" />
+           <textbox id="tb_position" />
+
+           <label value="Department" />
+
+           <listbox id="tb_department" mold="select" />
+				<zscript>
+				populateListBox(tb_department,"UNITSDEPARTMENT",0);
+				</zscript>
+        </row>
+
+        <row>
+           <label value="Ward/Clinic" />
+           
+           <listbox id="tb_ward" mold="select" />
+				<zscript>
+				populateListBox(tb_ward,"WARDCLINIC",0);
+				</zscript>
+
+           <label value="Retired" />
+           <checkbox id="tb_retired" />
+        </row>
+
+    </rows>
+</grid>
+
+<separator height="20px"/>
+
+<button label="Update" onClick="updateUserDetails()" />
+
+</groupbox>
+
+<separator />
+
+<groupbox mold="3d">
+    <caption label="Photos" />
+Not now
+</groupbox>
+
+<zscript>
+
+uInputForm hiBoxes = new uInputForm(tb_hospitalid, tb_username, tb_password, tb_fname, tb_lname,
+		tb_accesslevel, tb_role, tb_position, tb_department,
+		tb_ward, tb_retired);
+		
+ah_hospname.setValue(useraccessobj.hospitalname);
+
+</zscript>
+
+</zk>
+

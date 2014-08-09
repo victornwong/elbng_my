@@ -1,0 +1,1390 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="checklist_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v1.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Food Nutritional Labeling";
+MYVERSION = "v0.2";
+/*
+Title		: Nutritional results entry
+Written by	: Victor Wong
+Start date	: 05/12/2012
+
+Dedicated module to let users enter nutri related results -- with calculation and stuff
+
+Nutri-labeling-parameters formkeeper id = 15
+
+03/04/2013: add Munchy ONLY nut-template - "per 100g" column
+06/12/2012: add codes to do inline update sample-marking
+
+*/
+import java.util.*;
+import java.text.*;
+import java.io.*;
+import java.math.BigDecimal;
+
+import java.awt.Color;
+import java.io.FileOutputStream;
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+//import com.lowagie.text.pdf.PdfWriter;
+//import com.lowagie.text.html.HtmlWriter;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.Barcode39;
+
+/*
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+*/
+
+import org.zkoss.util.media.AMedia;
+import org.apache.poi.ss.*;
+import org.apache.poi.ss.usermodel.*;
+
+import org.zkoss.zul.*;
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+NUTRI_FORM = "15";
+
+DecimalFormat nf = new DecimalFormat("###0.0");
+DecimalFormat nf2 = new DecimalFormat("####0.00");
+DecimalFormat nf0 = new DecimalFormat("####");
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+luhand = new LookupFuncs();
+
+int last_loadtype = 0;
+String glob_selected_folderno = "";
+String glob_selected_jobsample = "";
+String glob_selected_jtp = "";
+String glob_selected_mysoft = "";
+String glob_selected_formkeeper = "";
+String glob_selected_testname = "";
+String glob_selected_method = "";
+
+signator_recs = null;
+boolean cangenreport = false;
+
+vicFormMaker glob_formmaker = null;
+
+// TODO: put this into a separate zs
+void excelInsertString(Sheet isheet, int irow, int icol, String iwhat)
+{
+	org.apache.poi.hssf.usermodel.HSSFRow row = isheet.getRow(irow);
+	Cell cell = row.getCell(icol);
+	if(cell == null) cell = row.createCell(icol);
+	cell.setCellType(Cell.CELL_TYPE_STRING);
+	cell.setCellValue(iwhat);
+}
+
+String POI_GetCellContentString(HSSFCell icell)
+{
+	retval = "";
+	
+	switch(icell.getCellType())
+	{
+		case HSSFCell.CELL_TYPE_STRING:
+			retval = icell.getRichStringCellValue().getString();
+			break;
+						
+		case HSSFCell.CELL_TYPE_NUMERIC:
+			if(DateUtil.isCellDateFormatted(icell))
+			{
+				retval = icell.getDateCellValue().toString();
+				//retval = icell.getRichStringCellValue().getString();
+			}
+			else
+			{
+				retval = icell.getNumericCellValue().toString();
+			}
+			break;
+	}
+	
+	return retval;
+}
+
+// 02/04/2013: req by DrKoh, patch 0 results to "ND (<DL)" DL=detection limit
+void patchResultsWithND(Sheet isheet, int istartrow, int inumrow, int icol)
+{
+	for(myr=istartrow; myr < istartrow+inumrow; myr++)
+	{
+		org.apache.poi.hssf.usermodel.HSSFRow row = isheet.getRow(myr);
+		if(row != null)
+		{
+			HSSFCell cell = row.getCell(icol);
+			if(cell != null)
+			{
+				kamestr = POI_GetCellContentString(cell);
+				jval = 0.0;
+				try
+				{
+					jval = Float.parseFloat(kamestr);
+				} catch (Exception e) {}
+				
+				if(jval == 0.0)
+				{
+					excelInsertString(isheet,myr,icol,"ND (<DL)");
+				}
+			}
+		}
+	}
+}
+
+// knockoff from the web - to be used later
+String getKeyByValue(HashMap ihmap, String istring)
+{
+	ffe = "";
+	for(tentry : ihmap.entrySet())
+	{
+		ffe += tentry.getKey() + "->" + tentry.getValue() + ", ";
+		if( istring.equals(tentry.getValue()) ) break; //return tentry.getKey();
+	}
+	alert(ffe);
+	return null;
+}
+
+void clearSomeFields()
+{
+	keyin_by.setValue("");
+	keyin_date.setValue("");
+	saved_msg.setValue("");
+}
+
+void showTestForms()
+{
+	if(glob_selected_jtp.equals("")) return;
+	
+	workarea.setVisible(false);
+	nutricalc_btn.setVisible(false);
+	nutrirep_box.setVisible(false);
+
+	// check got formkeeper-id, if not, try loading from stockmasterdetails
+	if(glob_selected_formkeeper.equals("") && !glob_selected_mysoft.equals(""))
+	{
+		smd = sqlhand.getMySoftMasterProductRec(glob_selected_mysoft);
+		if(smd == null) return;
+		fkfsmd = kiboo.checkNullString(smd.get("NewField5"));
+		if(fkfsmd.equals("")) return;
+
+		fmobj = sqlhand.getFormKeeper_rec(fkfsmd);
+		if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+
+		glob_selected_formkeeper = fmobj.get("origid").toString();
+
+		formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+		exmres = sqlhand.clobToString(fmobj.get("exampleresult"));
+		glob_formmaker = new vicFormMaker(form_holder,"thebigform",formxml);
+		glob_formmaker.generateForm();
+		glob_formmaker.populateFormValues(exmres);
+
+		form_sampleid.setValue(glob_selected_jobsample);
+
+		clearSomeFields();
+
+		// check if any previous results entered
+		lresult = sqlhand.getLatestResult(glob_selected_jobsample,glob_selected_mysoft);
+		if(lresult != null)
+		{
+			kuser = lresult.get("username");
+			kdate = (lresult.get("Analysed_Date") != null) ? lresult.get("Analysed_Date").toString().substring(0,10) : "";
+			keyin_by.setValue(kuser);
+			keyin_date.setValue(kdate);
+
+			kres = lresult.get("formresults");
+			if(kres != null)
+			{
+				resl = sqlhand.clobToString(kres);
+				glob_formmaker.populateFormValues(resl);
+			}
+		}
+
+		workarea.setVisible(true);
+	}
+	
+	if(glob_selected_formkeeper.equals(NUTRI_FORM))
+	{
+		nutricalc_btn.setVisible(true);
+		if(cangenreport) nutrirep_box.setVisible(true);
+	}
+
+}
+
+class sampletests_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = sampletests_lb.getSelectedItem();
+		glob_selected_jtp = lbhand.getListcellItemLabel(isel,0);
+		glob_selected_mysoft = lbhand.getListcellItemLabel(isel,1);
+		glob_selected_formkeeper = lbhand.getListcellItemLabel(isel,2);
+		glob_selected_testname = lbhand.getListcellItemLabel(isel,3);
+		glob_selected_method = lbhand.getListcellItemLabel(isel,4);
+		showTestForms();
+	}
+}
+
+void showJobSampleTests(String iwhat)
+{
+Object[] jtplist_headers =
+{
+	new listboxHeaderWidthObj("jtpid",false,""),
+	new listboxHeaderWidthObj("mysc",false,""),
+	new listboxHeaderWidthObj("formkeeper",false,""),
+	new listboxHeaderWidthObj("Test with results-form",true,""),
+	new listboxHeaderWidthObj("Method",true,""),
+};
+
+	sqlstm = "select jtp.origid,jtp.mysoftcode,jtp.formkeeper_id, smd.description, smd.description2 " + 
+	"from jobtestparameters jtp " +
+	"left join stockmasterdetails smd on smd.id = jtp.mysoftcode " +
+	"where jobsamples_id=" + iwhat + " order by origid";
+
+	Listbox newlb = lbhand.makeVWListbox_Width(sampletests_holder, jtplist_headers, "sampletests_lb", 15);
+	jobsample_id.setValue(iwhat);
+
+	jtps = sqlhand.gpSqlGetRows(sqlstm);
+	if(jtps.size() == 0) { return; }
+	newlb.addEventListener("onSelect", new sampletests_onSelect());
+	for(dpi : jtps)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("mysoftcode").toString());
+		kabom.add(kiboo.checkNullString(dpi.get("formkeeper_id")));
+		kabom.add(kiboo.checkNullString(dpi.get("description")));
+		kabom.add(kiboo.checkNullString(dpi.get("description2")));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+}
+
+class jslist_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = jobsamples_lb.getSelectedItem();
+		glob_selected_jobsample = lbhand.getListcellItemLabel(isel,0);
+		showJobSampleTests(glob_selected_jobsample);
+	}
+}
+
+class sample_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = event.getTarget(); //tests_description_lb.getSelectedItem();
+		smak = lbhand.getListcellItemLabel(selitem,1);
+		ch_samplemarking.setValue(smak);
+		sampleMarking_popup.open(selitem);
+	}
+}
+
+void loadSampleTests(int itype)
+{
+Object[] jslist_headers =
+{
+	new listboxHeaderWidthObj("SampID",true,"60px"),
+	new listboxHeaderWidthObj("SampMarking",true,""),
+};
+
+	// hide working boxes - tidier
+	foldermeta_area.setVisible(false);
+	workarea.setVisible(false);
+
+	last_loadtype = itype;
+	foldernum = kiboo.replaceSingleQuotes(folderno_tb.getValue());
+	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
+
+	// dev purposes - no need to type
+	if(foldernum.equals("") && useraccessobj.accesslevel==9) foldernum = "ALSM36166";
+
+	if(itype == 1 && foldernum.equals("")) return;
+	if(itype == 2 && sampid.equals("")) return;
+
+	Listbox newlb = lbhand.makeVWListbox_Width(jobsamples_holder, jslist_headers, "jobsamples_lb", 15);
+
+	if(itype == 2)
+	{
+		sqlstm = "select jf.folderno_str " +
+		"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+		"where js.origid=" + sampid + " and " +
+		"jf.deleted = 0 and js.deleted = 0";
+
+		fifold = sqlhand.gpSqlFirstRow(sqlstm);
+		if(fifold == null) return;
+		foldernum = fifold.get("folderno_str");
+	}
+
+	jobfolder_str.setValue(foldernum);
+	glob_selected_folderno = foldernum; // save for usage later
+
+	sqlstm = "select js.origid as js_origid, js.sampleid_str, js.samplemarking, js.asma_id, js.asma_station, jf.folderno_str " +
+	"from jobfolders jf left join jobsamples js on js.jobfolders_id = jf.origid " +
+	"where jf.folderno_str = '" + foldernum + "' and " +
+	"jf.deleted = 0 and js.deleted = 0";
+
+	therows = sqlhand.gpSqlGetRows(sqlstm); // grab samples + marking
+	if(therows.size() == 0) { return; }
+	newlb.addEventListener("onSelect", new jslist_onSelect());
+
+	for(dpi : therows)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("js_origid").toString());
+		kabom.add(dpi.get("samplemarking"));
+		strarray = kiboo.convertArrayListToStringArray(kabom);	
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+
+	dc_obj = new sample_DoubleClicker();
+	lbhand.setDoubleClick_ListItems(newlb, dc_obj);
+
+	foldermeta_area.setVisible(true);
+}
+
+// 0=jobfolder,1=sampleid,2=todaydate,3=username,4=jtporigid,5=mysoftcode,6=testname,7=method,8=results-ntext,9=formkeeper-id
+void saveImportResults()
+{
+	if(glob_formmaker == null) return;
+
+	String[] resultarray = new String[10];
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+	iresults = glob_formmaker.freezeFormValues();
+
+	resultarray[0] = glob_selected_folderno;
+	resultarray[1] = glob_selected_jobsample;
+	resultarray[2] = todaydate;
+	resultarray[3] = useraccessobj.username;
+	resultarray[4] = glob_selected_jtp;
+	resultarray[5] = glob_selected_mysoft;
+	resultarray[6] = glob_selected_testname;
+	resultarray[7] = glob_selected_method;
+	resultarray[8] = iresults;
+	resultarray[9] = glob_selected_formkeeper;
+/*	
+	alert(glob_selected_folderno + ":" + glob_selected_jobsample + ":" + todaydate + ":" + useraccessobj.username + ":" +
+	glob_selected_jtp + ":" + glob_selected_mysoft + ":" + glob_selected_testname + ":" +
+	glob_selected_method + ":" + iresults + ":" + glob_selected_formkeeper);
+*/
+	if(sqlhand.insertChemistryResult_Form(resultarray))
+		saved_msg.setValue("RESULTS SAVED..");
+	else
+		saved_msg.setValue("ERR: CANNOT SAVE RESULTS!");
+}
+
+// 06/12/2012: allow inline updating of sample-marking when user double-click the sample
+void updateSampleMarking()
+{
+	smak = kiboo.replaceSingleQuotes(ch_samplemarking.getValue());
+	if(smak.equals("")) return; // no blank sample-marking allowed
+	sqlstm = "update jobsamples set samplemarking='" + smak + "' where origid=" + glob_selected_jobsample;
+	sqlhand.gpSqlExecuter(sqlstm);
+	loadSampleTests(last_loadtype); // refresh
+	sampleMarking_popup.close();
+}
+
+// Formula things --
+// itype: 1=nutri
+void doFormula(int itype)
+{
+	switch(itype)
+	{
+		case 1: // nutri-formula
+			v_ash = Float.parseFloat(ash.getValue());
+			v_moisture = Float.parseFloat(moisture.getValue());
+			v_protein = Float.parseFloat(protein.getValue());
+			v_fat = Float.parseFloat(total_fat.getValue());
+			v_dietaryfibre = Float.parseFloat(dietary_fiber.getValue());
+			v_sugar = Float.parseFloat(sugars.getValue());
+
+			v_totalcarbo = 100 - v_moisture - v_ash - v_fat - v_protein;
+			total_carbohydrate.setValue(nf.format(v_totalcarbo));
+
+			v_availcarbo = v_totalcarbo - v_dietaryfibre;
+			available_carbohydrate.setValue(nf.format(v_availcarbo));
+
+			v_tcalorie_my = (4 * v_totalcarbo) + (4 * v_protein) + (9 * v_fat);
+			energy_my.setValue(nf0.format(v_tcalorie_my));
+			v_tcalorie_my_kj = v_tcalorie_my * 4.2;
+			energy_my_kj.setValue(nf0.format(v_tcalorie_my_kj));
+
+			v_tcalorie_us = (4 * v_availcarbo) + (4 * v_protein) + (9 * v_fat) + (2 * v_dietaryfibre);
+			energy_us.setValue(nf0.format(v_tcalorie_us));
+			v_tcalorie_us_kj = v_tcalorie_us * 4.2;
+			energy_us_kj.setValue(nf0.format(v_tcalorie_us_kj));
+
+			v_totalmilksolid = 100 - v_moisture - v_sugar;
+			total_milk_solid.setValue(nf.format(v_totalmilksolid));
+
+			v_nonfatmilksolid = 100 - v_moisture - v_sugar - v_fat;
+			nonfat_milk_solid.setValue(nf.format(v_nonfatmilksolid));
+
+			v_calofromfat = v_fat * 9;
+			calories_from_fat.setValue(nf0.format(v_calofromfat));
+
+			break;
+	}
+}
+
+void downloadFile(Div ioutdiv, String ifilename, String irealfn)
+{
+	File f = new File(irealfn);
+	fileleng = f.length();
+	finstream = new FileInputStream(f);
+	byte[] fbytes = new byte[fileleng];
+	finstream.read(fbytes,0,(int)fileleng);
+
+	AMedia amedia = new AMedia(ifilename, "xls", "application/vnd.ms-excel", fbytes);
+	Iframe newiframe = new Iframe();
+	newiframe.setParent(ioutdiv);
+	newiframe.setContent(amedia);
+}
+
+Object getSignatorRec(String iwho)
+{
+	for(dpi : signator_recs)
+	{
+		knam = dpi.get("disptext");
+		if(knam.equals(iwho)) return dpi;	
+	}
+	return null;
+}
+
+// Excel templates
+NUTRILABEL_MY_NOSUGAR = "alsimg/nutrilabels/nutriLabeling_tmp_MY_v2.xls";
+NUTRILABEL_MY_SUGAR = "alsimg/nutrilabels/nutriLabeling_tmp_MY_sugar_v2.xls";
+NUTRILABEL_UK = "alsimg/nutrilabels/nutriLabeling_tmp_UK_v2.xls";
+NUTRILABEL_SG = "alsimg/nutrilabels/nutriLabeling_tmp_SG_v2.xls";
+NUTRILABEL_AU = "alsimg/nutrilabels/nutriLabeling_tmp_AU_v2.xls";
+NUTRILABEL_US = "alsimg/nutrilabels/nutriLabeling_tmp_US_v2.xls";
+NUTRILABEL_CN = "alsimg/nutrilabels/nutriLabeling_tmp_CN_v2.xls";
+
+// Output suffix
+String[] NUTRILABEL_SUFFIX = {
+"_nutrimy.xls","_nutrisugarmy.xls",
+"_nutrius.xls","_nutriuk.xls",
+"_nutriau.xls","_nutricn.xls",
+"_nutrisg.xls","_munchy.xls"
+
+};
+
+// butts id string
+MYNUTFACT_1_BTN = "mynutfact_1_btn";
+MYNUTFACT_1_SUGAR_BTN = "mynutfact_1_sugar_btn";
+USNUTFACT_1_BTN = "usnutfact_1_btn";
+UKNUTFACT_1_BTN = "uknutfact_1_btn";
+AUNUTFACT_1_BTN = "aunutfact_1_btn";
+CNNUTFACT_1_BTN = "cnnutfact_1_btn";
+SGNUTFACT_1_BTN = "sgnutfact_1_btn";
+MUNCHYNUTFACT_1_BTN = "munchynfat_1_btn";
+
+// icomp: button-component to get the ID
+// unittype: 1=g/100g (params / SG) , 2=g/100ml (params * SG)
+// 03/01/2013: sqlstm, add js.origid in where to distinguish each sample-id
+void doReportTemplate(Object icomp, int unittype)
+{
+	int outfnsuffix = 0;
+
+	sqlstm = "select jf.folderno_str, jf.ar_code, jf.attention, jf.datecreated, " +
+	"jf.customercoc, js.sampleid_str, js.samplemarking, js.extranotes," +
+	"customer.customer_name, customer.address1, customer.address2, customer.address3, customer.address4," +
+	"customer.telephone_no,customer.fax_no, customer.e_mail " + 
+	"from jobfolders jf left join customer on customer.ar_code=jf.ar_code " +
+	"left join jobsamples js on js.jobfolders_id=jf.origid " +
+	"where jf.deleted=0 and js.deleted=0 and jf.folderno_str='" + glob_selected_folderno + "' and " +
+	"js.origid=" + glob_selected_jobsample;
+
+	jfrec = sqlhand.gpSqlFirstRow(sqlstm);
+	if(jfrec == null)
+	{
+		guihand.showMessageBox("ERR: Cannot load job record from database..");
+		return;
+	}
+
+	todate = kiboo.todayISODateString();
+
+	folderno = jfrec.get("folderno_str");
+	company = kiboo.checkNullString(jfrec.get("customer_name")) + "\n" + 
+	kiboo.checkNullString(jfrec.get("address1")) + "\n" + 
+	kiboo.checkNullString(jfrec.get("address2")) + "\n" +
+	kiboo.checkNullString(jfrec.get("address3")) + "\n" +
+	kiboo.checkNullString(jfrec.get("address4"));
+	
+	contactd = kiboo.checkNullString(jfrec.get("attention")) + " Tel: " +
+	kiboo.checkNullString(jfrec.get("telephone_no")) + " Fax: " +
+	kiboo.checkNullString(jfrec.get("fax_no")) + " Email: " +
+	kiboo.checkNullString(jfrec.get("e_mail"));
+
+	gentype = icomp.getId();
+	templatefn = "";
+	pgadder = 0; // page position mover .. could be diff for other custom templates
+
+	// template selector..
+	if(gentype.equals(MYNUTFACT_1_BTN)) templatefn = NUTRILABEL_MY_NOSUGAR;
+	if(gentype.equals(MYNUTFACT_1_SUGAR_BTN)) templatefn = NUTRILABEL_MY_SUGAR;
+	if(gentype.equals(UKNUTFACT_1_BTN)) templatefn = NUTRILABEL_UK;
+	if(gentype.equals(SGNUTFACT_1_BTN)) templatefn = NUTRILABEL_SG;
+	if(gentype.equals(AUNUTFACT_1_BTN)) templatefn = NUTRILABEL_AU;
+	if(gentype.equals(USNUTFACT_1_BTN) || gentype.equals(MUNCHYNUTFACT_1_BTN)) templatefn = NUTRILABEL_US;
+	if(gentype.equals(CNNUTFACT_1_BTN)) templatefn = NUTRILABEL_CN;
+
+	if(templatefn.equals("")) return;
+
+	inpfn = session.getWebApp().getRealPath(templatefn);
+	InputStream inp = new FileInputStream(inpfn);
+
+	Workbook wb = WorkbookFactory.create(inp);
+	Sheet sheet = wb.getSheetAt(0);
+
+	for(i=0;i<2;i++)
+	{
+		// COA header -page 1 and 2
+		excelInsertString(sheet,7 + pgadder,2,folderno);
+		excelInsertString(sheet,8 + pgadder,2,todate);
+		excelInsertString(sheet,9 + pgadder,2,company);
+		excelInsertString(sheet,10 + pgadder,2,jfrec.get("attention"));
+		excelInsertString(sheet,11 + pgadder,2,": " + jfrec.get("datecreated").toString().substring(0,10));
+		excelInsertString(sheet,12 + pgadder,2,": " + kiboo.checkNullString(jfrec.get("samplemarking")));
+		excelInsertString(sheet,13 + pgadder,2,": " + kiboo.checkNullString(jfrec.get("extranotes")));
+		excelInsertString(sheet,14 + pgadder,2,": " + kiboo.checkNullString(jfrec.get("sampleid_str")));
+		pgadder += 53; // next page position
+	}
+
+	// insert 'em parameters
+	
+	// commons
+	excelInsertString(sheet,19,2,energy_my.getValue());
+	excelInsertString(sheet,20,2,energy_my_kj.getValue());
+	excelInsertString(sheet,21,2,total_fat.getValue());
+
+	if(gentype.equals(MYNUTFACT_1_BTN) || gentype.equals(MYNUTFACT_1_SUGAR_BTN))
+	{
+		excelInsertString(sheet,22,2,protein.getValue());
+		excelInsertString(sheet,23,2,total_carbohydrate.getValue());
+		// 1 extra sugar-param for sugar-template
+		if(gentype.equals(MYNUTFACT_1_SUGAR_BTN))
+		{
+			excelInsertString(sheet,24,2,sugars.getValue());
+		}
+	}
+
+	if(gentype.equals(UKNUTFACT_1_BTN))
+	{
+		excelInsertString(sheet,22,2,saturated_fat.getValue());
+		excelInsertString(sheet,23,2,monosaturated.getValue());
+		excelInsertString(sheet,24,2,polyunsaturated.getValue());
+		excelInsertString(sheet,25,2,trans_fat.getValue());
+		excelInsertString(sheet,26,2,protein.getValue());
+		excelInsertString(sheet,27,2,total_carbohydrate.getValue());
+		excelInsertString(sheet,28,2,dietary_fiber.getValue());
+		excelInsertString(sheet,29,2,sugars.getValue());
+		excelInsertString(sheet,30,2,cholesterol.getValue());
+		excelInsertString(sheet,31,2,sodium.getValue());
+		patchResultsWithND(sheet,22,10,2);
+	}
+
+	if(gentype.equals(SGNUTFACT_1_BTN))
+	{
+		excelInsertString(sheet,22,2,saturated_fat.getValue());
+		excelInsertString(sheet,23,2,protein.getValue());
+		excelInsertString(sheet,24,2,total_carbohydrate.getValue());
+		excelInsertString(sheet,25,2,dietary_fiber.getValue());
+		excelInsertString(sheet,26,2,cholesterol.getValue());
+		excelInsertString(sheet,27,2,sodium.getValue());
+		patchResultsWithND(sheet,22,6,2);
+	}
+
+	if(gentype.equals(AUNUTFACT_1_BTN))
+	{
+		excelInsertString(sheet,22,2,saturated_fat.getValue());
+		excelInsertString(sheet,23,2,trans_fat.getValue());
+		excelInsertString(sheet,24,2,protein.getValue());
+		excelInsertString(sheet,25,2,total_carbohydrate.getValue());
+		excelInsertString(sheet,26,2,sugars.getValue());
+		excelInsertString(sheet,27,2,sodium.getValue());
+		excelInsertString(sheet,28,2,potassium.getValue());
+		patchResultsWithND(sheet,22,7,2);
+	}
+	
+	if(gentype.equals(USNUTFACT_1_BTN) || gentype.equals(MUNCHYNUTFACT_1_BTN))
+	{
+		excelInsertString(sheet,19,2,energy_us.getValue());
+		excelInsertString(sheet,20,2,energy_us_kj.getValue());
+		excelInsertString(sheet,21,2,calories_from_fat.getValue());
+		excelInsertString(sheet,22,2,total_fat.getValue());
+		excelInsertString(sheet,23,2,saturated_fat.getValue());
+		excelInsertString(sheet,24,2,monosaturated.getValue());
+		excelInsertString(sheet,25,2,polyunsaturated.getValue());
+		excelInsertString(sheet,26,2,trans_fat.getValue());
+		excelInsertString(sheet,27,2,protein.getValue());
+		excelInsertString(sheet,28,2,total_carbohydrate.getValue());
+		excelInsertString(sheet,29,2,dietary_fiber.getValue());
+		excelInsertString(sheet,30,2,sugars.getValue());
+		excelInsertString(sheet,31,2,cholesterol.getValue());
+		excelInsertString(sheet,32,2,sodium.getValue());
+		excelInsertString(sheet,33,2,iron.getValue());
+		excelInsertString(sheet,34,2,calcium.getValue());
+		excelInsertString(sheet,35,2,vitamin_a.getValue());
+		excelInsertString(sheet,36,2,vitamin_c.getValue());
+		patchResultsWithND(sheet,21,16,2);
+	}
+
+	if(gentype.equals(CNNUTFACT_1_BTN))
+	{
+		excelInsertString(sheet,21,2,total_fat.getValue());
+		excelInsertString(sheet,22,2,protein.getValue());
+		excelInsertString(sheet,23,2,total_carbohydrate.getValue());
+		excelInsertString(sheet,24,2,sodium.getValue());
+		patchResultsWithND(sheet,21,4,2);
+	}
+
+	sgvalue = Float.parseFloat(sg_value.getValue());
+
+	// nutri labeling (per whatever serving-size entered) formula = (param / 100) * serving-size
+	servsize = Float.parseFloat(serving_size.getValue());
+	servsize_str = nf.format(servsize);
+
+	enkcal = Float.parseFloat(energy_my.getValue());
+	enkj = Float.parseFloat(energy_my_kj.getValue());
+	tcarbo = Float.parseFloat(total_carbohydrate.getValue());
+	tprotein = Float.parseFloat(protein.getValue());
+	tfatt = Float.parseFloat(total_fat.getValue());
+	tsugar = Float.parseFloat(sugars.getValue());
+	ttransfat = Float.parseFloat(trans_fat.getValue());
+	tpotassium = Float.parseFloat(potassium.getValue());
+	
+	tsatfat = Float.parseFloat(saturated_fat.getValue());
+	tmonounsat = Float.parseFloat(monosaturated.getValue());
+	tpolyunsat = Float.parseFloat(polyunsaturated.getValue());
+	tfibre = Float.parseFloat(dietary_fiber.getValue());
+	//tsodium = (Float.parseFloat(sodium.getValue())) / 1000;
+	tsodium = Float.parseFloat(sodium.getValue());
+	tcholes = Float.parseFloat(cholesterol.getValue());
+
+	tvitamin_a = Float.parseFloat(vitamin_a.getValue());
+	tvitamin_c = Float.parseFloat(vitamin_c.getValue());
+	tiron = Float.parseFloat(iron.getValue());
+	tcalcium = Float.parseFloat(calcium.getValue());
+
+	tmoisture = Float.parseFloat(moisture.getValue());
+	tash = Float.parseFloat(ash.getValue());
+
+	ttotalcarbo = 100 - tmoisture - tash - tfatt - tprotein;
+	tavailablecarbo = ttotalcarbo - tfibre;
+
+	tustotalcalorie_kcal = (4 * tavailablecarbo) + (4 * tprotein) + (9 * tfatt) + (2 * tfibre);
+	tustotalcalorie_kj = tustotalcalorie_kcal * 4.19;
+	tuscaloriesfromfat = tfatt * 9;
+
+	servingpack = serving_perpackage.getValue();
+
+	if(unittype == 1 && sgvalue != 0) // formula = (param / SG)
+	{
+		enkcal = enkcal / sgvalue;
+		enkj = enkj / sgvalue;
+		tcarbo = tcarbo / sgvalue;
+		tprotein = tprotein / sgvalue;
+		tfatt = tfatt / sgvalue;
+		tsugar = tsugar / sgvalue;
+
+		tsatfat = tsatfat / sgvalue;
+		tmonounsat = tmonounsat / sgvalue;
+		tpolyunsat = tpolyunsat / sgvalue;
+		tfibre = tfibre / sgvalue;
+		tsodium = tsodium / sgvalue;
+		tcholes = tcholes / sgvalue;
+
+		ttransfat = ttransfat / sgvalue;
+		tpotassium = tpotassium / sgvalue;
+		
+		tvitamin_a = tvitamin_a / sgvalue;
+		tvitamin_c = tvitamin_c / sgvalue;
+		tiron = tiron / sgvalue;
+		tcalcium = tcalcium / sgvalue;
+
+		tmoisture = tmoisture / sgvalue;
+		tash = tash / sgvalue;
+
+		ttotalcarbo = ttotalcarbo / sgvalue;
+		tavailablecarbo = tavailablecarbo / sgvalue;
+
+		tustotalcalorie_kcal = tustotalcalorie_kcal / sgvalue;
+		tustotalcalorie_kj = tustotalcalorie_kj / sgvalue;
+		tuscaloriesfromfat = tuscaloriesfromfat / sgvalue;
+	}
+
+	if(unittype == 2 && sgvalue != 0) // formula = (param * SG)
+	{
+		enkcal = enkcal * sgvalue;
+		enkj = enkj * sgvalue;
+		tcarbo = tcarbo * sgvalue;
+		tprotein = tprotein * sgvalue;
+		tfatt = tfatt * sgvalue;
+		tsugar = tsugar * sgvalue;
+
+		tsatfat = tsatfat * sgvalue;
+		tmonounsat = tmonounsat * sgvalue;
+		tpolyunsat = tpolyunsat * sgvalue;
+		tfibre = tfibre * sgvalue;
+		tsodium = tsodium * sgvalue;
+		tcholes = tcholes * sgvalue;
+
+		ttransfat = ttransfat * sgvalue;
+		tpotassium = tpotassium * sgvalue;
+		
+		tvitamin_a = tvitamin_a * sgvalue;
+		tvitamin_c = tvitamin_c * sgvalue;
+		tiron = tiron * sgvalue;
+		tcalcium = tcalcium * sgvalue;
+
+		tmoisture = tmoisture * sgvalue;
+		tash = tash * sgvalue;
+
+		ttotalcarbo = ttotalcarbo * sgvalue;
+		tavailablecarbo = tavailablecarbo * sgvalue;
+
+		tustotalcalorie_kcal = tustotalcalorie_kcal * sgvalue;
+		tustotalcalorie_kj = tustotalcalorie_kj * sgvalue;
+		tuscaloriesfromfat = tuscaloriesfromfat * sgvalue;
+	}
+	
+	tsalt_uk = tsodium / 0.4;
+
+	// serving-size vars
+	se_enkcal = enkcal;
+	se_enkj = enkj;
+	se_tcarbo = tcarbo;
+	se_tprotein = tprotein;
+	se_tfatt = tfatt;
+	se_tsugar = tsugar;
+	
+	se_tsatfat = tsatfat;
+	se_tmonounsat = tmonounsat;
+	se_tpolyunsat = tpolyunsat;
+	se_tfibre = tfibre;
+	se_tsodium = tsodium;
+	se_tcholes = tcholes;
+	se_tsalt_uk = tsalt_uk;
+
+	se_ttransfat = ttransfat;
+	se_tpotassium = tpotassium;
+
+	se_tvitamin_a = tvitamin_a;
+	se_tvitamin_c = tvitamin_c;
+	se_tiron = tiron;
+	se_tcalcium = tcalcium;
+
+	se_tmoisture = tmoisture;
+	se_tash = tash;
+
+	se_ttotalcarbo = ttotalcarbo;
+	se_tavailablecarbo = tavailablecarbo;
+
+	se_tustotalcalorie_kcal = tustotalcalorie_kcal;
+	se_tustotalcalorie_kj = tustotalcalorie_kj;
+	se_tuscaloriesfromfat = tuscaloriesfromfat;
+
+	// serving-size not 100g as default
+	if(servsize != 100.0)
+	{
+		se_enkcal = (enkcal / 100) * servsize;
+		se_enkj = (enkj / 100) * servsize;
+		se_tcarbo = (tcarbo / 100) * servsize;
+		se_tprotein = (tprotein / 100) * servsize;
+		se_tfatt = (tfatt / 100) * servsize;
+		se_tsugar = (tsugar / 100) * servsize;
+
+		se_tsatfat = (tsatfat / 100) * servsize;
+		se_tmonounsat = (tmonounsat / 100) * servsize;
+		se_tpolyunsat = (tpolyunsat / 100) * servsize;
+		se_tfibre = (tfibre / 100) * servsize;
+		se_tsodium = (tsodium / 100) * servsize;
+		se_tcholes = (tcholes / 100) * servsize;
+
+		se_tsalt_uk = (se_tsalt_uk / 100) * servsize;
+
+		se_ttransfat = (se_ttransfat / 100) * servsize;
+		se_tpotassium = (se_tpotassium / 100) * servsize;
+		
+		se_tvitamin_a = (se_tvitamin_a / 100) * servsize;
+		se_tvitamin_c = (se_tvitamin_c / 100) * servsize;
+		se_tiron = (se_tiron / 100) * servsize;
+		se_tcalcium = (se_tcalcium / 100) * servsize;
+
+		se_tmoisture = (se_tmoisture / 100) * servsize;
+		se_tash = (se_tash / 100) * servsize;
+
+		se_ttotalcarbo = (se_ttotalcarbo / 100) * servsize;
+		se_tavailablecarbo = (se_tavailablecarbo / 100) * servsize;
+
+		se_tustotalcalorie_kcal = (se_tustotalcalorie_kcal / 100) * servsize;
+		se_tustotalcalorie_kj = (se_tustotalcalorie_kj / 100) * servsize;
+		se_tuscaloriesfromfat = (se_tuscaloriesfromfat / 100) * servsize;
+	}
+
+	// change the base-units for page 1 -- parameters result
+	FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
+	if(unittype == 2) // g/100ml
+	{
+		rowstart = 19;
+		for(i=0;i<17;i++)
+		{
+			org.apache.poi.hssf.usermodel.HSSFRow checkrow = sheet.getRow(rowstart + i);
+			Cell kcell = checkrow.getCell(3);
+			if(kcell == null) break;
+			kstr = POI_GetCellContentString(kcell,evaluator,"#");
+			if(kstr != null)
+			{
+				kstr = kstr.trim();
+				if(kstr.equals("kcal/100g")) excelInsertString(sheet,rowstart + i,3,"kcal/100ml");
+				if(kstr.equals("kJ/100g")) excelInsertString(sheet,rowstart + i,3,"kJ/100ml");
+				if(kstr.equals("g/100g")) excelInsertString(sheet,rowstart + i,3,"g/100ml");
+				if(kstr.equals("mg/100g")) excelInsertString(sheet,rowstart + i,3,"mg/100ml");
+			}
+		}
+	}
+
+	// MY standard nutri-labeling page
+	if(gentype.equals(MYNUTFACT_1_BTN) || gentype.equals(MYNUTFACT_1_SUGAR_BTN))
+	{
+		// nutri labeling (per 100g/100ml default column)
+		excelInsertString(sheet,77,2,nf0.format(enkcal) + " kcal");
+		excelInsertString(sheet,78,2,nf0.format(enkj) + " kJ");
+		excelInsertString(sheet,79,2,nf.format(tcarbo) + " g");
+		excelInsertString(sheet,80,2,nf.format(tprotein) + " g");
+		excelInsertString(sheet,81,2,nf.format(tfatt) + " g");
+	
+		// user want sugar-template
+		if(gentype.equals(MYNUTFACT_1_SUGAR_BTN))
+		{
+			excelInsertString(sheet,82,2,nf.format(tsugar) + " g");
+			outfnsuffix = 1; // index to grab file-suffix
+		}
+
+		// change units base
+		if(unittype == 2) // g/100ml
+		{
+			excelInsertString(sheet,75,2, "     " + servsize_str + " ml");
+			excelInsertString(sheet,76,2, "Per 100ml");
+			excelInsertString(sheet,76,3,"Setiap hidangan / per serving (" + servsize_str + " ml)");
+		}
+		if(unittype == 1) // g/100g
+		{
+			excelInsertString(sheet,75,2, "     " + servsize_str + " g");
+			excelInsertString(sheet,76,3,"Setiap hidangan / per serving (" + servsize_str + " g)");
+		}
+
+		// by serving-size column
+		excelInsertString(sheet,77,3,nf0.format(se_enkcal) + " kcal");
+		excelInsertString(sheet,78,3,nf0.format(se_enkj) + " kJ");
+		excelInsertString(sheet,79,3,nf.format(se_tcarbo) + " g");
+		excelInsertString(sheet,80,3,nf.format(se_tprotein) + " g");
+		excelInsertString(sheet,81,3,nf.format(se_tfatt) + " g");
+		// user want sugar-template
+		if(gentype.equals(MYNUTFACT_1_SUGAR_BTN))
+		{
+			excelInsertString(sheet,82,3,nf.format(se_tsugar) + " g");
+			excelInsertString(sheet,82,2,nf.format(tsugar) + " g");
+		}
+
+	} // ENDOF if(gentype.equals(MYNUTFACT_1_BTN))
+
+	tunits = (unittype == 2) ? " ml" : " g";
+
+	if(gentype.equals(UKNUTFACT_1_BTN))
+	{
+		outfnsuffix = 3;
+
+		// nutri labeling (per 100g/100ml default column)
+		excelInsertString(sheet,74,4,nf0.format(enkj) + " kJ / " + nf0.format(enkcal) + " kcal");
+		excelInsertString(sheet,75,4,nf.format(tprotein) + " g");
+		excelInsertString(sheet,76,4,nf.format(tcarbo) + " g");
+		excelInsertString(sheet,77,4,nf.format(tsugar) + " g");
+		excelInsertString(sheet,78,4,nf.format(tfatt) + " g");
+		excelInsertString(sheet,79,4,nf.format(tsatfat) + " g");
+		excelInsertString(sheet,80,4,nf.format(tmonounsat) + " g");
+		excelInsertString(sheet,81,4,nf.format(tpolyunsat) + " g");
+		excelInsertString(sheet,82,4,nf.format(tfibre) + " g");
+		excelInsertString(sheet,83,4,nf.format(tsodium) + " mg");
+		excelInsertString(sheet,84,4,nf.format(tcholes) + " mg");
+
+		// serving-size column
+		excelInsertString(sheet,74,2,nf0.format(se_enkj) + " kJ / " + nf0.format(se_enkcal) + " kcal");
+		excelInsertString(sheet,75,2,nf.format(se_tprotein) + " g");
+		excelInsertString(sheet,76,2,nf.format(se_tcarbo) + " g");
+		excelInsertString(sheet,77,2,nf.format(se_tsugar) + " g");
+		excelInsertString(sheet,78,2,nf.format(se_tfatt) + " g");
+		excelInsertString(sheet,79,2,nf.format(se_tsatfat) + " g");
+		excelInsertString(sheet,80,2,nf.format(se_tmonounsat) + " g");
+		excelInsertString(sheet,81,2,nf.format(se_tpolyunsat) + " g");
+		excelInsertString(sheet,82,2,nf.format(se_tfibre) + " g");
+		excelInsertString(sheet,83,2,nf.format(se_tsodium) + " mg");
+		excelInsertString(sheet,84,2,nf.format(se_tcholes) + " mg");
+
+		// default and serving-size label
+		excelInsertString(sheet,73,2, "(" + servsize_str + tunits + ")");
+		excelInsertString(sheet,72,4, "100" + tunits + " (3 1/2 oz)");
+
+		// salty line
+		excelInsertString(sheet,85,1,"A serving (" + servsize_str + tunits + ") " + 
+		"contains the equivalent of approx. " + nf.format(se_tsalt_uk) + " g salt");
+	}
+
+	// Singapore nutri-label
+	if(gentype.equals(SGNUTFACT_1_BTN))
+	{
+		outfnsuffix = 6;
+		// nutri labeling (per 100g/100ml default column)
+		excelInsertString(sheet,74,4,nf0.format(enkj) + " kJ / " + nf0.format(enkcal) + " kcal");
+		excelInsertString(sheet,75,4,nf.format(tprotein) + " g");
+		excelInsertString(sheet,76,4,nf.format(tfatt) + " g");
+		excelInsertString(sheet,77,4,nf.format(tsatfat) + " g");
+		excelInsertString(sheet,78,4,nf.format(tcholes) + " mg");
+		excelInsertString(sheet,79,4,nf.format(tcarbo) + " g");
+		excelInsertString(sheet,80,4,nf.format(tfibre) + " g");
+		excelInsertString(sheet,81,4,nf.format(tsodium) + " mg");
+		
+		// serving-size column
+		excelInsertString(sheet,74,2,nf0.format(se_enkj) + " kJ / " + nf0.format(se_enkcal) + " kcal");
+		excelInsertString(sheet,75,2,nf.format(se_tprotein) + " g");
+		excelInsertString(sheet,76,2,nf.format(se_tfatt) + " g");
+		excelInsertString(sheet,77,2,nf.format(se_tsatfat) + " g");
+		excelInsertString(sheet,78,2,nf.format(se_tcholes) + " mg");
+		excelInsertString(sheet,79,2,nf.format(se_tcarbo) + " g");
+		excelInsertString(sheet,80,2,nf.format(se_tfibre) + " g");
+		excelInsertString(sheet,81,2,nf.format(se_tsodium) + " mg");
+
+		// serving-per-package and serving-size
+		excelInsertString(sheet,71,2,servingpack);
+		excelInsertString(sheet,72,2,servsize_str + tunits);
+
+		// per 100 g
+		excelInsertString(sheet,73,4,"Per 100" + tunits);
+	}
+
+	// Australia nutri-label
+	if(gentype.equals(AUNUTFACT_1_BTN))
+	{
+		outfnsuffix = 4;
+
+		// nutri labeling (per 100g/100ml default column)
+		excelInsertString(sheet,74,4,nf0.format(enkj) + " kJ / " + nf0.format(enkcal) + " kcal");
+		excelInsertString(sheet,75,4,nf.format(tprotein) + " g");
+		excelInsertString(sheet,76,4,nf.format(tfatt) + " g");
+		excelInsertString(sheet,77,4,nf.format(tsatfat) + " g");
+		excelInsertString(sheet,78,4,nf.format(tcarbo) + " g");
+		excelInsertString(sheet,79,4,nf.format(tsugar) + " g");
+		excelInsertString(sheet,80,4,nf.format(tsodium) + " mg");
+		excelInsertString(sheet,81,4,nf.format(tpotassium) + " g");
+		excelInsertString(sheet,82,4,nf.format(tcholes) + " mg");
+		excelInsertString(sheet,83,4,nf.format(ttransfat) + " g");
+
+		// serving-size column
+		excelInsertString(sheet,74,2,nf0.format(se_enkj) + " kJ / " + nf0.format(se_enkcal) + " kcal");
+		excelInsertString(sheet,75,2,nf.format(se_tprotein) + " g");
+		excelInsertString(sheet,76,2,nf.format(se_tfatt) + " g");
+		excelInsertString(sheet,77,2,nf.format(se_tsatfat) + " g");
+		excelInsertString(sheet,78,2,nf.format(se_tcarbo) + " g");
+		excelInsertString(sheet,79,2,nf.format(se_tsugar) + " g");
+		excelInsertString(sheet,80,2,nf.format(se_tsodium) + " mg");
+		excelInsertString(sheet,81,2,nf.format(se_tpotassium) + " g");
+		excelInsertString(sheet,82,2,nf.format(se_tcholes) + " mg");
+		excelInsertString(sheet,83,2,nf.format(se_ttransfat) + " g");
+
+		excelInsertString(sheet,73,2,"Per serving (" + servsize_str + tunits + ")");
+		// per 100 g
+		excelInsertString(sheet,73,4,"Per 100" + tunits);
+	}
+
+	// USA nutri-label and Munchy(uses US template but with 100g serving-size column)
+	if(gentype.equals(USNUTFACT_1_BTN) || gentype.equals(MUNCHYNUTFACT_1_BTN))
+	{
+		outfnsuffix = 2;
+		if(gentype.equals(MUNCHYNUTFACT_1_BTN)) outfnsuffix = 7;
+
+		// calories and calories-from-fat
+		//excelInsertString(sheet,74,1,"Calories (per 100 g) : " + nf0.format(tustotalcalorie_kcal) + " kcal");
+		//excelInsertString(sheet,74,3,"Calories from fat (per 100 g) : " + nf0.format(tuscaloriesfromfat) + " kcal");
+
+		excelInsertString(sheet,74,1,"");
+		excelInsertString(sheet,74,3,"");
+		
+		excelInsertString(sheet,75,1,"Calories (per serving) : " + nf0.format(se_tustotalcalorie_kcal) + " kcal");
+		excelInsertString(sheet,75,3,"Calories from fat (per serving) : " + nf0.format(se_tuscaloriesfromfat) + " kcal");
+
+		excelInsertString(sheet,78,2,nf.format(se_tfatt) + " g");
+		excelInsertString(sheet,79,2,nf.format(se_tsatfat) + " g");
+		excelInsertString(sheet,80,2,nf.format(se_ttransfat) + " g");
+		excelInsertString(sheet,81,2,nf.format(se_tcholes) + " mg");
+		excelInsertString(sheet,82,2,nf.format(se_tsodium) + " mg");
+		excelInsertString(sheet,83,2,nf.format(se_ttotalcarbo) + " g");
+		excelInsertString(sheet,84,2,nf.format(se_tfibre) + " g");
+		excelInsertString(sheet,85,2,nf.format(se_tsugar) + " g");
+		excelInsertString(sheet,86,2,nf.format(se_tprotein) + " g");
+
+		// percentage calc based on RDI
+		se_tvitamin_a = (se_tvitamin_a / 5000) * 100;
+		se_tvitamin_c = (se_tvitamin_c / 60) * 100;
+		se_tiron = (se_tiron / 18) * 100;
+		se_tcalcium = (se_tcalcium / 1000) * 100;
+		
+		totalfat_rdi = (se_tfatt / 65) * 100;
+		satfat_rdi = (se_tsatfat / 20) * 100;
+		cholesterol_rdi = (se_tcholes / 300) * 100;
+		sodium_rdi = (se_tsodium / 2400) * 100;
+		totalcarbo_rdi = (se_ttotalcarbo / 300) * 100;
+		dietfiber_rdi = (se_tfibre / 25) * 100;
+		sugar_rdi = (se_tsugar / 1.9) * 100;
+		protein_rdi = (se_tprotein / 8) * 100;
+
+		// abit of juggling
+		if(se_tvitamin_a < 2.0) se_tvitamin_a = 0;
+		if(se_tvitamin_c < 2.0) se_tvitamin_c = 0;
+		if(se_tiron < 2.0) se_tiron = 0;
+		if(se_tcalcium < 2.0) se_tcalcium = 0;
+
+// TODO need to check these with DrKoh
+		if(totalfat_rdi < 0.5) totalfat_rdi = 0;
+		if(satfat_rdi < 0.5) satfat_rdi = 0;
+		if(cholesterol_rdi < 2) cholesterol_rdi = 0;
+		if(sodium_rdi < 5) sodium_rdi = 0;
+		if(totalcarbo_rdi < 0.5) totalcarbo_rdi = 0;
+		if(dietfiber_rdi < 0.5) dietfiber_rdi = 0;
+
+		excelInsertString(sheet,88,2,nf0.format(se_tvitamin_a) + "%");
+		excelInsertString(sheet,88,4,nf0.format(se_tvitamin_c) + "%");
+		excelInsertString(sheet,89,2,nf0.format(se_tcalcium) + "%");
+		excelInsertString(sheet,89,4,nf0.format(se_tiron) + "%");
+
+		// those percentage with RDI thing --
+		excelInsertString(sheet,78,4,nf0.format(totalfat_rdi) + "%");
+		excelInsertString(sheet,79,4,nf0.format(satfat_rdi) + "%");
+
+		excelInsertString(sheet,81,4,nf0.format(cholesterol_rdi) + "%");
+		excelInsertString(sheet,82,4,nf0.format(sodium_rdi) + "%");
+		excelInsertString(sheet,83,4,nf0.format(totalcarbo_rdi) + "%");
+		excelInsertString(sheet,84,4,nf0.format(dietfiber_rdi) + "%");
+
+		excelInsertString(sheet,71,2, servsize_str + tunits);
+		
+		// 02/04/2013: Req by DrKoh, Munchy ONLY with 100g serving-size colm
+		if(gentype.equals(MUNCHYNUTFACT_1_BTN))
+		{
+			// per 100g column - from input-boxes as they're all default to 100g serving size
+			excelInsertString(sheet,78,3,total_fat.getValue() + " g");
+			excelInsertString(sheet,79,3,saturated_fat.getValue() + " g");
+			excelInsertString(sheet,80,3,trans_fat.getValue() + " g");
+			excelInsertString(sheet,81,3,cholesterol.getValue() + " mg");
+			excelInsertString(sheet,82,3,sodium.getValue() + " mg");
+			excelInsertString(sheet,83,3,nf.format(ttotalcarbo) + " g");
+			excelInsertString(sheet,84,3,dietary_fiber.getValue() + " g");
+			excelInsertString(sheet,85,3,sugars.getValue() + " g");
+			excelInsertString(sheet,86,3,protein.getValue() + " g");
+		}
+		else
+			excelInsertString(sheet,77,3,""); // remove the "per 100g" header
+	}
+
+	// CN nutri-label
+	if(gentype.equals(CNNUTFACT_1_BTN))
+	{
+		outfnsuffix = 5;
+
+		excelInsertString(sheet,75,2,"每 " + servsize_str + " 克");
+
+		excelInsertString(sheet,76,2,nf0.format(se_enkj));
+		excelInsertString(sheet,77,2,nf.format(se_tprotein));
+		excelInsertString(sheet,78,2,nf.format(se_tfatt));
+		excelInsertString(sheet,79,2,nf.format(se_ttotalcarbo));
+		excelInsertString(sheet,80,2,nf.format(se_tsodium));
+
+		// CN NRV % calcs
+		enkj_nrv = (se_enkj / 8400) * 100;
+		tprotein_nrv = (se_tprotein / 60) * 100;
+		tfatt_nrv = (se_tfatt / 60) * 100;
+		ttotalcarbo_nrv = (se_ttotalcarbo / 300) * 100;
+		tsodium_nrv = (se_tsodium / 2000) * 100;
+		
+		excelInsertString(sheet,76,4,nf0.format(enkj_nrv) + "%");
+		excelInsertString(sheet,77,4,nf.format(tprotein_nrv) + "%");
+		excelInsertString(sheet,78,4,nf.format(tfatt_nrv) + "%");
+		excelInsertString(sheet,79,4,nf.format(ttotalcarbo_nrv) + "%");
+		excelInsertString(sheet,80,4,nf.format(tsodium_nrv) + "%");
+
+	}
+
+	// signatory stuff
+	signsel1 = signator_lb.getSelectedItem().getLabel();
+	signsel2 = signator2_lb.getSelectedItem().getLabel();
+	if(signsel1.equals("NONE") && signsel2.equals("NONE")) return; // no signators selected, don't output
+	sign1rec = getSignatorRec(signsel1);
+	sign2rec = null;
+
+	signstart_row = 37; // default for all templates
+	if(gentype.equals(USNUTFACT_1_BTN) || gentype.equals(MUNCHYNUTFACT_1_BTN)) signstart_row = 42; // US template -- sign-row diff
+
+	// clear signatures-area cells..
+	for(i=0;i<5;i++)
+	{
+		excelInsertString(sheet,signstart_row + i,0,"");
+		excelInsertString(sheet,signstart_row + i,4,"");
+	}
+
+	// if there's a second signator selected
+	if(!signsel2.equals("NONE"))
+	{
+		sign2rec = getSignatorRec(signsel2);
+		if(sign2rec != null)
+		{
+			excelInsertString(sheet,signstart_row,4,"_________________________________");
+			excelInsertString(sheet,signstart_row + 1,4,kiboo.checkNullString(sign2rec.get("value1")));
+			excelInsertString(sheet,signstart_row + 2,4,kiboo.checkNullString(sign2rec.get("value2")));
+			excelInsertString(sheet,signstart_row + 3,4,kiboo.checkNullString(sign2rec.get("value3")));
+			excelInsertString(sheet,signstart_row + 4,4,kiboo.checkNullString(sign2rec.get("value4")));
+		}
+	}
+
+	if(sign1rec != null)
+	{
+		excelInsertString(sheet,signstart_row,0,"_________________________________");
+		excelInsertString(sheet,signstart_row + 1,0,kiboo.checkNullString(sign1rec.get("value1")));
+		excelInsertString(sheet,signstart_row + 2,0,kiboo.checkNullString(sign1rec.get("value2")));
+		excelInsertString(sheet,signstart_row + 3,0,kiboo.checkNullString(sign1rec.get("value3")));
+		excelInsertString(sheet,signstart_row + 4,0,kiboo.checkNullString(sign1rec.get("value4")));
+	}
+
+	// Write the output to a file
+	jjfn = folderno + NUTRILABEL_SUFFIX[outfnsuffix];
+	outfn = session.getWebApp().getRealPath("tmp/" + jjfn);
+	FileOutputStream fileOut = new FileOutputStream(outfn);
+	wb.write(fileOut);
+	fileOut.close();
+
+	nutrigen_popup.close();
+	downloadFile(kasiexport,jjfn,outfn);
+	//guihand.showMessageBox("Diingg! Nutritional labeling report generated..");
+}
+
+glob_selected_genbutt = null;
+
+void nutriPopupSelector(Component icomp)
+{
+	glob_selected_genbutt = icomp;
+	nutrigen_popup.open(icomp);
+}
+
+]]>
+</zscript>
+
+<!-- popup for additional stuff before gen nutri-label report -->
+<popup id="nutrigen_popup">
+<grid>
+	<rows>
+		<row>
+			<label value="Serving size" style="font-size:9px" />
+			<textbox id="serving_size" value="100" style="font-size:9px" />
+			<label value="SG" style="font-size:9px" />
+			<textbox id="sg_value" value="0" style="font-size:9px" />
+		</row>
+		<row spans="1,1,2">
+			<label value="Serving per package" style="font-size:9px" />
+			<textbox id="serving_perpackage" value="1" style="font-size:9px" />
+		</row>
+		<row>
+			<label value="Signator" style="font-size:9px" />
+			<listbox id="signator_lb" mold="select" style="font-size:9px" />
+			<label value="2nd Signator" style="font-size:9px" />
+			<listbox id="signator2_lb" mold="select" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<separator height="3px" />
+
+<hbox>
+	<button label="Generate g/100g" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,1)" />
+	<button label="Generate g/100ml" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,2)" />
+	<button label="Close" style="font-size:9px" onClick="nutrigen_popup.close()" />
+</hbox>
+</popup>
+
+<!-- END -->
+
+<!-- popup to let user change sample-marking -->
+<popup id="sampleMarking_popup">
+<vbox>
+	<textbox id="ch_samplemarking" style="font-size:9px" multiline="true" width="350px" height="50px" />
+	<button label="Update sample-marking" style="font-size:9px" onClick="updateSampleMarking()" />
+</vbox>
+</popup>
+
+<!-- formula only popup -->
+<popup id="formulaPopup">
+<groupbox mold="3d" width="400px">
+<label multiline="true" style="font-size:9px">
+Total_carbohydrate = 100 - moisture - ash - fat - protein
+Available_carbohydrate = Total_carbohydrate - dietary_fiber
+
+Total_calorie (MY kcal) = (4 x Total_carbohydrate) + (4 x protein) + (9 x fat)
+Total_calorie (MY kJ) = Total_calorie x 4.2
+
+Total_calorie (US kcal) = (4 x Available_carbohydrate) + (4 x protein) + (9 x fat) + (2 x dietary-fiber)
+Total_calorie (US kJ) = total_calorie(US) x 4.2
+
+Total_milk_solid = 100 - moisture - sucrose
+Non_fat_milk_solid = 100 - moisture - sucrose - fat
+
+Calories from Fat = fat x 9
+
+</label>
+</groupbox>
+</popup>
+
+<div width="1200px">
+<panel id="resultentry3_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+<hbox>
+
+<vbox>
+<grid width="450px">
+	<rows>
+		<row>
+			<label value="Folder number" style="font-size:9px" />
+			<textbox id="folderno_tb" style="font-size:9px" />
+			<button label="by folder" style="font-size:9px" onClick="loadSampleTests(1)" />
+		</row>
+		<row>
+			<label value="Sample-ID" style="font-size:9px" />
+			<textbox id="sampleid_tb" style="font-size:9px" />
+			<button label="by sample-id" style="font-size:9px" onClick="loadSampleTests(2)" />
+		</row>
+	</rows>
+</grid>
+
+<div id="foldermeta_area" visible="false">
+	<grid width="300px">
+		<rows>
+			<row>
+				<label value="Folder #" />
+				<label id="jobfolder_str" />
+			</row>
+		</rows>
+	</grid>
+	<div id="jobsamples_holder" width="440px" />
+
+	<grid width="300px">
+		<rows>
+			<row>
+				<label value="Sample ID" />
+				<label id="jobsample_id" />
+			</row>
+		</rows>
+	</grid>
+	<div id="sampletests_holder" width="440px" />
+</div> <!-- foldermeta_area -->
+
+</vbox>
+
+<vbox id="workarea" visible="false" >
+
+<grid width="450px">
+	<rows>
+		<row spans=",2,">
+			<label value="Sample ID" />
+			<label id="form_sampleid" />
+			<div style="background:#cc0000;">
+				<label id="saved_msg" style="text-decoration:blink;color:#ffffff;" />
+			</div>
+		</row>
+		<row>
+			<label value="Keyin" style="font-size:9px" />
+			<label id="keyin_by" style="font-size:9px" />
+			<label value="Keyin.Date" style="font-size:9px" />
+			<label id="keyin_date" style="font-size:9px" />
+		</row>
+	</rows>
+</grid>
+
+<hbox>
+	<div id="form_holder" />
+	<vbox>
+		<hbox>
+			<button id="nutricalc_btn" label="Nutri-calculation" style="font-size:9px" onClick="doFormula(1)" visible="false" />
+			<button label="?" style="font-size:9px" onClick="formulaPopup.open(self)" />
+		</hbox>
+		<button label="Save results" style="font-size:9px" onClick="saveImportResults()" />
+
+		<separator height="3px" />
+		
+		<div id="nutrirep_box" visible="false" style="background:#ce5c00;padding:2px">
+			<div style="background:#3465a4;padding:3px">
+				<label style="color:#eeeeee">
+				Generate report
+				</label>
+			</div>
+			<separator height="3px" />
+			<vbox>
+			<button id="${MYNUTFACT_1_BTN}" label="Nutri-fact (MY)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${MYNUTFACT_1_SUGAR_BTN}" label="Nutri-fact + Sugar (MY)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${USNUTFACT_1_BTN}" label="Nutri-fact (US)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${UKNUTFACT_1_BTN}" label="Nutri-fact (UK)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${AUNUTFACT_1_BTN}" label="Nutri-fact (AU)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${CNNUTFACT_1_BTN}" label="Nutri-fact (CN)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${SGNUTFACT_1_BTN}" label="Nutri-fact (SG)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${MUNCHYNUTFACT_1_BTN}" label="Munchy (US)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			</vbox>
+		</div>
+	
+	</vbox>
+
+</hbox>
+
+</vbox> <!-- workarea -->
+
+</hbox>
+
+<div id="kasiexport" />
+
+<zscript>
+<![CDATA[
+
+luhand.populateListbox_ByLookup(signator2_lb, "dd_signators", 2);
+luhand.populateListbox_ByLookup(signator_lb, "dd_signators", 2);
+signator_lb.setSelectedIndex(1); // set to 2nd name in the signatories list.. 1st name is "nobody"
+signator_recs = luhand.getLookups_ByParent("dd_signators");
+
+// only users def in NUTRI_LABEL_REPORT_USERS can see nutri-label report gen butts
+if(sechand.allowedUser(useraccessobj.username,"NUTRI_LABEL_REPORT_USERS")) cangenreport = true;
+
+if(useraccessobj.accesslevel >= 9)
+{
+	cangenreport = true;
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

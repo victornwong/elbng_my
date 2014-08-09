@@ -1,0 +1,462 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="emaildocument_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript>
+<![CDATA[
+MYVERSION = "v2.0";
+/*
+Title		: Email documents(SRN/COA/whatever) to email addresses def in table customer_emails
+Written by	: Victor Wong
+
+It's an upgraded version of samplereg/emaildocu_srn.zul
+
+Revisions:
+03/11/2011: started
+28/03/2012: ported to byte-compiled funcs
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+gridhand = new GridHandler();
+
+public class customerListObject
+{
+	public String ar_code;
+	public String customer_name;
+}
+
+public class emailTickerObject
+{
+	public String contact_name;
+	public String contact_email;
+	public Object ticker;
+}
+
+selected_arcode = "";
+selected_customername = "";
+uploaded_filename = "";
+
+last_load_type = 0;
+
+HILITE_BACKGROUND = "background:#A1F76F";
+ArrayList mainCustomerList;
+ArrayList mainEmailTickerList;
+Object prevSelectedFolder = null;
+
+void showCustomerEmailAddresses(String iarcode)
+{
+	if(emailaddress_holder.getFellowIfAny("emailaddressgrid") != null) emailaddressgrid.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("emailaddressgrid");
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	hrow1 = gridhand.gridMakeRow("","","4",gridrows);
+	gridhand.makeLabelToParent("Customer: " + selected_customername,"font-size:10px;font-weight:bold",hrow1);
+	hrow1 = gridhand.gridMakeRow("","","4",gridrows);
+	gridhand.makeLabelToParent("Contact person emails","font-size:10px;font-weight:bold",hrow1);
+
+	headrow = gridhand.gridMakeRow("","background:#FA9D64","",gridrows);
+
+	String[] headersp = { "To:","Contact person","Designation","Email" };
+	for(i=0;i<headersp.length;i++) gridhand.makeLabelToParent(headersp[i],"",headrow);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select origid,contact_name,contact_email,contact_designation from customer_emails where ar_code='" + selected_arcode + "' " + 
+	"order by contact_name";
+	emrecs = sql.rows(sqlstm);
+	sql.close();
+
+	mainEmailTickerList = new ArrayList();
+
+	for(dpi : emrecs)
+	{
+		tiik = new emailTickerObject();
+		tiik.contact_name = dpi.get("contact_name");
+		tiik.contact_email = dpi.get("contact_email");
+
+		eprow = gridhand.gridMakeRow("","","",gridrows);
+
+		tiik.ticker = new Checkbox();
+		tiik.ticker.setId("TK" + dpi.get("origid").toString());
+		tiik.ticker.setParent(eprow);
+
+		mainEmailTickerList.add(tiik);
+
+		gridhand.makeLabelToParent(tiik.contact_name,"",eprow);
+		gridhand.makeLabelToParent(checkNullString_RetWat(dpi.get("contact_designation"),"---"),"",eprow);
+		gridhand.makeLabelToParent(tiik.contact_email,"",eprow);
+	}
+
+	fromstr = useraccessobj.email;
+	if(fromstr.equals("")) fromstr = "**PLEASE SET YOUR EMAIL ADDRESS**";
+	from_lbl.setValue(fromstr);
+
+	thegrid.setParent(emailaddress_holder);
+	viewsent_btn.setVisible(true);
+	workarea.setVisible(true);
+}
+
+class customerOnSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		//selitem = event.getReference();
+		selrow = event.getTarget();
+
+		if(prevSelectedFolder != null)
+		{
+			if(prevSelectedFolder != selrow) prevSelectedFolder.setStyle(null);
+			else
+				return; // selected same as previous, return - don't waste cpu
+		}
+
+		prevSelectedFolder = selrow;
+		selrow.setStyle("background:#9FF5A5");
+
+		selid = selrow.getId();
+		selid = selid.substring(2,selid.length());
+		
+		for(dpi : mainCustomerList)
+		{
+			if(dpi.ar_code.equals(selid))
+			{
+				selected_arcode = dpi.ar_code;
+				selected_customername = dpi.customer_name;
+				showCustomerEmailAddresses(selected_arcode);
+				break;
+			}
+		}
+	}
+}
+
+void loadCustomerList()
+{
+	cnm = kiboo.replaceSingleQuotes(customer_tb.getValue());
+	if(cnm.equals("")) return;
+
+	if(customerfound_holder.getFellowIfAny("customergrid") != null) customergrid.setParent(null);
+
+	// reset vars
+	selected_arcode = "";
+	selected_customername = "";
+	uploaded_filename = "";
+	mainEmailTickerList = null;
+
+	filename_lbl.setValue("");
+	sentlog_holder.setVisible(false);
+	viewsent_btn.setVisible(false);
+	workarea.setVisible(false); // hide workarea 'cause everything reset..
+
+	sqlstm = "select top 50 ar_code,customer_name,address1 from customer " + 
+	"where customer_name like '%" + cnm + "%' or ar_code like '%" + cnm + "%' or address1 like '%" + cnm + "%' order by customer_name";
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	therecs = sql.rows(sqlstm);
+	sql.close();
+
+	thegrid = new Grid();
+	thegrid.setId("customergrid");
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	headrow = gridhand.gridMakeRow("","background:#FA9D64","",gridrows);
+
+	String[] headersp = { "AR_Code","Customer","Address1" };
+	for(i=0;i<headersp.length;i++) gridhand.makeLabelToParent(headersp[i],"",headrow);
+
+	mainCustomerList = new ArrayList();
+
+	for(dpi : therecs)
+	{
+		icust = new customerListObject();
+		icust.ar_code = dpi.get("ar_code");
+		icust.customer_name = dpi.get("customer_name");
+		mainCustomerList.add(icust);
+
+		theid = "CP" + icust.ar_code;
+		cprow = gridhand.gridMakeRow(theid,"","",gridrows);
+		cprow.addEventListener("onClick", new customerOnSelect());
+
+		gridhand.makeLabelToParent(dpi.get("ar_code"),"",cprow);
+		gridhand.makeLabelToParent(dpi.get("customer_name"),"",cprow);
+		gridhand.makeLabelToParent(dpi.get("address1"),"",cprow);
+	}
+
+	thegrid.setParent(customerfound_holder);
+	customerfound_holder.setVisible(true);
+}
+
+// email the document to 
+void emailToTicked()
+{
+	if(mainEmailTickerList == null) return;
+
+	fromaddress = useraccessobj.email;
+	if(fromaddress.equals(""))
+	{
+		guihand.showMessageBox("You cannot send email from this system. Your email address is not set, please inform admin to set it for you");
+		return;
+	}
+
+	if(uploaded_filename.equals(""))
+	{
+		guihand.showMessageBox("No document being attached. Nothing to send");
+		return;
+	}
+
+	subjstr = kiboo.replaceSingleQuotes(subject_tb.getValue());
+	if(subjstr.equals(""))
+	{
+		guihand.showMessageBox("Enter a subject for this email..");
+		return;
+	}
+
+	towho = "";
+	for(dpi : mainEmailTickerList)
+	{
+		if(dpi.ticker.isChecked())
+		{
+			towho += dpi.contact_email + ",";
+			// clear ticked - make sure no dups if user press many times the send button
+			dpi.ticker.setChecked(false);
+		}
+	}
+
+	if(!towho.equals("")) towho = towho.substring(0,towho.length()-1);
+	else
+	{
+		guihand.showMessageBox("Please select someone to send email to!!");
+		return;
+	}
+
+	msgtxt = kiboo.replaceSingleQuotes(emailbody_tb.getValue());
+	msgwo_signature = msgtxt;
+
+	msgtxt += "\n\nThis email contains the electronic version of the requested document(s).\n\n";
+	msgtxt += "Please contact our customer service or sales person if you have any enquiries.\n\n";
+	msgtxt += "ALS | Malaysia - Indonesia\n9 Jalan Astaka U8/84, Bukit Jelutong\n40150 Shah Alam, Selangor\n\n";
+	msgtxt += "PHONE +60 3 7845 8257\nFAX +60 3 7845 8258\nEMAIL info@alsglobal.com.my\n";
+	msgtxt += "WEB http://www.alsglobal.com\n\n-Please consider the environment before printing this email-";
+
+	String[] tmpfnames = new String[1];
+	tmpfnames[0] = uploaded_filename;
+
+	sendEmailWithAttachment(SMTP_SERVER,fromaddress,towho,subjstr,msgtxt,tmpfnames);
+
+	todaydate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	// audit-log of what's sent - stuff_emailed table
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// append sent filename to msgtxt for ref later
+	msgwo_signature += "\n\nAttached file: " + uploaded_filename;
+
+	sqlstm = "insert into stuff_emailed (linking_code,docutype,docu_link,subject,notes,datesent,contact_name,contact_email,username) values " +
+	"('" + selected_arcode + "','DOCU',0,'" + subjstr + "','" + msgwo_signature + "','" + todaydate + "'," + 
+	"'" + selected_customername + "','" + towho + "','" + useraccessobj.username + "')";
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	// done emailing - remove everything
+	File file=new File(uploaded_filename);
+	if(file.exists()) file.delete();
+
+	uploaded_filename = "";
+	subject_tb.setValue("");
+	emailbody_tb.setValue("");
+
+	guihand.showMessageBox("Email sent..");
+}
+
+void uploadDocument()
+{
+	uploaded_file = Fileupload.get(true);
+	if(uploaded_file == null) return;
+	tfn = uploaded_file.getName();
+	filename_lbl.setValue("File: " + tfn);
+
+	uploaded_filename = session.getWebApp().getRealPath("tmp/" + tfn); // save in global var
+
+	// check if file exist, delete
+	File file=new File(uploaded_filename);
+	if(file.exists()) file.delete();
+
+	// save uploaded file-name into tmp/
+	outstream = new FileOutputStream(uploaded_filename);
+	//kblob = uploaded_file.getByteData();
+	kbarray = uploaded_file.getByteData();
+	outstream.write(kbarray);
+	outstream.close();
+}
+
+// load the SENT logs from stuff_emailed for customer selected
+//selected_arcode = "";
+//selected_customername = "";
+void viewSentLog()
+{
+	if(selected_arcode.equals("")) return;
+	if(sentlog_holder.getFellowIfAny("sentloggrid") != null) sentloggrid.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("sentloggrid");
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	hrow1 = gridhand.gridMakeRow("","","5",gridrows);
+	gridhand.makeLabelToParent("Sent logs: " + selected_customername,"",hrow1);
+
+	headrow = gridhand.gridMakeRow("","background:#DDDDDD","",gridrows);
+	String[] headersp = { "Dated","From:", "To:", "Subject", "Email" };
+	for(i=0;i<headersp.length;i++)
+		gridhand.makeLabelToParent(headersp[i],"",headrow);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select top 200 datesent,username,contact_email,subject,notes from stuff_emailed " + 
+	"where linking_code='" + selected_arcode + "' order by datesent desc";
+
+	sentrecs = sql.rows(sqlstm);
+	sql.close();
+
+	for(dpi : sentrecs)
+	{
+		strow = gridhand.gridMakeRow("","","",gridrows);
+		gridhand.makeLabelToParent(dpi.get("datesent").toString().substring(0,10),"",strow);
+		gridhand.makeLabelToParent(dpi.get("username"),"",strow);
+		conemail = dpi.get("contact_email").replace(","," ");
+		gridhand.makeLabelToParent(conemail,"",strow);
+		gridhand.makeLabelToParent(dpi.get("subject"),"",strow);
+		gridhand.makeLabelToParent(dpi.get("notes"),"",strow);
+	}
+
+	thegrid.setParent(sentlog_holder);
+	sentlog_holder.setVisible(true);
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="emaildocument_panel" title="Documents(COA/SRN/Whatever) Emailer ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<hbox>
+<grid width="600px">
+	<rows>
+		<row>
+			<label value="Customer" style="font-size:9px" />
+			<hbox>
+				<textbox id="customer_tb" style="font-size:9px" />
+				<button label="Load" style="font-size:9px" onClick="loadCustomerList()" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+
+<label style="font-size:9px">
+You can send whatever documents to the customer's pre-defined email-contacts. Please ensure the email-contacts are updated regularly.
+</label>
+
+</hbox>
+
+<separator height="2px" />
+
+<hbox>
+
+<vbox>
+	<div id="customerfound_holder" width="600px" height="210px" style="border:0px;overflow:auto;padding:2px;" visible="false" />
+	<separator height="2px" />
+
+	<div id="viewsent_btn" visible="false">
+	<button label="View SENT logs" style="font-size:9px" onClick="viewSentLog()" />
+	<label style="font-size:9px">
+	(Latest 200 sents log will be shown)
+	</label>
+	</div>
+
+	<separator height="2px" />
+
+	<div id="sentlog_holder" width="600px" height="600px" style="border:0px;overflow:auto;padding:2px;" visible="false" />
+</vbox>
+
+<vbox id="workarea" visible="false">
+	<div id="emailaddress_holder" width="550px" height="205px" style="border:0px;overflow:auto;padding:2px;" />
+	<grid width="550px">
+		<rows>
+			<row>
+				<label value="From" style="font-size:9px" />
+				<label id="from_lbl" style="font-size:9px" />
+			</row>
+			<row>
+				<label value="Subject" style="font-size:9px" />
+				<textbox id="subject_tb" style="font-size:9px" width="99%" />
+			</row>
+			<row spans="2">
+				<hbox>
+				<button label="Attach document" style="font-size:9px" onClick="uploadDocument()" />
+				<separator width="3px" />
+				<label id="filename_lbl" style="font-size:9px" />
+				</hbox>
+			</row>
+			<row>
+				<label value="Email" style="font-size:9px" />
+				<textbox id="emailbody_tb" style="font-size:9px" width="99%" multiline="true" height="150px" />
+			</row>
+		</rows>
+	</grid>
+	
+	<button label="Send email to selected" style="font-size:9px;font-weight:bold" onClick="emailToTicked()" />
+	
+	<separator height="3px" />
+	<div style="padding:3px;background:#FF0000">
+	<label style="text-decoration:blink;color:#FFFFFF;font-weight:bold">
+	DO MAKE SURE WHATEVER DOCUMENT YOU'RE EMAILING OUT AND TO WHO ARE BOTH CORRECT
+	**ONCE SENT - CANNOT RETRACT - YOU HAVE BEEN WARNED**
+	</label>
+	</div>
+</vbox>
+
+</hbox>
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

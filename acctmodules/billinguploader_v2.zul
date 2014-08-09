@@ -1,0 +1,1091 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="billinguploader"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="../alsglobal/quotation_funcs.zs" />
+<zscript src="./billingfuncs/billing_funcs.zs" />
+<zscript src="./billingfuncs/emailSRN.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Billing Uploader";
+MYVERSION = "v2.0";
+/*
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/formMaker_v1.zs" />
+
+Title: Job billing uploader
+Written by: Victor Wong
+
+**NOTES**
+25/06/2014: optimization and recoding
+12/06/2013: add column to show re-upload to mysoft date
+05/09/2012: show send-out-cooler boxes records / some optimization
+28/03/2012: ported byte-compiled funcs
+03/08/2011: upload unitprice def in testpackage
+02/08/2011: show wearcheck pre-paid kit in folder-lister
+12/05/2011: redesign the job uploader to mysoft billing
+12/05/2011: knockoff from samplereg/radbrowsejobs_v3.zul
+09/03/2010: it's a knockoff from browsejobs_v2.zul - make it as version 3
+*/
+
+import java.util.*;
+import java.text.*;
+import java.io.*;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.util.media.AMedia;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals();
+sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler();
+guihand = new GuiFuncs();
+samphand = new SampleReg();
+luhand = new LookupFuncs();
+
+documentLinkObj documentLinkProp = new documentLinkObj();
+selected_arcode = selected_folderno = selected_folder_origid = selected_folder_status = glob_upload_flag = "";
+vicFormMaker glob_cashdetform = null;
+CASHDETAIL_FORM_ID = "11";
+
+//----------- Job-notes stuff : added 22/02/2011
+
+void showJobNotes(String ifoldno)
+{
+	foldrec = samphand.getFolderJobRec(ifoldno);
+	if(foldrec == null) return;
+	jobnotes_tb.setValue(foldrec.get("jobnotes"));
+}
+
+void saveUpdateJobNotes()
+{
+	if(selected_folderno.equals("")) return;
+
+	forigid = samphand.convertFolderNoToInteger(selected_folderno).toString();
+	jobnotes = kiboo.replaceSingleQuotes(jobnotes_tb.getValue());
+
+	if(!forigid.equals(""))
+	{
+		sql = sqlhand.als_mysoftsql();
+		if(sql == null ) return;
+		todaysdate = kiboo.getDateFromDatebox(hiddendatebox);
+
+		// 19/7/2010: TeckMaan suggested to include a history feature for notes - incase others accidentally delete lines
+		// get old JobFolders.jobnotes
+		sqlstm1 = "select jobnotes from JobFolders where origid=" + forigid;
+		oldj = sql.firstRow(sqlstm1);
+		// insert into JobNotes_History table
+		samphand.insertJobNotesHistory_Rec(forigid, oldj.get("jobnotes"), jobnotes, todaysdate,useraccessobj.username); // samplereg_funcs.zs
+		// update JobFolders.jobnotes and JobFolders.lastjobnotesdate
+		sqlstm = "update JobFolders set jobnotes='" + jobnotes + "', lastjobnotesdate='" + todaysdate + "' where origid=" + forigid;
+		sql.execute(sqlstm);
+		sql.close();
+		guihand.showMessageBox("Job notes saved..");
+	}
+}
+
+// This will show historical job-notes - to make sure every changes to the job notes are recorded
+// noteshistory_btn jobnotes_lb_div global_sjn_folder
+void jobNotesHistory_clicker()
+{
+Object[] jobnoteshistory_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("Prev.Notes",true),
+	new listboxHeaderObj("Chg.By",true),
+	new listboxHeaderObj("Chg.Date",true),
+};
+	if(selected_folderno.equals("")) return;
+	forigid = samphand.convertFolderNoToInteger(selected_folderno).toString();
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null ) return;
+	sqlstm = "select origid,oldjobnotes,change_date,user_changed from JobNotes_History where jobfolders_id=" + forigid;
+	histrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(histrecs.size() == 0)
+	{
+		guihand.showMessageBox("Sorry.. no job-notes history found");
+		return;
+	}
+
+	Listbox newlb = lbhand.makeVWListbox(historyjobnotes_lb_div,jobnoteshistory_lb_headers,"jobnoteshistory_lb", 5);
+
+	for(dpi : histrecs)
+	{
+		ArrayList kabom = new ArrayList();
+		kabom.add(dpi.get("origid").toString());
+		jnotes = lbhand.trimListitemLabel(dpi.get("oldjobnotes"),50);
+		kabom.add(jnotes);
+		kabom.add(dpi.get("user_changed"));
+		kabom.add(dpi.get("change_date").toString().substring(0,10));
+		strarray = kiboo.convertArrayListToStringArray(kabom);
+		lbhand.insertListItems(newlb,strarray,"false","");
+	}
+	jobnotes_history_popup.open(noteshistory_btn);
+}
+
+// To view the prev job-notes.. cannot run away.
+// prev_jn_btn
+void jobnoteshistory_viewprev_clicker()
+{
+	if(historyjobnotes_lb_div.getFellowIfAny("jobnoteshistory_lb") == null) return;
+	if(jobnoteshistory_lb.getSelectedIndex() == -1) return;
+
+	pjn_origid = jobnoteshistory_lb.getSelectedItem().getLabel(); // 1st col is JobNotes_History.origid
+	pjnrec = samphand.getJobNotesHistory_Rec(pjn_origid);
+	if(pjnrec == null) return;
+	prevjn_tb.setValue(pjnrec.get("oldjobnotes"));
+	viewprev_jn_popup.open(prev_jn_btn);
+}
+//----------- end of Job-notes stuff
+
+//--- Upload to MySoft funcs ---
+
+// Actual func to inject a rec into DeliveryOrderMaster
+// 10/2/2010: version 1
+void injectDeliveryOrderMaster(String ifoldno, Object ifolderRec, Object icompanyRec)
+{
+	todaysdate = kiboo.todayISODateString();
+	thearcode = ifolderRec.get("ar_code");
+	compname = icompanyRec.get("customer_name");
+	attention = kiboo.replaceSingleQuotes(icompanyRec.get("contact_person1"));
+	addr1 = icompanyRec.get("address1");
+	addr2 = icompanyRec.get("address2");
+	addr3 = icompanyRec.get("address3");
+	currcode = icompanyRec.get("CurCode");
+	cterms = icompanyRec.get("credit_period");
+	salesmancode = kiboo.checkNullString(icompanyRec.get("Salesman_code"));
+
+	sqlstm = "insert into DeliveryOrderMaster (VoucherNo,DONo,DeliveryDate,Code,Name,Attention,Address1,Address2,Address3," +
+	"PurchaseOrder,SalesOrderNo,InvoiceNo,IssuedInvoice,ReferenceNo,SalesMan,Terms,Remark,DiscountRate,Discount,Printed,Status," +
+	"EntryDate,User1,Imported,Warehouse,GrossAmount,NetAmount,CurCode,ExchangeRate,BaseRate,ForeignRate,ReturnStatus,TransType," +
+	"LoanWarehouse,Cancel,DocumentType,NewField1,NewField2,NewField3,NewField4,NewField5,NewField6,NewField7,NewField8,NewField9,NewField10," +
+	"ShippingPhone,ShippingContact,ShipName,ShipAddress1,ShipAddress2,ShipAddress3,Notes) " +
+	"values " +
+	"('" + ifoldno + "','" + ifoldno + "','" + todaysdate + "','" + thearcode + "','" + compname + "','" + attention + "','" + 
+	addr1 + "','" + addr2 + "','" + addr3 + "'," +
+	"'','','',0,'','" + salesmancode + "','" + cterms +"','',0,0,0,''," +
+	"'" + todaysdate +"','Manager',0,'None',0,0,'" + currcode + "',1,1,1,0,'DO'," +
+	"'',0,'DO','','','','','','','','','',''," +
+	"'','','','','','','')";
+	
+	sqlhand.gpSqlExecuter(sqlstm);
+
+} // end of injectDeliveryOrderMaster(ilbfold,companyRec)
+
+// Inject entries into delivery order based on folderno which is the DONo
+// isampquant = samples quantity rec, refer uploadToMySoft() for select command
+// 10/02/2010: version 1
+// 18/03/2011: inject more fields into the DO - deptcode , salesmancode
+// 22/06/2011: add field UOM = 'SAMPLE'
+// 03/08/2011: if jobtestparameters.packageprice is 0, use stockmasterdetails.selling_price
+void injectDeliveryOrder(String ifoldno, Object isampquant, Object icompanyRec)
+{
+	mysoftcode = isampquant.get("mysoftcode").toString();
+	quantity = isampquant.get("samplesquantity").toString();
+
+	// get stockmasterdetails.nominal_code to be used for deliveryorder.salescode
+	stockmasterRec = samphand.getStockMasterDetails(mysoftcode);
+
+	if(stockmasterRec == null) return;
+
+	salescode = stockmasterRec.get("Nominal_Code");
+	stockcode = stockmasterRec.get("Stock_Code");
+	stockdesc = stockmasterRec.get("Description");
+
+	sellprice = stockmasterRec.get("Selling_Price").toString();
+
+	// 03/08/2011: use jobtestparameters.packageprice if not 0, else use stockmasterdetails.selling_price
+	packageprice = isampquant.get("packageprice");
+	if(packageprice != null)
+		if(packageprice != 0)
+			sellprice = packageprice.toString(); 
+
+	salesmancode = icompanyRec.get("Salesman_code");
+	deptcode = icompanyRec.get("DeptCode");
+
+	sqlstatem = "insert into deliveryorder (DONo,stockcode,Description," + 
+	"unitprice,quantity,salescode,TransType,DeptCode,SalesPerson,UOM) " +
+	"values ('" + ifoldno + "','" + stockcode + "','" + stockdesc + "'," + 
+	sellprice + "," + quantity + ",'" + salescode + "','DO','" + deptcode + "','" + salesmancode + "','SAMPLE')" ;
+
+	sqlhand.gpSqlExecuter(sqlstatem);
+
+} // end of injectDeliveryOrder()
+	
+// Remove existing DO from DeliveryOrderMaster and DeliveryOrder
+void removeExistingDO(String ifullfolderno, String ifoldno)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	// see if it really exsit
+	sqlst = "select DONo from DeliveryOrderMaster where DONo='" + ifullfolderno + "'";
+	ifounde = sql.firstRow(sqlst);
+
+	// found a rec .. do the stuff
+	if(ifounde != null)
+	{
+		sqlstm = "delete from DeliveryOrder where DONo='" + ifullfolderno + "';"; // remove samples entry in DeliveryOrder
+		sqlstm += "delete from DeliveryOrderMaster where DONo='" + ifullfolderno + "';"; // remove DO rec from DeliveryOrderMaster
+		sqlstm += "update JobFolders set uploadToMYSOFT=0 where origid=" + ifoldno + ";"; // change jobfolders.uploadtomysoft flag
+		sql.execute(sqlstm);
+	}
+	sql.close();
+}
+
+// 24/8/2010: inject courier-bill into DO
+// use 311 = StockMasterDetails.ID - stockcode = FREIGHT CHARGES - hardcoded for ALS
+// salescode = stockmasterdetails.nominal_code = 51100.740
+void injectCourierBill(String ifolderno)
+{
+	// lookup any folder_link and not billed in Courier_Tracking first
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "select origid,delivery_method,tracking_number,amount from Courier_Tracking where folder_link='" + ifolderno + "'";
+	cobills = sql.rows(sqlstm);
+
+	// some courier_tracking recs linking to folder and not billed
+	if(cobills.size() != 0)
+	{
+		stockcode = "FREIGHT CHARGES";
+		salescode = "51100.740";
+		billdate = kiboo.todayISODateString();
+		DecimalFormat df = new DecimalFormat("#.##");
+
+		for(dpi : cobills)
+		{
+			stockdesc = "FREIGHT CHARGES: " + dpi.get("delivery_method") + " Tracking#: " + dpi.get("tracking_number");
+			sellprice = df.format(dpi.get("amount"));
+			sqlstm = "insert into deliveryorder (DONo,stockcode,Description,unitprice,quantity,salescode,TransType) " +
+			"values ('" + ifolderno + "','" + stockcode + "','" + stockdesc + "'," + sellprice + ",1,'" + salescode + "','DO');" ;
+
+			// update courier_tracking billing fields
+			sqlstm += "update Courier_Tracking set billed=1, billed_date='" + billdate + "' where origid=" + dpi.get("origid").toString();
+			sql.execute(sqlstm);
+		}
+	}
+
+	sql.close();
+
+} // end of injectCourierBill()
+
+void uploadToMysoft()
+{
+	if(selected_folderno.equals("")) return;
+	if(!selected_folder_status.equals(FOLDERCOMMITED))
+	{
+		guihand.showMessageBox("Folder is not committed, cannot bill..");
+		return;
+	}
+
+	ilbfold = selected_folderno; // lazy to change codes below.. hohoho
+	foldno = selected_folder_origid;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	todaydate = kiboo.todayISODateString();
+
+	// get jobfolder rec
+	folderRec = samphand.getFolderJobRec(foldno); // samplereg_funcs.zs
+	the_arcode = folderRec.get("ar_code");
+
+	// if already uploaded.. prompt for reupload
+	if(folderRec.get("uploadToMYSOFT") == 1)
+	{
+		if (Messagebox.show(ilbfold + " is already uploaded to MySoft. Do you want to upload again?", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) !=  Messagebox.YES) { sql.close(); return; }
+
+		// 12/06/2013: store re-upload to mysoft date for filtering
+		sqlstm = "update JobFolders set mysoft_reupload='" + todaydate + "' where origid=" + foldno;
+		sql.execute(sqlstm);
+	}
+
+	// delete existing DO with same folderno(DeliveryOrderMaster) and DO-items-entry(DeliveryOrder) first
+	removeExistingDO(ilbfold,foldno);
+
+	// collect samples origid
+	sqlstatem = "select origid from jobsamples where deleted=0 and jobfolders_id=" + foldno;
+	samprecs = sql.rows(sqlstatem);
+	if(samprecs == null) { sql.close(); return; }
+
+	// extract and made samples origid string
+	sampstr = "(";
+	for(kki : samprecs)
+	{
+		sampstr = sampstr + kki.get("origid") + ",";
+	}
+	// chop off extra , at the end
+	ism = sampstr.substring(0,sampstr.length()-1);
+	sampstr = ism + ")";
+
+	// get mysoftcode * samples-quantity
+	sqlstatem2 = "select distinct mysoftcode, count(origid) as samplesquantity, price, testpackageid, packageprice " + 
+	"from jobtestparameters where jobsamples_id in " + sampstr + " group by mysoftcode,price,testpackageid,packageprice";
+
+	sampquant = sql.rows(sqlstatem2);
+
+	// get customer rec from ar_code in jobfolders -> customer table
+	companyRec = sqlhand.getCompanyRecord(the_arcode); // alsglobal_sqlfuncs.zs
+
+	// create entry in DeliveryOrderMaster - samples markings will be placed into DeliveryOrderMaster->Notes ..
+	// hmmm. but mysoft will not transfer notes here to invoice.
+	injectDeliveryOrderMaster(ilbfold,folderRec,companyRec);
+	
+	// cycle through sampquant (samples x mysoftcode) to insert
+	for(llo : sampquant)
+	{
+		injectDeliveryOrder(ilbfold,llo,companyRec);
+	}
+
+	// update jobfolders->uploadtomysoft field
+	sqlstatem4 = "update JobFolders set uploadToMYSOFT=1 where origid=" + foldno;
+	sql.execute(sqlstatem4);
+	sql.close();
+
+	// 24/8/2010: inject courier-bill
+	injectCourierBill(ilbfold);
+
+	// refresh folder/jobs listbox
+	listFoldersByClient(selected_arcode);
+	guihand.showMessageBox(ilbfold + " has been uploaded to MySoft now");
+
+	// 17/9/2010: audit-trail
+	sqlhand.addAuditTrail(ilbfold,"Billing: Upload to MySoft", useraccessobj.username, todaydate);
+
+} // end of uploadToMysoft()
+
+//--- ENDOF upload to mysoft funcs
+
+// Quotations funcs
+
+// onSelect listener for showQuoteItems()
+class quote_items_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quote_items_lb.getSelectedItem();
+	}
+}
+qtitmcliker = new quote_items_lb_Listener();
+// quote_items_div quote_items_lb global_loaded_quote global_quote_status
+void showQuoteItems(String iquoteid)
+{
+Object[] quote_items_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("mysoftcode",false),
+	new listboxHeaderObj("###",true),
+	new listboxHeaderObj("Tests",true),
+	new listboxHeaderObj("Method.Ref",true),
+	new listboxHeaderObj("Stk",true),
+	new listboxHeaderObj("LOR",true),
+	new listboxHeaderObj("U.P",true),
+	new listboxHeaderObj("Qty",true),
+	new listboxHeaderObj("Dsct",true),
+	new listboxHeaderObj("Gross",true),
+	new listboxHeaderObj("Nett",true),
+};
+
+	Listbox newlb = lbhand.makeVWListbox(quote_items_div, quote_items_lb_headers, "quote_items_lb", 5);
+
+	sqlstm = "select origid,mysoftcode,description,description2,LOR,unitprice,quantity,discount,total_gross,total_net from elb_Quotation_Items " +
+	"where quote_parent=" + iquoteid + " order by origid";
+
+	qitems = sqlhand.gpSqlGetRows(sqlstm);
+
+	if(qitems.size() < 1) return;
+
+	bunvalue = (qitems.size() > 10) ? 15 : 10;
+	newlb.setRows(bunvalue);
+	rowcounter = 1;
+
+	//newlb.setCheckmark(true);
+	//newlb.setMultiple(true);
+
+	newlb.addEventListener("onSelect", qtitmcliker );
+	newlb.setMultiple(true);
+
+	grandtotal = 0.0;
+	DecimalFormat nf = new DecimalFormat("##.00");
+	ArrayList kabom = new ArrayList();
+	for(dpi : qitems)
+	{
+		mysc = dpi.get("mysoftcode").toString();
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(mysc);
+
+		kabom.add(rowcounter.toString() + ".");
+		kabom.add(lbhand.trimListitemLabel(dpi.get("description"),25));
+		kabom.add(lbhand.trimListitemLabel(dpi.get("description2"),25));
+
+		stkitem = (mysc.equals("") || mysc.equals("0")) ? "---" : "-Y-";
+		kabom.add(stkitem);
+
+		thelor = (dpi.get("LOR").equals("")) ? "---" : dpi.get("LOR");
+		kabom.add(thelor);
+		// float thing need to format abit, show 2 decimal places only
+		kabom.add(nf.format(dpi.get("unitprice")));
+		kabom.add(dpi.get("quantity").toString());
+		discstr = (dpi.get("discount") == 0) ? "---" : nf.format(dpi.get("discount"));
+		kabom.add(discstr);
+		kabom.add(nf.format(dpi.get("total_gross")));
+		total_net = dpi.get("total_net");
+		grandtotal += total_net;
+		kabom.add(nf.format(total_net));
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		rowcounter++;
+		kabom.clear();
+	}
+}
+
+Object[] quotations_lb_headers = {
+	new listboxHeaderObj("origid",false),
+	new listboxHeaderObj("ar_code",false),
+	new listboxHeaderObj("Q#",true),
+	new listboxHeaderObj("Customer",true),
+	new listboxHeaderObj("Crt.Date",true),
+	new listboxHeaderObj("Last.Update",true),
+	new listboxHeaderObj("User",true),
+	new listboxHeaderObj("Q.Stat",true),
+};
+
+// onSelect for showQuotations_Listbox()
+class quotes_lb_Listener implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		selitem = quotations_lb.getSelectedItem();
+		loaded_quote_id = lbhand.getListcellItemLabel(selitem,0);
+		showQuoteItems(loaded_quote_id);
+	}
+}
+qtlbcliker = new quotes_lb_Listener();
+// itype: 0=previous, 1=show owner's by date, 2=load all by date, 3=load all by date and searchstring
+// knockoff from quotemaker_v2_develop.zul : removed itype
+void showQuotations_Listbox(String iarcode)
+{
+	Listbox newlb = lbhand.makeVWListbox(quotes_div, quotations_lb_headers, "quotations_lb", 5);
+	sqlstm = "select top 50 origid,ar_code,customer_name,datecreated,lastupdate,username," + 
+	"qstatus,deleted from elb_Quotations where ar_code='" + iarcode + "' order by datecreated desc";
+	qtrows = sqlhand.gpSqlGetRows(sqlstm);
+	if(qtrows.size() == 0) return;
+	if(qtrows.size() > 5) newlb.setRows(20);
+	newlb.addEventListener("onSelect", qtlbcliker );
+	ArrayList kabom = new ArrayList();
+	for(dpi : qtrows)
+	{
+		origid = dpi.get("origid").toString();
+		kabom.add(origid);
+		kabom.add(dpi.get("ar_code"));
+		// text-decoration: line-through
+		delstr = (dpi.get("deleted") == 1) ? "[DEL] " : "";
+		qcode = delstr + QUOTE_PREFIX + origid;
+		kabom.add(qcode);
+		customername = kiboo.checkEmptyString(lbhand.trimListitemLabel(dpi.get("customer_name"),30));
+		kabom.add(customername);
+
+		datecreated = dpi.get("datecreated").toString().substring(0,10);
+		if(datecreated.equals("1900-01-01")) datecreated = "---";
+
+		kabom.add(datecreated);
+
+		lastup = "---";
+		lastupdate = dpi.get("lastupdate");
+
+		if(lastupdate != null)
+		{
+			kkx = lastupdate.toString().substring(0,10);
+			if(!kkx.equals("1900-01-01")) lastup = kkx;
+		}
+
+		kabom.add(lastup);
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("qstatus"));
+
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+} // end showQuotations_Listbox()
+
+// to clear whatever quotations remnants..
+void clearQuotationStuff()
+{
+	if(quotes_div.getFellowIfAny("quotations_lb") != null) quotations_lb.setParent(null);
+	if(quote_items_div.getFellowIfAny("quote_items_lb") != null) quote_items_lb.setParent(null);
+}
+
+//--- ENDOF quotations funcs
+
+// To populate client category drop-down - can be used for other mods
+void populateClientCategory_dropdown(Div idiv)
+{
+	Object[] sm_lb_headers = {
+	new dblb_HeaderObj("clcat",true,"category",1),
+	};
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select distinct category from customer";
+	Listbox newlb = lbhand.makeVWListbox_onDB(idiv,sm_lb_headers,"clientcat_dd",1,sql,sqlstm);
+	sql.close();
+	newlb.setMold("select");
+	newlb.setStyle("font-size:9px");
+	newlb.setSelectedIndex(0);
+}
+
+// 12/08/2011: billing notes handler
+void doBillingNotes()
+{
+	if(selected_folderno.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	// retrieve prev billing-notes
+	sqlstm = "select billingnotes,billingnotes_date from jobfolders where origid=" + selected_folder_origid;
+	prec = sql.firstRow(sqlstm);
+	sql.close();
+
+	bn_folder_label.setValue("Folder: " + selected_folderno);
+
+    if(prec != null)
+    {
+		billingnotes_tb.setValue(kiboo.checkNullString_RetWat(prec.get("billingnotes"),""));
+    	if(prec.get("billingnotes_date") != null) bn_date.setValue(prec.get("billingnotes_date"));
+    }
+
+	billingnotes_popup.open(billingnotes_btn);
+}
+
+void updateBillingNotes()
+{
+	if(selected_folderno.equals("")) return;
+
+	tbn = kiboo.replaceSingleQuotes(billingnotes_tb.getValue());
+	tbnd = kiboo.getDateFromDatebox(bn_date);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "update jobfolders set billingnotes='" + tbn + "',billingnotes_date='" + tbnd + "' where origid=" + selected_folder_origid;
+	sql.execute(sqlstm);
+	sql.close();
+
+	listFoldersByClient(selected_arcode); // refresh
+	billingnotes_popup.close();
+}
+
+glob_selected_airwaybill = "";
+
+class ablb_onSelect implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = abill_lb.getSelectedItem();
+		glob_selected_airwaybill = lbhand.getListcellItemLabel(isel,0);
+	}
+}
+abkbckuerj = new ablb_onSelect();
+// show send-out-cooler boxes records
+void showCourierBills(String iarcode)
+{
+Object[] ablb_headers = 
+{
+	new listboxHeaderWidthObj("ID",true,"20px"),
+	new listboxHeaderWidthObj("Dated",true,"60px"),
+	new listboxHeaderWidthObj("Courier",true,"100px"),
+	new listboxHeaderWidthObj("AirwayBill",true,"100px"),
+	new listboxHeaderWidthObj("Box",true,"40px"),
+};
+
+	if(iarcode.equals("")) return;
+	Listbox newlb = lbhand.makeVWListbox_Width(bills_holder, ablb_headers, "abill_lb", 10);
+	billsarea.setVisible(true);
+	sqlstm = "select top 200 origid,datecreated,couriername,airwaybill,numboxes from elb_sendcoolerboxes " +
+	"where ar_code='" + iarcode + "' and billed=0 and bstatus='COMMITTED'";
+	abrecs = sqlhand.gpSqlGetRows(sqlstm);
+	if(abrecs.size() == 0) { newlb.detach(); return; }
+
+	adaSendOut_popup.open(clientcat_btn);
+	newlb.addEventListener("onSelect", abkbckuerj);
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "origid", "datecreated", "couriername", "airwaybill", "numboxes" };
+	for(dpi : abrecs)
+	{
+		popuListitems_Data(kabom,fl,dpi);
+		/*
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10));
+
+		billd = (dpi.get("billed") == 1) ? "YES" : "NO";
+		kabom.add(billd);
+
+		kabom.add(dpi.get("couriername"));
+		kabom.add(dpi.get("airwaybill"));
+		numbx = (dpi.get("numboxes") == null) ? "0" : dpi.get("numboxes");
+		kabom.add(numbx);
+		*/
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+COURIER_FORM_ID = "9";
+RECVBILL_FORM_ID = "10";
+vicFormMaker glob_formmaker = null;
+vicFormMaker receipt_formmaker = null;
+
+Object getSentCooler_rec(String iwhat)
+{
+	String sqlstm = "select * from elb_sendcoolerboxes where origid=" + iwhat;
+	return sqlhand.gpSqlFirstRow(sqlstm);
+}
+
+void showCourierForm(String iwhat)
+{
+	fmobj = sqlhand.getFormKeeper_rec(COURIER_FORM_ID);
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	//exmres = sqlhand.clobToString(fmobj.get("exampleresult"));
+	glob_formmaker = new vicFormMaker(form_holder,"courierform",formxml);
+	glob_formmaker.generateForm();
+	formid_label.setValue("Form ID: " + iwhat);
+
+	// populate fields
+	serec = getSentCooler_rec(iwhat);
+	if(serec != null) glob_formmaker.populateFormValues(serec);
+
+/*
+	sbstatus = serec.get("bstatus");
+	saveform_btn.setDisabled(false);
+	updatebill_btn.setDisabled(true);
+
+	if(!sbstatus.equals("NEW"))
+	{
+		saveform_btn.setDisabled(true);
+		updatebill_btn.setDisabled(false);
+	}
+	*/
+
+	// show receipt/billing form
+	/*
+	fmobj = sqlhand.getFormKeeper_rec(RECVBILL_FORM_ID);
+	if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+	formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+	receipt_formmaker = new vicFormMaker(recvbillform_holder,"recvbillform",formxml);
+	receipt_formmaker.generateForm();
+	*/
+}
+
+void injectSendoutBill()
+{
+	if(selected_folderno.equals("")) return;
+	if(!glob_upload_flag.equals("UpL"))
+	{
+		guihand.showMessageBox("Make sure the folder is already uploaded to MySoft before you upload send-out-boxes billing");
+		return;
+	}
+
+	// can change these accordingly
+	stockcode = "FREIGHT CHARGES";
+	salescode = "51100.740";
+	billdate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	serec = getSentCooler_rec(glob_selected_airwaybill);
+	if(serec == null) { guihand.showMessageBox("ERR: Cannot access database.."); return; }
+
+	stockdesc = "FREIGHT CHARGES: " + serec.get("couriername") + " Tracking#: " + serec.get("airwaybill");
+
+	sqlstm = "insert into deliveryorder (DONo,stockcode,Description,unitprice,quantity,salescode,TransType) " +
+	"values ('" + selected_folderno + "','" + stockcode + "','" + stockdesc + "',1000,1,'" + salescode + "','DO')" ;
+
+	sqlhand.gpSqlExecuter(sqlstm);
+
+	// update into elb_sendcoolerboxes the status
+	sqlstm = "update elb_sendcoolerboxes set billed=1, invoiceno='" + selected_folderno + "' where origid=" + glob_selected_airwaybill;
+	sqlhand.gpSqlExecuter(sqlstm);
+	showCourierBills(selected_arcode);
+
+	guihand.showMessageBox("Send-out cooler-boxes record submitted for billing");
+
+} // end of injectSendoutBill()
+
+
+// 05/09/2012: consolidate 'em funcs
+// itype: 1=show folder-details popup, 2=show cash-account-details, 3=show job documents, 4=show jobnotes
+// 5=show quotations, 6=kasi export checklist, 7=show send-out cooler-boxes details
+void generalFuncs(int itype)
+{
+	if(itype != 6 && itype != 7)
+		if(selected_folderno.equals("")) return;
+
+	switch(itype)
+	{
+		case 1:
+			theparam = "folderno=" + selected_folderno;
+			uniqwindowid = kiboo.makeRandomId("vlx");
+			guihand.globalActivateWindow(mainPlayground,"miscwindows","samplereg/folderjobs_driller.zul", uniqwindowid, theparam, useraccessobj);
+			break;
+			
+		case 2: // show cash-acct folder dets
+			fmobj = sqlhand.getFormKeeper_rec(CASHDETAIL_FORM_ID);
+			if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+			formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+			glob_cashdetform = new vicFormMaker(cashdet_holder,"cashdetsform",formxml);
+			glob_cashdetform.generateForm();
+
+			// populate 'em boxes
+			csrec = samphand.getCashSalesCustomerInfo_Rec(selected_folderno);
+			if(csrec == null)
+			{
+				guihand.showMessageBox("Sorry.. cannot find cash-account customer details");
+				return;
+			}
+
+			Object[] jkl = { ca_customer_name_tb, ca_contact_person1_tb, ca_address1_tb, ca_address2_tb, ca_city_tb,
+				ca_zipcode_tb, ca_state_tb, ca_country_tb, ca_telephone_tb, ca_fax_tb, ca_email_tb };
+
+			String[] fl = { "customer_name", "contact_person1", "address1", "address2", "city", "zipcode", "state","country",
+				"telephone", "fax", "email" };
+
+			populateUI_Data(jkl,fl,csrec);
+			/*
+			ca_customer_name_tb.setValue(csrec.get("customer_name"));
+			ca_contact_person1_tb.setValue(csrec.get("contact_person1"));
+			ca_address1_tb.setValue(csrec.get("address1"));
+			ca_address2_tb.setValue(csrec.get("address2"));
+			ca_city_tb.setValue(csrec.get("city"));
+			ca_zipcode_tb.setValue(csrec.get("zipcode"));
+			ca_state_tb.setValue(csrec.get("state"));
+			ca_country_tb.setValue(csrec.get("country"));
+			ca_telephone_tb.setValue(csrec.get("telephone"));
+			ca_fax_tb.setValue(csrec.get("fax"));
+			ca_email_tb.setValue(csrec.get("email"));
+			*/
+			cashaccount_details_Popup.open(showcashacct_btn);
+			break;
+
+		case 3: // show job documents
+
+			documentLinkProp.global_eq_origid = selected_folderno;
+			documentLinkProp.refreshListbox.populateDocumentLinks(documentLinkProp.global_eq_origid, documentLinkProp.document_idprefix);
+			if(useraccessobj.accesslevel == 9) // show CRUD buttons for admin
+			{
+				documentLinkProp.refreshListbox.showCrudButtons();
+				documentLinkProp.refreshListbox.showAdminButtons();
+			}
+			doculink_popup.open(jfdoc_btn);
+			break;
+
+		case 4: // show jobnotes
+			forigid = samphand.extractFolderNo(selected_folderno);
+			showJobNotes(forigid);
+			folderjobnotes_popup.open(jfjn_btn);
+			break;
+
+		case 5: // show quotations
+			showQuotations_Listbox(selected_arcode);
+			folderquots_popup.open(jfquot_btn);
+			break;
+
+		case 6:	// kasi export check-list excel
+			exportListboxExcel(folders_holder,"folders_lb","uploadedFolders.xls",
+				clientsfolders_headers,"UploadedFolders",kasiexport_holder,65);
+			break;
+
+		case 7: // show send-out cooler-boxes details
+			if(glob_selected_airwaybill.equals("")) return;
+			
+			fmobj = sqlhand.getFormKeeper_rec(COURIER_FORM_ID);
+			if(fmobj == null) { gui.showMessageBox("ERR: Cannot load XML-form definitions"); return; }
+			formxml = sqlhand.clobToString(fmobj.get("xmlformstring"));
+			//exmres = sqlhand.clobToString(fmobj.get("exampleresult"));
+			glob_formmaker = new vicFormMaker(form_holder,"courierform",formxml);
+			glob_formmaker.generateForm();
+			formid_label.setValue("Form ID: " + iwhat);
+
+			// populate fields
+			serec = getSentCooler_rec(glob_selected_airwaybill);
+			if(serec != null)
+			{
+				glob_formmaker.populateFormValues(serec);
+				showsendout_popup.open(sso_btn);
+			}
+			break;
+	}
+
+}
+
+]]>
+</zscript>
+
+<!-- Ada send-out cooler-boxes punya noti -->
+<popup id="adaSendOut_popup">
+<div width="600px" style="background:#cc0000;margin:10px;padding:5px" >
+	<label style="font-size:30px;text-decoration:blink;color:#ffffff">
+	Notifikasi : Ada hantar kotak - bill ya
+	</label>
+</div>
+</popup>
+
+<!-- billing notes popup -->
+<popup id="billingnotes_popup">
+<groupbox width="400px">
+<grid>
+	<rows>
+		<row spans="2">
+			<label id="bn_folder_label" />
+		</row>
+		<row>
+			<label value="Billing notes" sclass="k9" />
+			<textbox id="billingnotes_tb" sclass="k9" multiline="true" width="98%" height="40px" />
+		</row>
+		<row>
+			<label value="Updated" sclass="k9" />
+			<datebox id="bn_date" format="yyyy-MM-dd" sclass="k9" onCreate="self.value = new Date()" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<button label="Update" sclass="k9" onClick="updateBillingNotes()" />
+<button label="Close" sclass="k9" onClick="billingnotes_popup.close()" />
+</groupbox>
+</popup>
+<!-- end of billing notes popup -->
+
+<!-- Linking documents popup -->
+<popup id="doculink_popup">
+<div width="400px">
+<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+<separator height="5px" />
+<hbox>
+	<button label="Close" onClick="doculink_popup.close()" sclass="k9" />
+</hbox>
+</div>
+</popup>
+<!-- ENDOF Linking documents popup -->
+
+<!-- send document via email popup -->
+<popup id="senddocemail" >
+<div width="400px">
+	<hbox>
+	<groupbox>
+		<caption label="E-Mail Addresses" />
+		<div id="emails_holder" />
+		<separator height="3px" />
+		<hbox>
+			<button label="E-mail SRN + document(s)" sclass="k9" onClick="sendOutCOA_clicker(1)" />
+			<button label="E-Mail document(s) ONLY" sclass="k9" onClick="sendOutCOA_clicker(2)" />
+		</hbox>
+	</groupbox>
+	</hbox>
+</div>
+</popup>
+
+<popup id="senthistory_popup">
+<div width="450px">
+<div id="senthistory_holder" />
+<separator height="3px" />
+<button label="Close" sclass="k9" onClick="senthistory_popup.close()" />
+</div>
+</popup>
+
+<!-- end of send document via email popup -->
+
+<!-- Job notes related popup -->
+
+<popup id="jobnotes_history_popup">
+<groupbox width="400px">
+	<caption label="Job Notes History" />
+	<div style="padding:3px">
+		<div id="historyjobnotes_lb_div" />
+	</div>
+</groupbox>
+<separator height="3px" />
+<hbox>
+	<button id="prev_jn_btn" label="View previous note" sclass="k9" onClick="jobnoteshistory_viewprev_clicker()" />
+	<button label="Close" onClick="jobnotes_history_popup.close()" sclass="k9" />
+</hbox>
+</popup>
+
+<popup id="viewprev_jn_popup">
+<groupbox>
+	<caption label="Previous job-notes" />
+	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+</groupbox>
+</popup>
+
+<!-- end of Job notes related popup -->
+
+<!-- cash account customer details popup -->
+<popup id="cashaccount_details_Popup">
+<groupbox mold="3d" width="410px">
+<div id="cashdet_holder" />
+<separator height="3px" />
+<button label="Close" sclass="k9" onClick="cashaccount_details_Popup.close()" />
+</groupbox>
+</popup>
+<!-- end of popup -->
+
+<!-- folder punya jobnotes -->
+<popup id="folderjobnotes_popup">
+<groupbox mold="3d" width="450px">
+	<div id="jobnotes_found_div" />
+	<separator height="3px" />
+	<grid>
+		<rows>
+			<row>
+			<label value="Job notes" sclass="k9" />
+			<textbox id="jobnotes_tb" sclass="k9" multiline="true" width="350px" height="70px" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+	<button label="Save notes" sclass="k9" onClick="saveUpdateJobNotes()" />
+	<button id="noteshistory_btn" label="Notes history" sclass="k9" onClick="jobNotesHistory_clicker()" />
+	</hbox>
+</groupbox>
+</popup>
+<!-- ENDOF folder punya jobnotes -->
+
+<!-- folder punya quotations -->
+<popup id="folderquots_popup">
+<groupbox mold="3d" width="500px">
+	<div id="quotes_div" />
+	<separator height="3px" />
+	<div id="quote_items_div" />
+</groupbox>
+</popup>
+<!-- ENDOF folder punya quotations -->
+
+<!-- send-out cooler-boxes details -->
+<popup id="showsendout_popup">
+<groupbox mold="3d" width="400px" >
+	<div id="form_holder" />
+	<separator height="5px" />
+	<!-- <button id="saveform_btn" label="Save details" sclass="k9" onClick="sendoutFunc(4)" /> -->
+<!--
+	<div id="recvbillform_holder" />
+	<separator height="5px" />
+	<button id="updatebill_btn" label="Update receipt and bill details" sclass="k9" onClick="sendoutFunc(7)" />
+-->
+</groupbox>
+</popup>
+<!-- ENDOF send-out cooler-boxes details -->
+
+<style src="/real-world.css" />
+
+<div width="${PANELWIDTH}">
+<panel id="radfolderbrowser" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren style="background:#ea7724">
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="kiboo.setTodayDatebox(self)" />
+
+<div sclass="shadowbox" style="background:#2e3436;" >
+	<hbox>
+		<label value="Start" sclass="k9b" />
+		<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+		<label value="End" sclass="k9b" />
+		<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+		<button label="Load" sclass="k9" onClick="listClientsWithFolders(1)" />
+		<separator width="5px" />
+		<label value="Client" sclass="k9b" />
+		<textbox id="clientsearch_tb" width="100px" sclass="k9" />
+		<button label="Find" sclass="k9" onClick="listClientsWithFolders(2)" />
+		<label value="Category" sclass="k9b" />
+		<div id="clientcat_div" />
+		<button id="clientcat_btn" label="Find" sclass="k9" onClick="listClientsWithFolders(3)" />
+	</hbox>
+</div>
+<separator height="3px" />
+
+<div sclass="shadowbox" style="background:#2e3436;" id="billsarea">
+	<label value="(Shown number of folders per client - you can only upload job-folders which are COMMITTED to MySoft for invoicing)"
+		style="color:#ffffff;font-size:8px" />
+	<separator height="2px" />
+
+	<hbox>
+		<div id="clients_holder" width="600px" />
+
+		<div sclass="shadowbox" style="background:#ce5c00;" >
+			<label value="Send-out cooler-boxes records" style="color:#ffffff" />
+			<separator height="3px" />
+			<hbox>
+				<button id="sso_btn" label="Show details" sclass="k9" onClick="generalFuncs(7)" />
+				<button label="Upload for billing" sclass="k9" onClick="injectSendoutBill()" />
+			</hbox>
+			<separator height="2px" />
+			<label sclass="k9b">
+			(Select an uploaded folder on the right first before uploading send-out-boxes for billing)
+			</label>
+			<separator height="3px" />
+			<div id="bills_holder" />
+		</div>
+	</hbox>
+</div>
+<separator height="3px" />
+
+<div id="folders_gb" sclass="shadowbox" style="background:#2e3436;" visible="false" >
+	<label id="folders_label" sclass="subhead1" value="Folders" />
+	<separator height="3px" />
+
+	<hbox>
+		<button id="uploadmysoft_btn" label="Upload to MySoft" onClick="uploadToMysoft()" />
+		<button label="Details" sclass="k9" onClick="generalFuncs(1)" />
+		<button id="jfdoc_btn" label="Documents" sclass="k9" onClick="generalFuncs(3)" />
+		<button id="jfjn_btn" label="Job notes" sclass="k9" onClick="generalFuncs(4)" />
+		<button id="jfquot_btn" label="Quotations" sclass="k9" onClick="generalFuncs(5)" />
+		<button id="showcashacct_btn" label="CashAcct" sclass="k9" onClick="generalFuncs(2)" />
+		<button label="Export checkList" sclass="k9" onClick="generalFuncs(6)" />
+		<button id="billingnotes_btn" label="Billing notes" sclass="k9" onClick="doBillingNotes()" />
+	</hbox>
+	<separator height="3px" />
+
+	<div style="background:#ef2929;padding:2px">
+		<label sclass="k9mo">
+		(CAN only UPLOAD COMMITTED FOLDERS FOR BILLING) MySoft:UpL = already uploaded for billing, ReUpl = re-upload date
+		</label>
+	</div>
+	<div id="folders_holder" />
+	<separator height="3px" />
+	<label id="foldercount_label" sclass="k9b" />
+	<separator height="3px" />
+
+</div>
+
+<div id="kasiexport_holder" />
+
+<zscript>
+<![CDATA[
+
+documentLinkProp.document_idprefix = "DOCS";
+setDocumentLink_DynamicProperty(linkingdoc_include, documentLinkProp, useraccessobj);
+
+populateClientCategory_dropdown(clientcat_div);
+
+if(useraccessobj.accesslevel == 9)
+{
+}
+
+]]>
+</zscript>
+
+</panelchildren>
+</panel>
+</div>
+</zk>

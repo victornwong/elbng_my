@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="selfservicefolderman_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/alsglobalfuncs.zs" />
+<zscript src="../alsglobal/alsglobal_guifuncs.zs" />
+<zscript src="../alsglobal/alsglobal_sqlfuncs.zs" />
+<zscript src="../alsglobal/securityfuncs.zs" />
+<zscript>
+<![CDATA[
+/*
+Title		: Self-service folder manager
+Version		: 1.0
+Written by	: Victor Wong
+
+Allow users with high-enuf access level to uncommit,set logged or set draft flag in folder
+
+Revisions:
+02/11/2011: started
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+sqlhand = new SqlFuncs();
+kiboo = new Generals();
+guihand = new GuiFuncs();
+lbhand = new ListboxHandler();
+gridhand = new GridHandler();
+
+selected_origid = "";
+selected_folderstatus = "";
+selected_folderno_str = "";
+
+String[] reasonheaders = { "Folder","Prev.Stat","ChgTo.Stat","Date.Chg","User","Reason" };
+
+void showPreviousStatusChange(String iorigid)
+{
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select * from jobfolders_changestatus where folder_origid=" + iorigid + " order by origid desc";
+	chgrecs = sql.rows(sqlstm);
+	sql.close();
+
+	if(changereasons_holder.getFellowIfAny("reasongrid") != null) reasongrid.setParent(null);
+
+	thegrid = new Grid();
+	thegrid.setId("reasongrid");
+	gridrows = gridhand.gridMakeRows("","",thegrid);
+
+	hrow1 = gridhand.gridMakeRow("","","6",gridrows);
+	gridhand.makeLabelToParent("Folder-status change logs by user - latest change is at top","",hrow1);
+
+	headrow = gridhand.gridMakeRow("","background-color:#BBBBBB","",gridrows);
+	for(i=0;i<reasonheaders.length;i++)
+		gridhand.makeLabelToParent(reasonheaders[i],"",headrow);
+
+	for(dpi : chgrecs)
+	{
+		trow = gridhand.gridMakeRow("","","",gridrows);
+		gridhand.makeLabelToParent(dpi.get("folderno_str"),"",trow);
+		gridhand.makeLabelToParent(dpi.get("prevstate"),"",trow);
+		gridhand.makeLabelToParent(dpi.get("towhatstate"),"",trow);
+		gridhand.makeLabelToParent(dpi.get("datechanged").toString().substring(0,10),"",trow);
+		gridhand.makeLabelToParent(dpi.get("username"),"",trow);
+		gridhand.makeLabelToParent(dpi.get("changereason"),"",trow);
+	}
+
+	thegrid.setParent(changereasons_holder);
+}
+
+void showFolderMetadata()
+{
+	folds = kiboo.replaceSingleQuotes(folder_tb.getValue());
+	if(folds.equals("")) return;
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+	sqlstm = "select top 1 jf.origid, jf.datecreated, jf.folderno_str, jf.ar_code, " + 
+	"jf.folderstatus, customer.customer_name, csci.customer_name as cashcustomer from jobfolders jf " +
+	"left join customer on customer.ar_code = jf.ar_code " +
+	"left join cashsales_customerinfo csci on csci.folderno_str = jf.folderno_str " +
+	"where jf.folderno_str like '%" + folds + "%'";
+	foldrec = sql.firstRow(sqlstm);
+	sql.close();
+
+	if(foldrec == null) return;
+
+	folderno_str_lbl.setValue(foldrec.get("folderno_str"));
+	datecreated_lbl.setValue(foldrec.get("datecreated").toString().substring(0,10));
+
+	custname = foldrec.get("customer_name");
+	arcode = foldrec.get("ar_code");
+	// ar_code = cash or syabas contractor
+	if(arcode.equals("CASH") || arcode.equals("300S-550")) custname = foldrec.get("cashcustomer");
+
+	customername_lbl.setValue(custname);
+	arcode_lbl.setValue(arcode);
+
+	selected_folderstatus = foldrec.get("folderstatus");
+	folderstatus_lbl.setValue(selected_folderstatus);
+
+	selected_origid = foldrec.get("origid").toString();
+	showPreviousStatusChange(selected_origid);
+
+	selected_folderno_str = foldrec.get("folderno_str");
+
+	workarea.setVisible(true);
+}
+
+// iflag: as def in alsglobaldefs.zs
+void setFolderStatus(String iflag)
+{
+	if(selected_origid.equals("")) return;
+	thereason = kiboo.replaceSingleQuotes(changestatus_reason.getValue());
+	if(thereason.equals(""))
+	{
+		guihand.showMessageBox("Please enter a valid reason for changing the folder-state");
+		return;
+	}
+
+	if (Messagebox.show("Really change folder status?", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) ==  Messagebox.NO) return;
+
+	todate = kiboo.getDateFromDatebox(hiddendatebox);
+
+	sql = sqlhand.als_mysoftsql();
+	if(sql == null) return;
+
+	sqlstm = "update JobFolders set folderstatus='" + iflag + "' where origid=" + selected_origid;
+	sql.execute(sqlstm);
+
+	sqlstm = "insert into jobfolders_changestatus (folder_origid,folderno_str,datechanged,username,towhatstate,prevstate,changereason) values " +
+	"('" + selected_origid + "','" + selected_folderno_str + "','" + todate + "'," + 
+	"'" + useraccessobj.username + "','" + iflag + "','" + selected_folderstatus + "','" + thereason + "')";
+
+	sql.execute(sqlstm);
+	sql.close();
+
+	// reset stuff after updating folder-status
+	workarea.setVisible(false);
+	selected_origid = "";
+	selected_folderstatus = "";
+	selected_folderno_str = "";
+	changestatus_reason.setValue("");
+}
+
+]]>
+</zscript>
+
+<div width="1200px">
+<panel id="selfservicefolderman_panel" title="Self-service Folder Status Changer v.1" border="normal" collapsible="true" closable="true" >
+<panelchildren>
+<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" />
+
+<grid width="400px">
+	<rows>
+		<row>
+			<label value="Folder" style="font-size:9px" />
+			<hbox>
+			<textbox id="folder_tb" style="font-size:9px" />
+			<button label="Load" style="font-size:9px" onClick="showFolderMetadata()" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+<separator height="2px" />
+<div id="workarea" visible="false">
+<hbox>
+<grid width="400px" >
+	<rows>
+		<row>
+			<label value="Folder No." style="font-size:9px" />
+			<label id="folderno_str_lbl" style="font-size:9px" />
+			<label value="Date.Recv" style="font-size:9px" />
+			<label id="datecreated_lbl" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="AR_Code" style="font-size:9px" />
+			<label id="arcode_lbl" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Company" style="font-size:9px" />
+			<label id="customername_lbl" style="font-size:9px" />
+		</row>
+		<row spans=",3">
+			<label value="Status" style="font-size:9px" />
+			<label id="folderstatus_lbl" style="font-size:9px" />
+		</row>
+		<row spans="4">
+			<label value="Reason to change folder status" style="font-size:9px" />
+		</row>
+		<row spans="4">
+			<textbox id="changestatus_reason" style="font-size:9px" multiline="true" width="99%" height="60px" />
+		</row>
+		<row spans="4">
+			<hbox>
+			<button label="Set DRAFT" style="font-size:9px" onClick="setFolderStatus(FOLDERDRAFT)" />
+			<button label="Set LOGGED" style="font-size:9px" onClick="setFolderStatus(FOLDERLOGGED)" />
+			<button id="setcomit_btn" label="Set COMMITTED" style="font-size:9px" onClick="setFolderStatus(FOLDERCOMMITED)" visible="false" />
+			</hbox>
+		</row>
+	</rows>
+</grid>
+
+<div id="changereasons_holder" width="650px" height="500px" style="border:0px;overflow:auto;padding:2px;" />
+
+</hbox>
+</div>
+
+<zscript>
+<![CDATA[
+
+kiboo.setTodayDatebox(hiddendatebox);
+
+// admin things
+if(useraccessobj.accesslevel == 9)
+{
+	setcomit_btn.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+
