@@ -2,6 +2,8 @@
 <?page id="stockserviceitems_man"?>
 <zk>
 <zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
 <zscript src="../alsglobal/divisiongroup_funcs.zs" />
 <zscript src="../alsglobal/testpackage_funcs.zs" />
 
@@ -21,6 +23,7 @@ Developers			: Victor
 27/03/2012: modded to use byte-codes
 09/08/2012: put newfield5 for form-keeper-id
 07/03/2013: newfield4 set for subcon - if null or 0, ignore
+09/08/2014: optimization and UI enhancement
 
 StockMasterDetails.newfield10 = units
 StockMasterDetails.newfield9 = bill - YES/NO
@@ -46,12 +49,9 @@ myincludeid = Executions.getCurrent().getParameter("myid");
 useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
-kiboo = new Generals();
-sqlhand = new SqlFuncs();
-lbhand = new ListboxHandler();
-guihand = new GuiFuncs();
-samphand = new SampleReg();
-luhand = new LookupFuncs();
+kiboo = new Generals(); sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler(); guihand = new GuiFuncs();
+samphand = new SampleReg(); luhand = new LookupFuncs();
 
 TestsPanel testspanel;
 
@@ -137,13 +137,13 @@ void populateGLCode_listbox()
 	};
 	sqlstm = "select code,name from accountchart where code like '51100.%'";
 	accts = sqlhand.gpSqlGetRows(sqlstm);
+	ArrayList kabom = new ArrayList();
 	for(dpi : accts)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("code") + " : " + dpi.get("name"));
 		kabom.add(dpi.get("code"));
-		strarray = kiboo.convertArrayListToStringArray(kabom);
-		lbhand.insertListItems(si_nominal_code_lb,strarray,"false","");
+		lbhand.insertListItems(si_nominal_code_lb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 
 	si_nominal_code_lb.setSelectedIndex(0);
@@ -209,6 +209,11 @@ void showStockItem_Metadata(String imysoftcode)
 
 void clearStockitem_clicker()
 {
+	Object[] jkl = {si_stockcode, si_description, si_description2, si_product_details, si_nominal_code_lb, si_cost_price, 
+		si_selling_price, si_units_newfield10, si_lor_newfield8, si_casnumber_newfield7, si_precondmethod_field6 };
+
+	clearUI_Field(jkl);
+/*
 	si_stockcode.setValue("");
 	si_description.setValue("");
 	si_description2.setValue("");
@@ -217,14 +222,13 @@ void clearStockitem_clicker()
 	zerome = new BigDecimal(0);
 	si_cost_price.setValue(zerome);
 	si_selling_price.setValue(zerome);
-
 	si_units_newfield10.setValue("");
 	//si_units_newfield10.setSelectedIndex(0);
-	si_billclient.setSelectedIndex(1);
 	si_lor_newfield8.setValue("");
 	si_casnumber_newfield7.setValue("");
 	si_precondmethod_field6.setValue("");
-
+*/
+	si_billclient.setSelectedIndex(1);
 	selected_test = ""; // clear global selected_test - to disallow updating of earlier selected item - in case
 	newstockitem_btn.setLabel("New test/sale item");
 	si_stockcode.setDisabled(false);
@@ -434,16 +438,15 @@ void showCASMegalist(String isearch, Div iwhich)
 	if(casrecs.size() == 0) return;
 	newlb.setRows(12);
 	//newlb.addEventListener("onSelect", new casmegalistLB_Listener());
-
+	ArrayList kabom = new ArrayList();
 	for(dpi : casrecs)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("origid").toString());
 		kabom.add(dpi.get("casrn"));
 		kabom.add(dpi.get("chemical_name"));
 		kabom.add(dpi.get("short_name"));
-		strarray = kiboo.convertArrayListToStringArray(kabom);
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 	
 	dc_obj = new casmegalistLB_DoubleClick_Listener();
@@ -811,12 +814,12 @@ populateGLCode_listbox();
 unitTypes_Putter(unittypes_holder);
 
 // Setup TestsPanel() . showType=2 (have pricings)
-/*
+
 testspanel = new TestsPanel(division_column,"",section_column,"",testparameters_column,"");
 testspanel.populateDivisionColumn();
 testspanel.showType = 2;
 testspanel.testOnClicker = new ALSTestParametersLB_Listener();
-*/
+
 // 07/03/2013: populate subcon from lookups
 /*
 sbcs = luhand.getLookups_ByParent("SUBCON_NAMES");
@@ -824,7 +827,7 @@ for(sbi : sbcs)
 {
 }
 */
-luhand.populateListBox_ValueSelection(si_newfield4_subcon,"SUBCON_NAMES",2,20);
+luhand.populateListBox_ValueSelection(si_newfield4_subcon,"SUBCON_NAMES",2,2);
 
 if(useraccessobj.accesslevel == 9)
 {
