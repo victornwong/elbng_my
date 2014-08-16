@@ -2,12 +2,14 @@
 <?page id="checklist_mod"?>
 <zk>
 <zscript src="../alsglobal/alsglobaldefs.zs" />
-<zscript src="../alsglobal/formMaker_v1.zs" />
-<zscript src="../alsglobal/uploadedWorksheet_v1.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
 <zscript>
 <![CDATA[
 MYTITLE = "Food Nutritional Labeling";
-MYVERSION = "v0.2";
+MYVERSION = "v0.2.1";
 /*
 Title		: Nutritional results entry
 Written by	: Victor Wong
@@ -19,6 +21,7 @@ Nutri-labeling-parameters formkeeper id = 15
 
 03/04/2013: add Munchy ONLY nut-template - "per 100g" column
 06/12/2012: add codes to do inline update sample-marking
+16/08/2014: change Malaysia-labeling calories calc to USA formula (req Dr Koh). And some optimization
 
 */
 import java.util.*;
@@ -65,20 +68,13 @@ myincludeid = Executions.getCurrent().getParameter("myid");
 useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
-kiboo = new Generals();
-sqlhand = new SqlFuncs();
-lbhand = new ListboxHandler();
-guihand = new GuiFuncs();
+kiboo = new Generals(); sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler(); guihand = new GuiFuncs();
 luhand = new LookupFuncs();
 
 int last_loadtype = 0;
-String glob_selected_folderno = "";
-String glob_selected_jobsample = "";
-String glob_selected_jtp = "";
-String glob_selected_mysoft = "";
-String glob_selected_formkeeper = "";
-String glob_selected_testname = "";
-String glob_selected_method = "";
+String glob_selected_folderno = glob_selected_jobsample = glob_selected_jtp = glob_selected_mysoft = "";
+String glob_selected_formkeeper = glob_selected_testname = glob_selected_method = "";
 
 signator_recs = null;
 boolean cangenreport = false;
@@ -263,16 +259,15 @@ Object[] jtplist_headers =
 	jtps = sqlhand.gpSqlGetRows(sqlstm);
 	if(jtps.size() == 0) { return; }
 	newlb.addEventListener("onSelect", new sampletests_onSelect());
+	ArrayList kabom = new ArrayList();
 	for(dpi : jtps)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("origid").toString());
 		kabom.add(dpi.get("mysoftcode").toString());
 		kabom.add(kiboo.checkNullString(dpi.get("formkeeper_id")));
 		kabom.add(kiboo.checkNullString(dpi.get("description")));
 		kabom.add(kiboo.checkNullString(dpi.get("description2")));
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
 	}
 }
 
@@ -285,6 +280,7 @@ class jslist_onSelect implements org.zkoss.zk.ui.event.EventListener
 		showJobSampleTests(glob_selected_jobsample);
 	}
 }
+jslisclicker = new jslist_onSelect();
 
 class sample_DoubleClicker implements org.zkoss.zk.ui.event.EventListener
 {
@@ -343,15 +339,15 @@ Object[] jslist_headers =
 
 	therows = sqlhand.gpSqlGetRows(sqlstm); // grab samples + marking
 	if(therows.size() == 0) { return; }
-	newlb.addEventListener("onSelect", new jslist_onSelect());
+	newlb.addEventListener("onSelect", jslisclicker);
+	ArrayList kabom = new ArrayList();
 
 	for(dpi : therows)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("js_origid").toString());
 		kabom.add(dpi.get("samplemarking"));
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 
 	dc_obj = new sample_DoubleClicker();
@@ -586,8 +582,18 @@ void doReportTemplate(Object icomp, int unittype)
 		}
 	}
 
+	Object[] jkl = { saturated_fat, monosaturated, polyunsaturated, trans_fat, protein, total_carbohydrate,
+		dietary_fiber, sugars, cholesterol, sodium };
+
+	iv = getString_fromUI(jkl);
+
 	if(gentype.equals(UKNUTFACT_1_BTN))
 	{
+		for(i=0;i<jkl.length;i++)
+		{
+			excelInsertString(sheet,22+i,2,iv[i]);
+		}
+		/*
 		excelInsertString(sheet,22,2,saturated_fat.getValue());
 		excelInsertString(sheet,23,2,monosaturated.getValue());
 		excelInsertString(sheet,24,2,polyunsaturated.getValue());
@@ -598,6 +604,7 @@ void doReportTemplate(Object icomp, int unittype)
 		excelInsertString(sheet,29,2,sugars.getValue());
 		excelInsertString(sheet,30,2,cholesterol.getValue());
 		excelInsertString(sheet,31,2,sodium.getValue());
+		*/
 		patchResultsWithND(sheet,22,10,2);
 	}
 
@@ -866,12 +873,17 @@ void doReportTemplate(Object icomp, int unittype)
 	if(gentype.equals(MYNUTFACT_1_BTN) || gentype.equals(MYNUTFACT_1_SUGAR_BTN))
 	{
 		// nutri labeling (per 100g/100ml default column)
-		excelInsertString(sheet,77,2,nf0.format(enkcal) + " kcal");
+		//excelInsertString(sheet,77,2,nf0.format(enkcal) + " kcal"); 16/08/2014: chg to USA calories req Dr.Koh
+		excelInsertString(sheet,77,2,nf0.format(se_tustotalcalorie_kcal) + " kcal");
 		excelInsertString(sheet,78,2,nf0.format(enkj) + " kJ");
 		excelInsertString(sheet,79,2,nf.format(tcarbo) + " g");
 		excelInsertString(sheet,80,2,nf.format(tprotein) + " g");
 		excelInsertString(sheet,81,2,nf.format(tfatt) + " g");
-	
+
+// USA calories copy from below
+//		excelInsertString(sheet,75,1,"Calories (per serving) : " + nf0.format(se_tustotalcalorie_kcal) + " kcal");
+//		excelInsertString(sheet,75,3,"Calories from fat (per serving) : " + nf0.format(se_tuscaloriesfromfat) + " kcal");
+
 		// user want sugar-template
 		if(gentype.equals(MYNUTFACT_1_SUGAR_BTN))
 		{
@@ -1199,20 +1211,20 @@ void nutriPopupSelector(Component icomp)
 <grid>
 	<rows>
 		<row>
-			<label value="Serving size" style="font-size:9px" />
-			<textbox id="serving_size" value="100" style="font-size:9px" />
-			<label value="SG" style="font-size:9px" />
-			<textbox id="sg_value" value="0" style="font-size:9px" />
+			<label value="Serving size" sclass="k9" />
+			<textbox id="serving_size" value="100" sclass="k9" />
+			<label value="SG" sclass="k9" />
+			<textbox id="sg_value" value="0" sclass="k9" />
 		</row>
 		<row spans="1,1,2">
-			<label value="Serving per package" style="font-size:9px" />
-			<textbox id="serving_perpackage" value="1" style="font-size:9px" />
+			<label value="Serving per package" sclass="k9" />
+			<textbox id="serving_perpackage" value="1" sclass="k9" />
 		</row>
 		<row>
-			<label value="Signator" style="font-size:9px" />
-			<listbox id="signator_lb" mold="select" style="font-size:9px" />
-			<label value="2nd Signator" style="font-size:9px" />
-			<listbox id="signator2_lb" mold="select" style="font-size:9px" />
+			<label value="Signator" sclass="k9" />
+			<listbox id="signator_lb" mold="select" sclass="k9" />
+			<label value="2nd Signator" sclass="k9" />
+			<listbox id="signator2_lb" mold="select" sclass="k9" />
 		</row>
 	</rows>
 </grid>
@@ -1220,9 +1232,9 @@ void nutriPopupSelector(Component icomp)
 <separator height="3px" />
 
 <hbox>
-	<button label="Generate g/100g" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,1)" />
-	<button label="Generate g/100ml" style="font-size:9px" onClick="doReportTemplate(glob_selected_genbutt,2)" />
-	<button label="Close" style="font-size:9px" onClick="nutrigen_popup.close()" />
+	<button label="Generate g/100g" sclass="k9" onClick="doReportTemplate(glob_selected_genbutt,1)" />
+	<button label="Generate g/100ml" sclass="k9" onClick="doReportTemplate(glob_selected_genbutt,2)" />
+	<button label="Close" sclass="k9" onClick="nutrigen_popup.close()" />
 </hbox>
 </popup>
 
@@ -1231,15 +1243,15 @@ void nutriPopupSelector(Component icomp)
 <!-- popup to let user change sample-marking -->
 <popup id="sampleMarking_popup">
 <vbox>
-	<textbox id="ch_samplemarking" style="font-size:9px" multiline="true" width="350px" height="50px" />
-	<button label="Update sample-marking" style="font-size:9px" onClick="updateSampleMarking()" />
+	<textbox id="ch_samplemarking" sclass="k9" multiline="true" width="350px" height="50px" />
+	<button label="Update sample-marking" sclass="k9" onClick="updateSampleMarking()" />
 </vbox>
 </popup>
 
 <!-- formula only popup -->
 <popup id="formulaPopup">
 <groupbox mold="3d" width="400px">
-<label multiline="true" style="font-size:9px">
+<label multiline="true" sclass="k9">
 Total_carbohydrate = 100 - moisture - ash - fat - protein
 Available_carbohydrate = Total_carbohydrate - dietary_fiber
 
@@ -1258,6 +1270,8 @@ Calories from Fat = fat x 9
 </groupbox>
 </popup>
 
+<style src="/real-world.css" />
+
 <div width="1200px">
 <panel id="resultentry3_panel" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
 <panelchildren>
@@ -1269,14 +1283,14 @@ Calories from Fat = fat x 9
 <grid width="450px">
 	<rows>
 		<row>
-			<label value="Folder number" style="font-size:9px" />
-			<textbox id="folderno_tb" style="font-size:9px" />
-			<button label="by folder" style="font-size:9px" onClick="loadSampleTests(1)" />
+			<label value="Folder number" sclass="k9" />
+			<textbox id="folderno_tb" sclass="k9" />
+			<button label="by folder" sclass="k9" onClick="loadSampleTests(1)" />
 		</row>
 		<row>
-			<label value="Sample-ID" style="font-size:9px" />
-			<textbox id="sampleid_tb" style="font-size:9px" />
-			<button label="by sample-id" style="font-size:9px" onClick="loadSampleTests(2)" />
+			<label value="Sample-ID" sclass="k9" />
+			<textbox id="sampleid_tb" sclass="k9" />
+			<button label="by sample-id" sclass="k9" onClick="loadSampleTests(2)" />
 		</row>
 	</rows>
 </grid>
@@ -1317,10 +1331,10 @@ Calories from Fat = fat x 9
 			</div>
 		</row>
 		<row>
-			<label value="Keyin" style="font-size:9px" />
-			<label id="keyin_by" style="font-size:9px" />
-			<label value="Keyin.Date" style="font-size:9px" />
-			<label id="keyin_date" style="font-size:9px" />
+			<label value="Keyin" sclass="k9" />
+			<label id="keyin_by" sclass="k9" />
+			<label value="Keyin.Date" sclass="k9" />
+			<label id="keyin_date" sclass="k9" />
 		</row>
 	</rows>
 </grid>
@@ -1329,10 +1343,10 @@ Calories from Fat = fat x 9
 	<div id="form_holder" />
 	<vbox>
 		<hbox>
-			<button id="nutricalc_btn" label="Nutri-calculation" style="font-size:9px" onClick="doFormula(1)" visible="false" />
-			<button label="?" style="font-size:9px" onClick="formulaPopup.open(self)" />
+			<button id="nutricalc_btn" label="Nutri-calculation" sclass="k9" onClick="doFormula(1)" visible="false" />
+			<button label="?" sclass="k9" onClick="formulaPopup.open(self)" />
 		</hbox>
-		<button label="Save results" style="font-size:9px" onClick="saveImportResults()" />
+		<button label="Save results" sclass="k9" onClick="saveImportResults()" />
 
 		<separator height="3px" />
 		
@@ -1344,14 +1358,14 @@ Calories from Fat = fat x 9
 			</div>
 			<separator height="3px" />
 			<vbox>
-			<button id="${MYNUTFACT_1_BTN}" label="Nutri-fact (MY)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${MYNUTFACT_1_SUGAR_BTN}" label="Nutri-fact + Sugar (MY)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${USNUTFACT_1_BTN}" label="Nutri-fact (US)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${UKNUTFACT_1_BTN}" label="Nutri-fact (UK)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${AUNUTFACT_1_BTN}" label="Nutri-fact (AU)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${CNNUTFACT_1_BTN}" label="Nutri-fact (CN)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${SGNUTFACT_1_BTN}" label="Nutri-fact (SG)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
-			<button id="${MUNCHYNUTFACT_1_BTN}" label="Munchy (US)" style="font-size:9px" onClick="nutriPopupSelector(self)" />
+			<button id="${MYNUTFACT_1_BTN}" label="Nutri-fact (MY)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${MYNUTFACT_1_SUGAR_BTN}" label="Nutri-fact + Sugar (MY)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${USNUTFACT_1_BTN}" label="Nutri-fact (US)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${UKNUTFACT_1_BTN}" label="Nutri-fact (UK)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${AUNUTFACT_1_BTN}" label="Nutri-fact (AU)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${CNNUTFACT_1_BTN}" label="Nutri-fact (CN)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${SGNUTFACT_1_BTN}" label="Nutri-fact (SG)" sclass="k9" onClick="nutriPopupSelector(self)" />
+			<button id="${MUNCHYNUTFACT_1_BTN}" label="Munchy (US)" sclass="k9" onClick="nutriPopupSelector(self)" />
 			</vbox>
 		</div>
 	
