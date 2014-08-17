@@ -2,17 +2,20 @@
 <?page id="purchreq_mod"?>
 <zk>
 <zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
 <zscript src="../alsglobal/emailfuncs.zs" />
+<zscript src="./prfuncs/prgenfuncs.zs" />
 <zscript>
 <![CDATA[
 MYTITLE = "Purchase Requisition / Order";
-MYVERSION = "v0.2";
+MYVERSION = "v0.3";
 MYPANEL = "purpopanl";
 /*
 Title		: Purchase requisition and PO
 Written by	: Victor Wong
 
 17/04/2013: totally rewriting the overall codes
+16/08/2014: optimization and bug-fixes
 
 */
 /*
@@ -34,12 +37,9 @@ myincludeid = Executions.getCurrent().getParameter("myid");
 useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
-kiboo = new Generals();
-sqlhand = new SqlFuncs();
-lbhand = new ListboxHandler();
-guihand = new GuiFuncs();
-luhand = new LookupFuncs();
-dmshand = new DMSFuncs();
+kiboo = new Generals(); sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler(); guihand = new GuiFuncs();
+luhand = new LookupFuncs(); dmshand = new DMSFuncs();
 
 PR_STAT_NEW = "NEW";
 PR_STAT_SUBMIT = "SUBMIT";
@@ -52,78 +52,9 @@ PR_PREFIX = "EPR";
 DecimalFormat nf = new DecimalFormat("0.00");
 
 last_load_type = 0;
-glob_selected_pr = "";
-glob_selected_status = "";
-glob_selected_pri = "";
-glob_selected_supplier = "";
-
-Object getPR_Rec(String iorigid)
-{
-	sqlstm = "select * from purchaserequisition where origid=" + iorigid;
-	retv = sqlhand.gpSqlFirstRow(sqlstm);
-	return retv;
-}
+glob_selected_pr = glob_selected_status = glob_selected_pri = glob_selected_supplier = "";
 
 APPROVER_EMAIL = "tchin@alsglobal.com.my, finance@alsglobal.com.my, accts@alsglobal.com.my";
-
-// inoti_type: 1=approver query, 2=req response, 3=new PR submitted, .. read switch
-void notifyEmail(String iprid, int inoti_type)
-{
-	subjstr = "";
-	switch(inoti_type)
-	{
-		case 1:
-			subjstr = "Approver posted item query";
-			break;
-		case 2:
-			subjstr = "Requester responsed to your item query";
-			break;
-		case 3:
-			subjstr = "New PR submitted for approval";
-			break;
-		case 4:
-			subjstr = "Your PR has been approved";
-			break;
-		case 5:
-			subjstr = "Your PR has been disapproved";
-			break;
-		case 6:
-			subjstr = "Approver posted PR query";
-			break;
-		case 7:
-			subjstr = "Requester updated PR justification";
-			break;
-	}
-
-	prc = getPR_Rec(iprid);
-	if(prc == null) { guihand.showMessageBox("DBERR: Cannot email notification.."); return; }
-
-	subjstr = PR_PREFIX + prc.get("origid").toString() + " : " + subjstr;
-
-	msgbody  = "Purchase Req   : " + PR_PREFIX + prc.get("origid").toString();
-	msgbody += "\n\nDate requested : " + prc.get("datecreated").toString().substring(0,10);
-	msgbody += "\nApproved by    : " + prc.get("duedate").toString().substring(0,10);
-	msgbody += "\nRequested by   : " + prc.get("username");
-	msgbody += "\nDepartment     : " + kiboo.checkNullString(prc.get("dept_number"));
-	msgbody += "\nApproved by    : " + kiboo.checkNullString(prc.get("approveby")) + 
-	" Approved date : " + ((prc.get("approvedate") == null) ? "" : prc.get("approvedate").toString().substring(0,10));
-	msgbody += "\n---------------------------------------------------------------------------";
-	msgbody += "\nVendor         : " + kiboo.checkNullString(prc.get("SupplierName"));
-	msgbody += "\n\nJustification  : ";
-	msgbody += "\n" + kiboo.checkNullString(prc.get("notes"));
-	msgbody += "\n\nApprover query : ";
-	msgbody += "\n" + kiboo.checkNullString(prc.get("approver_notes"));
-	msgbody += "\n\n**Login to E-LAMBMAN to access the complete PR to take action**";
-	
-	topeople22 = luhand.getLookupChildItems_StringArray("PR_APPROVER_USERS",2);
-	topeople = kiboo.convertStringArrayToString(topeople22);
-	topeople += "," + useraccessobj.email;
-
-	//topeople = APPROVER_EMAIL;
-	simpleSendEmail(SMTP_SERVER,"elabman@alsglobal.com.my",topeople,subjstr,msgbody);
-	//alert(subjstr + msgbody);
-	//alert(topeople);
-}
 
 void showPRItems(String iwhat)
 {
@@ -132,6 +63,15 @@ void showPRItems(String iwhat)
 	retv = sqlhand.gpSqlFirstRow(sqlstm);
 	if(retv == null) { guihand.showMessageBox("DBERR: Cannot load purchase item record.."); return; }
 
+	Object[] jkl = { pri_mysoftcode, pri_description, pri_curcode, pri_unitprice, pri_quantity, pri_justification,
+		pri_approver_query, pri_requester_response };
+
+	String[] fl = { "mysoftcode", "description", "curcode", "unitprice", "quantity", "justification",
+	"approver_query", "requester_response" };
+
+	populateUI_Data(jkl,fl,retv);
+
+/*
 	pri_mysoftcode.setValue(retv.get("mysoftcode"));
 	pri_description.setValue(kiboo.checkNullString(retv.get("description")));
 	lbhand.matchListboxItems(pri_curcode,retv.get("curcode"));
@@ -140,6 +80,7 @@ void showPRItems(String iwhat)
 	pri_justification.setValue(kiboo.checkNullString(retv.get("justification")));
 	pri_approver_query.setValue(kiboo.checkNullString(retv.get("approver_query")));
 	pri_requester_response.setValue(kiboo.checkNullString(retv.get("requester_response")));
+*/
 }
 
 class prilb_onSelect implements org.zkoss.zk.ui.event.EventListener
@@ -151,6 +92,7 @@ class prilb_onSelect implements org.zkoss.zk.ui.event.EventListener
 		showPRItems(glob_selected_pri);
 	}
 }
+prilbciker = new prilb_onSelect();
 
 Object[] prilb_headers = 
 {
@@ -171,12 +113,12 @@ void loadPR_items(String iprno)
 
 	screcs = sqlhand.gpSqlGetRows(sqlstm);
 	if(screcs.size() == 0) return;
-	newlb.addEventListener("onSelect", new prilb_onSelect());
+	newlb.addEventListener("onSelect", prilbciker);
 	lncnt = 1;
 	pritotal = 0.0;
+	ArrayList kabom = new ArrayList();
 	for(dpi : screcs)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("origid").toString());
 		kabom.add(lncnt.toString() + ".");
 		kabom.add(kiboo.checkNullString(dpi.get("description")));
@@ -186,11 +128,10 @@ void loadPR_items(String iprno)
 		kabom.add(dpi.get("quantity").toString());
 		//kabom.add(kiboo.checkNullString(dpi.get("curcode")) + " " + nf.format(dpi.get("unitprice")) );
 		kabom.add(nf.format(dpi.get("unitprice")) );
-
 		kabom.add((dpi.get("item_app_stat") == null) ? "NA" : ((dpi.get("item_app_stat") == 0) ? "NA" : "AP") );
 
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 
 		lncnt++;
 	}
@@ -202,7 +143,16 @@ void showPR_metadata(String iwhat)
 {
 	prec = getPR_Rec(iwhat);
 	if(prec == null) { guihand.showMessageBox("DB ERROR!!!! Cannot load PR record"); return; }
-	
+
+	Object[] jkl = { pr_origid, pr_datecreated, pr_suppliername, pr_apcode, pr_address1, pr_address2,
+		pr_address3, pr_address4, pr_contact_name, pr_supp_email, pr_supp_tel_number, pr_supp_fax,
+		pr_priority, pr_notes, pr_duedate, pr_approver_notes, pr_dept_number };
+
+	String[] fl = { "origid", "datecreated", "SupplierName", "APCode", "address1", "address2", "address3", "address4",
+	"contact_name", "supp_email", "supp_tel_number", "supp_fax", "priority", "notes", "duedate", "approver_notes", "dept_number" };
+
+	populateUI_Data(jkl,fl,prec);
+/*	
 	pr_origid.setValue(prec.get("origid").toString());
 	pr_datecreated.setValue(prec.get("datecreated").toString().substring(0,10));
 	pr_suppliername.setValue(kiboo.checkNullString(prec.get("SupplierName")));
@@ -220,7 +170,7 @@ void showPR_metadata(String iwhat)
 	pr_duedate.setValue(prec.get("duedate"));
 	pr_approver_notes.setValue(kiboo.checkNullString(prec.get("approver_notes")));
 	lbhand.matchListboxItems(pr_dept_number,kiboo.checkNullString(prec.get("dept_number")));
-
+*/
 	workspace.setVisible(true);
 }
 
@@ -272,9 +222,12 @@ void loadPurchaseReq(int itype)
 	screcs = sqlhand.gpSqlGetRows(sqlstm);
 	if(screcs.size() == 0) return;
 	newlb.addEventListener("onSelect", new prlb_onSelect());
+	ArrayList kabom = new ArrayList();
+	String[] fl = { "origid", "datecreated", "suppliername", "username", "dept_number", "priority", "pr_status" };
 	for(dpi : screcs)
 	{
-		ArrayList kabom = new ArrayList();
+		popuListitems_Data(kabom,fl,dpi);
+		/*
 		kabom.add(dpi.get("origid").toString());
 		//kabom.add(PR_PREFIX + dpi.get("origid").toString());
 		kabom.add(dpi.get("datecreated").toString().substring(0,10));
@@ -283,29 +236,37 @@ void loadPurchaseReq(int itype)
 		kabom.add(kiboo.checkNullString(dpi.get("dept_number")));
 		kabom.add(kiboo.checkNullString(dpi.get("priority")));
 		kabom.add(kiboo.checkNullString(dpi.get("pr_status")));
-		kabom.add((dpi.get("upload") == null) ? "N" : ((dpi.get("upload") == 0) ? "N" : "Y") );
 		//kabom.add(kiboo.checkNullString(dpi.get("notes")));
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		*/
+		kabom.add((dpi.get("upload") == null) ? "N" : ((dpi.get("upload") == 0) ? "N" : "Y") );
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 }
 
 void disableWorkspaceButts(boolean iwhat, String iprstat)
 {
+	Object[] jkl = { getsupplier_butt, savepr_butt, newitem_butt, deleteitem_butt, getitem_butt };
+	disableUI_obj(jkl,iwhat);
+/*
 	getsupplier_butt.setDisabled(iwhat);
 	savepr_butt.setDisabled(iwhat);
 	newitem_butt.setDisabled(iwhat);
 	deleteitem_butt.setDisabled(iwhat);
 	getitem_butt.setDisabled(iwhat);
-
+*/
 	if(!iprstat.equals(PR_STAT_APPROVE) && !iprstat.equals(PR_STAT_CANCEL)) iwhat = false;
 
+	Object[] jkl2 = { savepritem_butt, approverquery_butt, reqresp_butt, saveapproverquery, approveitem_butt, savejustification_butt};
+	disableUI_obj(jkl2,iwhat);
+/*
 	savepritem_butt.setDisabled(iwhat);
 	approverquery_butt.setDisabled(iwhat);
 	reqresp_butt.setDisabled(iwhat);
 	saveapproverquery.setDisabled(iwhat);
 	approveitem_butt.setDisabled(iwhat);
 	savejustification_butt.setDisabled(iwhat);
+*/
 }
 
 // check PR if all items approved - if yes, set PR status to APPR and lock
@@ -352,6 +313,11 @@ void doFunc_PRItem(String iwhat)
 
 	if(iwhat.equals("savepritem_butt"))
 	{
+		Object[] jkl = { pri_mysoftcode, pri_description, pri_curcode, pri_unitprice, pri_quantity, pri_justification,
+			pri_approver_query, pri_requester_response };
+
+		iv = getString_fromUI(jkl);
+/*
 		mysc = pri_mysoftcode.getValue();
 		idsc = kiboo.replaceSingleQuotes(pri_description.getValue());
 		iccd = pri_curcode.getSelectedItem().getLabel();
@@ -360,10 +326,10 @@ void doFunc_PRItem(String iwhat)
 		ijusty = kiboo.replaceSingleQuotes(pri_justification.getValue());
 		apquy = kiboo.replaceSingleQuotes(pri_approver_query.getValue());
 		reqrs = kiboo.replaceSingleQuotes(pri_requester_response.getValue());
-
-		sqlstm = "update purchasereq_items set mysoftcode='" + mysc + "', description='" + idsc + "'," +
-		"curcode='" + iccd + "',unitprice=" + iupr + ", quantity=" + iqty + ",justification='" + ijusty + "'," +
-		"approver_query='" + apquy + "', requester_response='" + reqrs + "' " +
+*/
+		sqlstm = "update purchasereq_items set mysoftcode='" + iv[0] + "', description='" + iv[1] + "'," +
+		"curcode='" + iv[2] + "',unitprice=" + iv[3] + ", quantity=" + iv[4] + ",justification='" + iv[5] + "'," +
+		"approver_query='" + iv[6] + "', requester_response='" + iv[7] + "' " +
 		"where origid=" + glob_selected_pri;
 
 		refresh_prilb = true;
@@ -437,6 +403,7 @@ void doFunc(String iwhat)
 
 	if(iwhat.equals("savepr_butt"))
 	{
+		/*
 		spnm = kiboo.replaceSingleQuotes(pr_suppliername.getValue());
 		spcod = pr_apcode.getValue();
 		add1 = kiboo.replaceSingleQuotes(pr_address1.getValue());
@@ -451,11 +418,17 @@ void doFunc(String iwhat)
 		prnots = kiboo.replaceSingleQuotes(pr_notes.getValue());
 		prddat = kiboo.getDateFromDatebox(pr_duedate);
 		prdept = pr_dept_number.getSelectedItem().getLabel();
+		*/
 
-		sqlstm = "update purchaserequisition set suppliername='" + spnm + "',apcode='" + spcod + "'," +
-		"address1='" + add1 + "',address2='" + add2 + "',address3='" + add3 + "',address4='" + add4 + "'," +
-		"contact_name='" + spcont + "',supp_email='" + speml + "',supp_tel_number='" + sptel + "',supp_fax='" + spfax + "'," +
-		"priority='" + prty + "',notes='" + prnots + "',duedate='" + prddat + "', dept_number='" + prdept + "' " + 
+		Object[] jkl = {pr_suppliername, pr_apcode, pr_address1, pr_address2, pr_address3, pr_address4,
+			pr_contact_name, pr_supp_email, pr_supp_tel_number, pr_supp_fax, pr_priority, pr_notes, pr_duedate, pr_dept_number};
+
+		iv = getString_fromUI(jkl);
+
+		sqlstm = "update purchaserequisition set suppliername='" + iv[0] + "',apcode='" + iv[1] + "'," +
+		"address1='" + iv[2] + "',address2='" + iv[3] + "',address3='" + iv[4] + "',address4='" + iv[5] + "'," +
+		"contact_name='" + iv[6] + "',supp_email='" + iv[7] + "',supp_tel_number='" + iv[8] + "',supp_fax='" + iv[9] + "'," +
+		"priority='" + iv[10] + "',notes='" + iv[11] + "',duedate='" + iv[12] + "', dept_number='" + iv[13] + "' " + 
 		"where origid=" + glob_selected_pr;
 
 		refresh_prlb = true;
@@ -586,6 +559,7 @@ void doFunc(String iwhat)
 	if(email_noti > 0) notifyEmail(glob_selected_pr,email_noti);
 }
 
+// 16/08/2014: during upload, get the correct curcode from pr-items as pr-meta won't have this info
 void uploadPRToMySoft(String ipr)
 {
 	prec = getPR_Rec(ipr);
@@ -610,7 +584,7 @@ void uploadPRToMySoft(String ipr)
 	sqlstm = "delete from popheader where order_number='" + prid + "';";
 	sqlstm += "delete from pop_detail where order_number='" + prid + "';";
 	sqlhand.gpSqlExecuter(sqlstm);
-	
+
 sqlstm =
 "insert into popheader (ORDER_NUMBER, ORDER_DATE, ORDER_TYPE, ACCOUNT_REF, Reference," +
 "NAME, ADDRESS_1, ADDRESS_2, ADDRESS_3, ADDRESS_4, ADDRESS_5, " +

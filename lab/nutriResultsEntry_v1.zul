@@ -268,6 +268,7 @@ Object[] jtplist_headers =
 		kabom.add(kiboo.checkNullString(dpi.get("description")));
 		kabom.add(kiboo.checkNullString(dpi.get("description2")));
 		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 }
 
@@ -310,7 +311,7 @@ Object[] jslist_headers =
 	sampid = kiboo.replaceSingleQuotes(sampleid_tb.getValue());
 
 	// dev purposes - no need to type
-	if(foldernum.equals("") && useraccessobj.accesslevel==9) foldernum = "ALSM36166";
+	if(foldernum.equals("") && useraccessobj.accesslevel==9) foldernum = "ALSM105948";
 
 	if(itype == 1 && foldernum.equals("")) return;
 	if(itype == 2 && sampid.equals("")) return;

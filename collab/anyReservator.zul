@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="reservarorantor"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Reservator";
+MYVERSION = "v0.1";
+MYPANEL = "reservatrorpanel";
+/*
+Title		: Reservator for anything
+Written by	: Victor Wong
+
+NOTES:
+
+*/
+import java.util.*;
+import java.text.*;
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals(); sqlhand = new SqlFuncs(); lbhand = new ListboxHandler(); guihand = new GuiFuncs(); luhand = new LookupFuncs();
+
+void drawBigCalendar(int imonth, Component idiv)
+{
+	Grid mgrid = new Grid(); mgrid.setParent(idiv);
+	mgrid.setSclass("GridLayoutNoBorder");
+	mrows = new Rows(); mrows.setParent(mgrid);
+
+	krow = new Row(); krow.setParent(mrows);
+	String[] weekname = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+	// Draw week-day name
+	for(i=0; i<7; i++)
+	{
+		dtv = new Div(); dtv.setParent(krow);
+		dtv.setStyle("background:#EF1111"); dtv.setHeight("40px");
+
+		dstr = new Label();
+		dstr.setParent(dtv); dstr.setSclass("subhead1");
+		dstr.setValue(weekname[i]);
+	}
+
+	Calendar cal = Calendar.getInstance();
+	cal.set(Calendar.DAY_OF_MONTH, 1);
+
+	sday = cal.get(Calendar.DAY_OF_WEEK);
+	cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH) );
+	eday = cal.get(Calendar.DAY_OF_MONTH) + 1;
+
+	krow = new Row(); krow.setParent(mrows);
+
+	// days padding
+	for(k=1;k<sday;k++)
+	{
+		dtv = new Div(); dtv.setParent(krow);
+		dtv.setStyle("background:#3E6179"); dtv.setHeight("40px");
+	}
+
+	for(i=1; i<eday; i++)
+	{
+		dtv = new Div(); dtv.setParent(krow);
+		dtv.setStyle("background:#3E6179"); dtv.setHeight("40px");
+
+		dtlb = new Label();
+		dtlb.setParent(dtv); dtlb.setSclass("subhead1");
+		dtlb.setValue(i.toString()); // + " : " + (sday%7).toString());
+
+		if(sday%7 == 0)
+		{
+			krow = new Row(); krow.setParent(mrows);
+		}
+		sday++;
+	}
+
+
+}
+
+void runTest()
+{
+	Calendar cal = Calendar.getInstance();
+	//cal.set(Calendar.MONTH, Calendar.AUGUST);
+	cal.set(Calendar.DAY_OF_MONTH, 1);
+	//cal.set(Calendar.YEAR, 2014);
+	Date todate = cal.getTime();
+	sday = cal.get(Calendar.DAY_OF_WEEK);
+	cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH) );
+	eday = cal.get(Calendar.DAY_OF_MONTH);
+
+	alert( sday + " - " + eday);
+}
+
+]]>
+</zscript>
+
+<style src="/real-world.css" />
+<style>
+.GridLayoutNoBorder tr.z-row td.z-row-inner, tr.z-row .z-cell, div.z-grid
+{
+border: none; overflow: hidden; zoom: 1;
+border-top: none; border-left: none; border-right: none; border-bottom: none;
+}
+</style>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren style="background:#2E2E2D">
+
+<datebox id="resv_date" format="yyyy-MM-dd" onCreate="kiboo.setTodayDatebox(self)" />
+<div id="calendar_holder" />
+
+<button label="test" onClick="runTest()" />
+
+
+<zscript>
+<![CDATA[
+
+drawBigCalendar(8,calendar_holder);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>

@@ -190,7 +190,9 @@ void commitQuotation_clicker()
 	quotehand.setQuotation_Status(global_loaded_quote,QTSTAT_COMMIT);
 
 	// 29/02/2012: only current version 0 can save metadata
-	if(global_quote_version.equals("0")) saveQuotation_clicker();
+	// 17/08/2014: just save the quote-metadata regardless of version -- testing for now
+	//if(global_quote_version.equals("0")) saveQuotation_clicker();
+	saveQuotation_clicker();
 
 	loadQuotation_clicker(global_loaded_quote); // reload whatever quotation's metadata again, to disable some buttons/stuff
 	showQuotations_Listbox(0);
