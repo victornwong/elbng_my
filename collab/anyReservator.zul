@@ -40,6 +40,8 @@ guihand = new GuiFuncs(); luhand = new LookupFuncs(); rwms_sql = new RWMS_sql();
 glob_prev_date = null;
 glob_sel_reservation = "";
 
+Date glob_sel_date = new Date();
+
 void changeDate()
 {
 	if(glob_prev_date == null) { drawBigCalendar(resv_date, month_lbl, calendar_holder,"maincalendar",datelabelcliker); return; }
@@ -79,8 +81,8 @@ void runTest()
 void showDayReservation(String iday)
 {
 	SimpleDateFormat sdf = new SimpleDateFormat("d MMM yyyy");
-	Date tdate = sdf.parse( iday + " " + month_lbl.getValue() );
-	alert( dtf2.format(tdate) );
+	glob_sel_date = sdf.parse( iday + " " + month_lbl.getValue() );
+	//alert( dtf2.format(glob_sel_date) );
 }
 
 class datelblcliker implements org.zkoss.zk.ui.event.EventListener
@@ -98,6 +100,9 @@ void doFunc(String itype)
 	todaydate =  kiboo.todayISODateTimeString();
 	refresh = false;
 	sqlstm = msgtext = "";
+	unm = useraccessobj.username;
+	Calendar c_ks = new GregorianCalendar();
+	Calendar c_wk = new GregorianCalendar();
 
 	if(itype.equals("saveres_b"))
 	{
@@ -110,10 +115,23 @@ void doFunc(String itype)
 				msgtext = "Need a start-time and end-time..";
 			else
 			{
-				//n_description
-				alert(ks + " : " + ke);
-			}
+				kdes = kiboo.replaceSingleQuotes( n_description.getValue().trim() );
+				if(kdes.equals("")) return;
 
+				c_wk.setTime(ks);
+				c_ks.setTime(glob_sel_date);
+				c_ks.set( Calendar.HOUR_OF_DAY, c_wk.get(Calendar.HOUR_OF_DAY) );
+				c_ks.set( Calendar.MINUTE, c_wk.get(Calendar.MINUTE) );
+				re_start = dtf.format(c_ks.getTime()); // get the reserv start time
+
+				c_wk.setTime(ke);
+				c_ks.set( Calendar.HOUR_OF_DAY, c_wk.get(Calendar.HOUR_OF_DAY) );
+				c_ks.set( Calendar.MINUTE, c_wk.get(Calendar.MINUTE) );
+				re_end = dtf.format(c_ks.getTime()); // get the reserv end time
+
+				sqlstm = "insert into elb_reservator (res_start,res_end,username,description) values " +
+				"('" + re_start + "','" + re_end + "','" + unm + "','" + kdes + "');";
+			}
 		}
 		else // it's an update
 		{
@@ -130,7 +148,7 @@ void doFunc(String itype)
 		n_participants.clearSelection();
 	}
 
-	//if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
 	//if(refresh) listQuotations();
 	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
 }
@@ -138,6 +156,14 @@ void doFunc(String itype)
 
 ]]>
 </zscript>
+
+<popup id="partipop">
+<div sclass="shadowbox" style="background:#204a87;" width="400px" >
+	<listbox id="n_participants" rows="15" />
+	<separator height="3px" />
+	<button label="Save.." sclass="k9mo" />
+</div>
+</popup>
 
 <style src="/real-world.css" />
 <style>
@@ -169,7 +195,7 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 		<grid sclass="GridLayoutNoBorder">
 			<rows>
 				<row style="background:#CAF13B">
-					<label sclass="k9" value="Start" />
+					<label sclass="k9" value="Start"/>
 					<timebox id="n_res_start" />
 					<label sclass="k9" value="End" />
 					<timebox id="n_res_end" />
@@ -181,12 +207,9 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 				<row spans="4">
 					<hbox>
 						<button id="saveres_b" label="Save/update" onClick="doFunc(self.getId())" />
+						<!-- <button label="Participants" onClick="partipop.open(self)" /> -->
 						<button id="clearres_b" label="Clear" onClick="doFunc(self.getId())" />
 					</hbox>
-				</row>
-				<row spans="1,3" style="background:#CAF13B">
-					<label sclass="k9" value="Participants" />
-					<listbox id="n_participants" rows="15" />
 				</row>
 			</rows>
 		</grid>
@@ -196,6 +219,10 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 
 <zscript>
 <![CDATA[
+
+java.util.Calendar kkk = java.util.Calendar.getInstance();
+n_res_end.setValue(kkk.getTime());
+n_res_start.setValue(kkk.getTime());
 
 rwms_sql.populateUsernames_check(n_participants,"");
 
