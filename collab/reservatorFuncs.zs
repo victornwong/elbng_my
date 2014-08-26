@@ -36,10 +36,18 @@ void drawBigCalendar(Datebox idate, Label imonlbl, Component idiv, String igid, 
 	Calendar cal = Calendar.getInstance();
 	cal.setTime(idate.getValue());
 	cal.set(Calendar.DAY_OF_MONTH, 1);
+	tstart = dtf2.format(cal.getTime());
 
 	sday = cal.get(Calendar.DAY_OF_WEEK); // get 1st of the month falls on which day
 	cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH) ); // get max days per month
+	tend = dtf2.format(cal.getTime());
 	eday = cal.get(Calendar.DAY_OF_MONTH) + 1;
+
+	jsqlstm = "select distinct convert(datetime,convert(varchar,res_start,112),112) as rdate, count(origid) as rcount " +
+	"from elb_reservator " +
+	"where res_start between '" + tstart + "' and '" + tend + "' " +
+	"group by convert(datetime,convert(varchar,res_start,112),112)";
+	debugbox.setValue(jsqlstm);
 
 	krow = new Row(); krow.setParent(mrows);
 	krow.setStyle("background:#2E2E2D");

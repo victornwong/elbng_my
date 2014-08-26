@@ -78,11 +78,43 @@ void runTest()
 	drawBigCalendar(resv_date, month_lbl, calendar_holder,"maincalendar",datelabelcliker);
 }
 
+Object[] dayreslbhd =
+{
+	new listboxHeaderWidthObj("Start",true,"40px"),
+	new listboxHeaderWidthObj("End",true,"70px"),
+	new listboxHeaderWidthObj("User",true,""),
+	new listboxHeaderWidthObj("Description",true,""),
+};
 void showDayReservation(String iday)
 {
 	SimpleDateFormat sdf = new SimpleDateFormat("d MMM yyyy");
 	glob_sel_date = sdf.parse( iday + " " + month_lbl.getValue() );
-	//alert( dtf2.format(glob_sel_date) );
+	resv_date.setValue(glob_sel_date);
+
+	Listbox newlb = lbhand.makeVWListbox_Width(day_holder, dayreslbhd, "dayresv_lb", 5);
+
+	sqlstm = "select res_start,res_end,username,description from elb_reservator " + 
+	"where convert(datetime,convert(varchar,res_start,112),112)='" + dtf2.format(resv_date.getValue()) + "'";
+	rs = sqlhand.gpSqlGetRows(sqlstm);
+	if(rs.size() == 0) return;
+
+	newlb.setRows(22);
+	newlb.setMold("paging");
+	//newlb.addEventListener("onSelect", gdcliker );
+	ArrayList kabom = new ArrayList();
+	SimpleDateFormat tfm = new SimpleDateFormat("hh:mm");
+	for( d : rs )
+	{
+		kabom.add( tfm.format(d.get("res_start")) );
+		kabom.add( tfm.format(d.get("res_end")) );
+		kabom.add( d.get("username") );
+		kabom.add( d.get("description") );
+		ki = lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+
+//day_holder
+//alert( dtf2.format(glob_sel_date) );
 }
 
 class datelblcliker implements org.zkoss.zk.ui.event.EventListener
@@ -179,7 +211,7 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 <panelchildren style="background:#2E2E2D">
 
 <button id="admtest_b" label="test" onClick="runTest()" visible="false" />
-<datebox id="resv_date" format="yyyy-MM-dd" onCreate="kiboo.setTodayDatebox(self)" onChange="changeDate()" />
+<label id="debugbox" multiline="true" />
 
 <separator height="5px" />
 <label id="month_lbl" style="font-size:24px; font-weight:bold; color:#ffffff; text-shadow: 1px 1px #000000;" />
@@ -189,11 +221,15 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 <separator height="5px" />
 
 <hbox>
-	<div id="day_holder" width="350px" />
+	<div id="day_holder" width="500px" />
 
 	<div width="400px">
 		<grid sclass="GridLayoutNoBorder">
 			<rows>
+				<row style="background:#CAF13B" spans="1,3">
+					<label value="Reservation date" sclass="k9" />
+					<datebox id="resv_date" format="yyyy-MM-dd" onCreate="kiboo.setTodayDatebox(self)" onChange="changeDate()" />
+				</row>
 				<row style="background:#CAF13B">
 					<label sclass="k9" value="Start"/>
 					<timebox id="n_res_start" />
@@ -220,8 +256,11 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 <zscript>
 <![CDATA[
 
+kiboo.setTodayDatebox(resv_date);
+drawBigCalendar(resv_date, month_lbl, calendar_holder, "maincalendar", datelabelcliker);
+
 java.util.Calendar kkk = java.util.Calendar.getInstance();
-n_res_end.setValue(kkk.getTime());
+n_res_end.setValue(kkk.getTime()); // set startup time/date for reservation
 n_res_start.setValue(kkk.getTime());
 
 rwms_sql.populateUsernames_check(n_participants,"");
