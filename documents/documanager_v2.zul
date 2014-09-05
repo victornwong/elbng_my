@@ -2,20 +2,25 @@
 <?page id="docmanag2"?>
 <zk>
 <zscript src="../alsglobal/alsglobaldefs.zs" />
-<zscript src="../alsglobal/globfuncs_ng.zs" />
-<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
 <zscript src="./documan2_funcs.zs" />
+<zscript src="./docuformmanger.zs" />
+<zscript src="./docudirectory_funcs.zs" />
 <zscript>
 <![CDATA[
 MYTITLE = "Documents Handler";
-MYVERSION = "v0.2";
+MYVERSION = "v0.3";
 MYPANEL = "docmangpanel";
 /*
+
+<zscript src="../rwglobal/rwsqlfuncs.zs" />
 Title : Document manager - rework from the original to be general-purpose
 Written by : Victor Wong
 Dated	: 31/07/2014
 
 Notes:
+22/08/2014: modify to have due-date , for auto email-notification script to use. (folderstructure.actiondate, .actiontodo)
+25/08/2014: added docu-linked forms - able to select 'em forms in XML-template
 
 */
 import java.util.*;
@@ -28,25 +33,29 @@ useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
 param_docutree = Executions.getCurrent().getParameter("dtr");
+param_formgroupi = Executions.getCurrent().getParameter("fgp");
+param_flag1 = Executions.getCurrent().getParameter("fl1");
+param_flag2 = Executions.getCurrent().getParameter("fl2");
 
 kiboo = new Generals(); sqlhand = new SqlFuncs();
 lbhand = new ListboxHandler(); guihand = new GuiFuncs();
 luhand = new LookupFuncs(); dmshand = new DMSFuncs();
+NGfuncs ngfun = new NGfuncs();
+
+vicFormMaker glob_formmaker = null;
 
 DOCUPREFIX = "FS"; // it's also hardcoded in DMSfuncs.java
-
 maindir_parent = "1"; // set it to pass-param later
 
+flag1_fieldname = flag2_fieldname = "";
 selected_directory_folderid = selected_directory = selected_subdirectory = selected_file_id = "";
 marked_dir = "";
 Object selected_treeitem = prev_sel_treeitem = null;
 
-void showDocuTreeTitle(String iwhat, Object ilbl)
+String JN_linkcode()
 {
-	sqlstm = "select folderid from folderstructure where origid=" + iwhat;
-	k = dmshand.dmsgpSqlFirstRow(sqlstm);
-	if(k == null) return;
-	ilbl.setValue( kiboo.checkNullString(k.get("folderid")) );
+	if(selected_subdirectory.equals("")) return "";
+	return DOCUPREFIX + selected_subdirectory;
 }
 
 void hideDocumentSpace()
@@ -55,115 +64,6 @@ void hideDocumentSpace()
 	docutitle_lbl.setValue("");
 	docudesc_lbl.setValue("");
 	selected_file_id = ""; // reset
-}
-
-void subdirectoryOnSelect(Tree wTree)
-{
-	selitem = wTree.getSelectedItem();
-	selected_subdirectory = guihand.getTreecellItemLabel(selitem,2);
-	foldid = guihand.getTreecellItemLabel(selitem,0);
-	selected_treeitem = selitem; // global save for later
-
-	subdir_label.setValue(":: " + foldid);
-	fillDocumentsList_DM(DOCUPREFIX, selected_subdirectory, docu_holder, "docus_lb");
-
-	u_directoryname.setValue(foldid);
-	u_description.setValue( guihand.getTreecellItemLabel(selitem,1) );
-
-	hideDocumentSpace();
-
-} // end of subdirectoryOnSelect()
-
-void dirFunc(String itype)
-{
-	todaydate =  kiboo.todayISODateTimeString();
-	refresh = false;
-	sqlstm = msgtext = "";
-	unm = useraccessobj.username;
-
-	if(itype.equals("insmdir_b"))
-	{
-		mn = kiboo.replaceSingleQuotes(m_directoryname.getValue().trim());
-		ds = kiboo.replaceSingleQuotes(m_description.getValue().trim());
-		if(mn.equals("")) return;
-		sqlstm = "insert into folderstructure (folderid,datecreated,username,minlevelaccess,deleted,folderparent,folder_desc) values " +
-		"('" + mn + "','" + todaydate + "','" + unm + "',1,0," + maindir_parent + ",'" + ds + "')";
-
-		refresh = true;
-		m_directoryname.setValue(""); m_description.setValue(""); // clear 'em after insert
-	}
-
-	if(itype.equals("inssubdir_b"))
-	{
-		if(selected_subdirectory.equals("")) return;
-		mn = kiboo.replaceSingleQuotes(m_subdirectoryname.getValue().trim());
-		ds = kiboo.replaceSingleQuotes(m_subdescription.getValue().trim());
-		if(mn.equals("")) return;
-
-		sqlstm = "insert into folderstructure (folderid,datecreated,username,minlevelaccess,deleted,folderparent,folder_desc) values " +
-		"('" + mn + "','" + todaydate + "','" + unm + "',1,0," + selected_subdirectory + ",'" + ds + "')";
-
-		refresh = true;
-		m_subdirectoryname.setValue(""); m_subdescription.setValue(""); // clear 'em
-	}
-
-	if(itype.equals("delmdir_b"))
-	{
-		if(selected_subdirectory.equals("")) return;
-
-		if( dmshand.directoryExistFiles(selected_subdirectory) )
-			msgtext = "ERR: Files exist in this folder.. cannot delete";
-		else
-		if( dmshand.existBranch(selected_subdirectory) )
-			msgtext = "ERR: Sub-folders exist, remove them first";
-		else
-		{
-			if (Messagebox.show("Hard delete this folder", "Are you sure?",
-			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) != Messagebox.YES) return;
-
-			sqlstm = "delete from folderstructure where origid=" + selected_subdirectory;
-			refresh = true;
-		}
-	}
-
-	if(itype.equals("upddir_b"))
-	{
-		if(selected_subdirectory.equals("")) return;
-		mn = kiboo.replaceSingleQuotes(u_directoryname.getValue().trim());
-		ds = kiboo.replaceSingleQuotes(u_description.getValue().trim());
-		if(mn.equals("")) return;
-		sqlstm = "update folderstructure set folderid='" + mn + "', folder_desc='" + ds + "' where origid=" + selected_subdirectory;
-		refresh = true;
-	}
-
-	if(itype.equals("markdir_b"))
-	{
-		if(selected_subdirectory.equals("")) return;
-		marked_dir = selected_subdirectory;
-		if(prev_sel_treeitem != null && prev_sel_treeitem != selected_treeitem) prev_sel_treeitem.setStyle("text-decoration:none");
-		prev_sel_treeitem = selected_treeitem;
-		// HARDCODED to get first-cell
-		//tcel = selected_treeitem.getChildren().get(0).getChildren().get(0);
-		selected_treeitem.setStyle("text-decoration:underline");
-	}
-
-	if(itype.equals("movedir_b"))
-	{
-		if(marked_dir.equals(selected_subdirectory)) return; // same dir-id, nothing to move
-		sqlstm = "update folderstructure set folderparent=" + selected_subdirectory + " where origid=" + marked_dir;
-		refresh = true;
-	}
-
-	if(itype.equals("mvmaindir_b")) // move marked dir to main-trunk
-	{
-		if(marked_dir.equals("")) return;
-		sqlstm = "update folderstructure set folderparent=" + maindir_parent + " where origid=" + marked_dir;
-		refresh = true;
-	}
-
-	if(!sqlstm.equals("")) dmshand.dmsgpSqlExecuter(sqlstm);
-	if(refresh) dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree);
-	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
 }
 
 void adminFunc(String itype)
@@ -201,16 +101,40 @@ void adminFunc(String itype)
 		if(k == null) return;
 
 		maindir_parent = lbhand.getListcellItemLabel(k,0); // replace and load selected docu-tree
-		dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree);
 		showDocuTreeTitle(maindir_parent, docutree_title);
-
 		hideDocumentSpace();
+		refresh = true;
 	}
 
 	if(!sqlstm.equals("")) dmshand.dmsgpSqlExecuter(sqlstm);
-	//if(refresh) dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree);
+	if(refresh) { dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree); colorizeActionDates(); }
 	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+}
 
+/*
+	//col0 = col1 = col2 = col3 = col4 = "";
+		col0 += guihand.getTreecellItemLabel(kk[i],0) + ", ";
+		col1 += guihand.getTreecellItemLabel(kk[i],1) + ", ";
+		col2 += guihand.getTreecellItemLabel(kk[i],2) + ", ";
+		col3 += guihand.getTreecellItemLabel(kk[i],3) + ", ";
+		col4 += guihand.getTreecellItemLabel(kk[i],4) + ", ";
+		//alert(col0 + " : " + col1 + " : " + col2 + " : " + col3 + " : " + col4);
+*/
+void testme()
+{
+}
+
+// Let user clear the action/date to null - it won't 
+void clearActionDate_core()
+{
+	if(selected_subdirectory.equals("")) return;
+	if(Messagebox.show("Clear action/date", "Are you sure?",
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) != Messagebox.YES) return;
+
+	sqlstm = "update folderstructure set actiontodo=null, actiondate=null where origid=" + selected_subdirectory;
+	dmshand.dmsgpSqlExecuter(sqlstm);
+	dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree);
+	colorizeActionDates();
 }
 
 DIRWIDTH = "530px";
@@ -334,6 +258,33 @@ DIRWIDTH = "530px";
 </div>
 </popup>
 
+<popup id="actionpopup">
+<div sclass="shadowbox" style="background:#6084A3" width="450px">
+<grid sclass="GridLayoutNoBorder">
+	<rows>
+		<row>
+			<label value="Action date" sclass="k9" />
+			<datebox id="f_actiondate" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+		</row>
+		<row>
+			<label value="Action" sclass="k9" />
+			<textbox id="f_actiontodo" sclass="k9" width="99%" multiline="true" height="60px" />
+		</row>
+	</rows>
+</grid>
+<separator height="3px" />
+<button id="saveaction_b" label="Save" sclass="k9mo" onClick="actionpopup.close(); dirFunc(self.getId())" />
+</div>
+</popup>
+
+<popup id="formselect_pop">
+<div sclass="shadowbox" style="background:#6084A3" width="600px">
+	<div id="xmlfmholder" />
+	<separator height="3px" />
+	<button label="Add form" sclass="k9mo" onClick="doDocuForm(3)" />
+</div>
+</popup>
+
 <style src="/real-world.css" />
 <style>
 .GridLayoutNoBorder tr.z-row td.z-row-inner, tr.z-row .z-cell, div.z-grid
@@ -346,6 +297,13 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 <div width="1200px">
 <panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
 <panelchildren style="background:#803c33">
+
+<label id="debugbox" multiline="true" />
+
+<borderlayout width="100%" height="800px">
+
+<west id="westside" sclass="k9" size="99%" collapsible="true" style="background:#254257;" >
+<div>
 
 <hbox>
 	<separator width="10px" />
@@ -366,12 +324,15 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 				<button id="mvmaindir_b" label="Move to trunk" sclass="k9mo" onClick="dirFunc(self.getId())" />
 				<button id="delmdir_b" label="Delete" sclass="k9mo" onClick="dirFunc(self.getId())" />
 				<button id="admin_b" label="ADMIN" style="color:#ff0000;font-weight:bold;font-size:9px" visible="false" onClick="adminpop.open(self)" />
+				<button id="testme_b" label="tree list" onClick="testme()" visible="false" />
 			</hbox>
 
 			<tree id="subdirectory_tree" zclass="z-dottree" rows="5" onSelect="subdirectoryOnSelect(self)" width="${DIRWIDTH}" >
 				<treecols>
 					<treecol label="Folder" />
 					<treecol label="Description" />
+					<treecol label="Action" />
+					<treecol label="Due" />
 				</treecols>
 			</tree>
 			<label id="subdir_label" sclass="subhead1" />
@@ -381,10 +342,13 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 				<button id="viewdoc_btn" label="View file" sclass="k9mo" onClick="docuFunc_DM(self.getId())" />
 				<button label="Update" sclass="k9mo" onClick="updatefiledesc_popup.open(self)" />
 				<button id="deletedoc_btn" label="Delete" sclass="k9mo" onClick="docuFunc_DM(self.getId())" />
+				<separator width="10px" />
+				<button label="Set folder action/date" sclass="k9mo" onClick="clearFolderActionDate(); actionpopup.open(self)" />
+				<button label="Clear action/date" sclass="k9mo" style="color:#ff0000" onClick="clearFolderActionDate(); clearActionDate_core()" />
 			</hbox>
 			<div id="docu_holder" width="${DIRWIDTH}" />
 			<label sclass="k9b">
-			(MSOffice documents will launch the program to view file, changes will not be saved. Max filesize 5MB)
+			(MSOffice documents will launch the program to view file, changes will not be saved)
 			</label>
 		</vbox>
 	</div>
@@ -402,17 +366,87 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 
 </hbox>
 
+</div>
+</west>
+
+<east id="eastside" title="Forms/Extras" sclass="k9" size="98%" style="background:#254257;">
+<div style="padding:3px">
+
+<hbox>
+
+<div sclass="shadowbox" style="background:#97b83a;" width="500px">
+	<grid>
+		<rows>
+			<row style="background:#babdb6;padding:3px">
+				<label value="Search text" sclass="k9" />
+				<textbox id="searchtext_tb" sclass="k9" width="99%" />
+				<button label="Search/Load" sclass="k9mo" onClick="showDocuFormsList()" />
+			</row>
+			<row spans="3">
+			<label style="font-size:9px">
+			(Max. 200 forms per click, empty search-text will load available forms)
+			</label>
+			</row>
+			<row spans="3">
+				<hbox>
+					<button label="New form" sclass="k9mo" onClick='populateFormsList(xmlfmholder,"xlformslb"); formselect_pop.open(self)' />
+					<button label="Delete" sclass="k9mo" onClick="doDocuForm(2)" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<div id="formslist_holder" />
+</div>
+
+<div id="form_workarea" sclass="shadowbox" style="background:#97b83a;" visible="false" >
+
+	<grid>
+		<columns><column width="15%" /><column width="85%" /></columns>
+		<rows>
+			<row>
+				<label value="Form ID" style="font-weight:bold" />
+				<div style="background:#2e3436">
+				<label id="form_origid" sclass="subhead1" />
+				</div>
+			</row>
+			<row>
+				<label value="Form description" style="" />
+				<textbox id="form_title_tb" style="font-weight:bold" multiline="true" height="40px" width="99%" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="2px" />
+	<button label="Save form" sclass="k9mo" onClick="doDocuForm(1)" />
+
+	<separator height="3px" />
+	<div id="mainform_holder" />
+</div>
+
+</hbox>
+
+</div>
+</east>
+
+</borderlayout>
+
 <zscript>
 <![CDATA[
 
-if(param_docutree != null) maindir_parent = param_docutree; // set main tree-id if passed by caller else defa 1
+if(param_docutree != null) maindir_parent = param_docutree; // set main tree-id if passed by caller else default 1
+if(param_formgroupi == null) param_formgroupi = ""; // form-groupi thing to segregate the many forms
+if(param_flag1 != null) flag1_fieldname = param_flag1;
+if(param_flag2 != null) flag2_fieldname = param_flag2;
 
 dmshand.showSubdirectoryTree(maindir_parent, subdirectory_tree);
+colorizeActionDates();
+
 showDocuTreeTitle(maindir_parent, docutree_title);
 
 if(useraccessobj.accesslevel == 9)
 {
 	admin_b.setVisible(true);
+	//testme_b.setVisible(true);
 }
 
 ]]>

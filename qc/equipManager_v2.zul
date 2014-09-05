@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="equipman2mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadDocu_v1.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../documents/documan2_funcs.zs" />
+<zscript src="./eqpman_funcs.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Equipments Manager";
+MYVERSION = "v0.2";
+MYPANEL = "equpmanapanel";
+/*
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript src="../alsglobal/formMaker_v2.zs" />
+<zscript src="../alsglobal/doculink_funcs.zs" />
+<zscript src="../alsglobal/checkListHandler.zs" />
+<zscript src="../alsglobal/internaltaskf_v2.zs" />
+
+@Title Lab Equipments manager
+@Author Victor Wong
+@Since 04/09/2014
+@Notes
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals(); sqlhand = new SqlFuncs();
+lbhand = new ListboxHandler(); guihand = new GuiFuncs();
+gridhand = new GridHandler(); dmshand = new DMSFuncs();
+luhand = new LookupFuncs(); NGfuncs ngfun = new NGfuncs();
+
+DOCUPREFIX = "FS"; // it's also hardcoded in DMSfuncs.java
+EQUIPMAN_ID = "EQUIPMAN";
+
+glob_sel_equip = glob_sel_assettag = "";
+glob_sel_li = selected_treeitem = null;
+last_eq_list_type = 0;
+
+void equipDo(String itype)
+{
+	todaydate =  kiboo.todayISODateString();
+	refresh = false;
+	sqlstm = msgtext = "";
+	unm = useraccessobj.username;
+
+	if(itype.equals("newequip_b"))
+	{
+		Object[] jkl = { c_asset_tag, c_purchasedate, c_description, c_eqgroup, c_eqstatus };
+		String[] dt = ngfun.getString_fromUI(jkl);
+		if(dt[0].equals("")) return;
+
+		sqlstm = "if not exists(select 1 from elb_equipments where asset_tag='" + atg + "') " +
+		"insert into elb_equipments (asset_tag,datecreated,purchasedate,description,eqgroup,eqstatus,active) values " +
+		"('" + dt[0] + "','" + todaydate + "','" + dt[1] + "','" + dt[2] + "','" + dt[3] + "','" + dt[4] + "',1)";
+
+		ngfun.clearUI_Field(jkl); // clear 'em boxes
+	}
+
+	if(itype.equals("modiequip_b"))
+	{
+		if(glob_sel_equip.equals("")) return;
+		Object[] jkl = { m_asset_tag, m_purchasedate, m_description, m_eqgroup, m_eqstatus };
+		String[] dt = ngfun.getString_fromUI(jkl);
+
+		if(dt[0].equals("")) msgtext = "ERR: blank asset-tag not allowed";
+		else
+		{
+			sqlstm = "update elb_equipments set asset_tag='" + dt[0] + "', " +
+			"purchasedate='" + dt[1] + "', description='" + dt[2] + "', eqgroup='" + dt[3] + "', eqstatus='" + dt[4] + "' where origid=" + glob_sel_equip;
+
+			// TODO maybe need to put in audit
+		}
+	}
+
+	if(itype.equals("remequip_b"))
+	{
+		if(glob_sel_equip.equals("")) return;
+		if(Messagebox.show("Remove this equipment..", "Are you sure?",
+			Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) !=  Messagebox.YES) return;
+
+		sqlstm = "delete from elb_equipments where origid=" + glob_sel_equip;
+	}
+
+	if(itype.equals("togequp_b")) // toggle active bit
+	{
+		if(glob_sel_equip.equals("")) return;
+		sqlstm = "update elb_equipments set active=1-active where origid=" + glob_sel_equip;
+	}
+
+	if(itype.equals("saveaction_b"))
+	{
+		if(glob_sel_equip.equals("")) return;
+		adate = kiboo.getDateFromDatebox( f_actiondate );
+		atodo = kiboo.replaceSingleQuotes( f_actiontodo.getValue().trim() );
+		if(atodo.equals(""))
+		{
+			msgtext = "No action, not saving..";
+			break;
+		}
+		else
+		{
+			sqlstm = "update elb_equipments set action='" + atodo + "', actiondate='" + adate + "' where origid=" + glob_sel_equip;
+		}
+	}
+
+	if(itype.equals("clearaction_b"))
+	{
+		if(glob_sel_equip.equals("")) return;
+		sqlstm = "update elb_equipments set action=null, actiondate=null where origid=" + glob_sel_equip;
+	}
+
+	if(!sqlstm.equals(""))
+	{
+		sqlhand.gpSqlExecuter(sqlstm);
+		equips_Listbox(last_eq_list_type);
+	}
+	
+	if(!msgtext.equals("")) guihand.showMessageBox(msgtext);
+
+}
+
+Object[] chkcohds = {
+	new listboxHeaderWidthObj("AssetTag",true,"100px"),
+	new listboxHeaderWidthObj("Description",true,""),
+	new listboxHeaderWidthObj("CO.Date",true,"70px"),
+};
+
+void checkAss(String itype)
+{
+	todaydate =  kiboo.todayISODateTimeString();
+	refresh = false;
+	sqlstm = msgtext = "";
+	unm = useraccessobj.username;
+
+	if(itype.equals("confco_b")) // confirm checkout assets
+	{
+		st = kiboo.replaceSingleQuotes(co_asset_scans.getValue().trim());
+		if(st.equals("")) return;
+		atgs = st.split("\n");
+		sk = "";
+		for(i=0; i<atgs.length;i++)
+		{
+			sk += "'" + atgs[i] + "',";
+		}
+		try { sk = sk.substring(0,sk.length()-1); } catch (Exception e) {}
+
+		Listbox newlb = lbhand.makeVWListbox_Width(co_confirmass, chkcohds, "chkout_lb", 3);
+
+		sqlstm = "select asset_tag, description, checkout from elb_equipments " +
+		"where asset_tag in (" + sk + ");";
+
+		r = sqlhand.gpSqlGetRows(sqlstm);
+		if(r.size() == 0) return;
+		newlb.setMold("paging"); newlb.setRows(20);
+		String[] fl = { "asset_tag", "description", "checkout" };
+		ArrayList kabom = new ArrayList();
+		for(d : r)
+		{
+			ngfun.popuListitems_Data(kabom, fl, d);
+			styl = "";
+			if(d.get("checkout") != null) styl = "background:#E0CB26;text-decoration:underline"; // hilite if equip already checkout
+			ki = lbhand.insertListItems(newlb, kiboo.convertArrayListToStringArray(kabom), "false", styl);
+			kabom.clear();
+		}
+
+		confirmcheckout.setVisible(true);
+	}
+
+	if(itype.equals("commco_b")) // commit checkout
+	{
+		prj = kiboo.replaceSingleQuotes(co_project.getValue().trim());
+		if(prj.equals("")) { guihand.showMessageBox("ERR: must specify project"); return; }
+
+		hilit = 0;
+		lis = chkout_lb.getItems().toArray();
+
+		for(i=0; i<lis.length; i++) // check listbox for hilited assets, if any, abort checkout
+		{
+			atg = lbhand.getListcellItemLabel(lis[i],0);
+			cdt = lbhand.getListcellItemLabel(lis[i],2);
+			if(!cdt.equals("")) hilit++;
+			sqlstm += "update elb_equipments set checkout='" + todaydate + "', checkoutby='" + unm + "', project='" + prj + "' " +
+			"where asset_tag='" + atg + "';";
+
+			sqlstm += "insert into elb_SystemAudit (linking_code,linking_sub,audit_notes,username,datecreated,deleted) values " + 
+			"('" + EQUIPMAN_ID + "','" + atg + "','Check-out from storage','" + unm + "','" + todaydate + "',0);";
+		}
+
+		if(hilit > 0)
+		{
+			guihand.showMessageBox("ERR: some equipments already check-out..");
+			return;
+		}
+		else
+		{
+			sqlhand.gpSqlExecuter(sqlstm);
+			equips_Listbox(last_eq_list_type);
+			co_project.setValue("");
+			confirmcheckout.setVisible(false); // hide once checkout - wait for next
+			// Audit log maybe
+		}
+	}
+
+	if(itype.equals("checkin_b")) // confirm checkin how last-usage boxes
+	{
+		st = kiboo.replaceSingleQuotes(ci_asset_scans.getValue().trim());
+		if(st.equals("")) return;
+		atgs = st.split("\n");
+		sk = "";
+		kb = "font-weight:bold;font-size:9px";
+		checkMakeItemsGrid();
+		for(i=0; i<atgs.length;i++)
+		{
+			k = kiboo.replaceSingleQuotes(atgs[i].trim());
+			rw = gridhand.gridMakeRow("","","",chkin_rows);
+			ngfun.gpMakeLabel(rw,"",k,kb);
+			ngfun.gpMakeTextbox(rw,"","",kb,"99%",tbnulldrop);
+		}
+		confirmcheckin.setVisible(true);
+	}
+
+	if(itype.equals("commitcheckin_b"))
+	{
+		cds = chkin_rows.getChildren().toArray();
+		for(i=0; i<cds.length; i++)
+		{
+			c1 = cds[i].getChildren().toArray();
+			atg = c1[0].getValue().trim();
+			lus = c1[1].getValue().trim();
+
+			sqlstm += "if exists(select 1 from elb_equipments where asset_tag='" + atg + "') " +
+				"update elb_equipments set checkout=null, checkoutby=null, project='STORAGE', usage_notes='" + lus + "' where asset_tag='" + atg + "'; ";
+
+			sqlstm += "if exists(select 1 from elb_equipments where asset_tag='" + atg + "') " +
+				"insert into elb_SystemAudit (linking_code,linking_sub,audit_notes,username,datecreated,deleted) values " + 
+				"('" + EQUIPMAN_ID + "','" + atg + "','Check-in to storage - " + lus + "','" + unm + "','" + todaydate + "',0); ";
+		}
+
+		sqlhand.gpSqlExecuter(sqlstm);
+		equips_Listbox(last_eq_list_type);
+
+	}
+
+}
+
+class textboxnulldrop implements org.zkoss.zk.ui.event.EventListener
+{ // used in gpMakeTextbox() for drag-drop
+	public void onEvent(Event event) throws UiException
+	{
+	}
+}
+tbnulldrop = new textboxnulldrop();
+
+// Knockoff from docudirectory_funcs.zs - modif a bit
+// onSelect event-func for the main docu-tree
+void subdirectoryOnSelect(Tree wTree)
+{
+	selitem = wTree.getSelectedItem();
+	selected_subdirectory = guihand.getTreecellItemLabel(selitem,2);
+	foldid = guihand.getTreecellItemLabel(selitem,0);
+	selected_treeitem = selitem; // global save for later
+
+	//subdir_label.setValue(foldid);
+	fillDocumentsList_DM(DOCUPREFIX, selected_subdirectory, docu_holder, "docus_lb");
+
+	//u_directoryname.setValue(foldid);
+	//u_description.setValue( guihand.getTreecellItemLabel(selitem,1) );
+	//hideDocumentSpace();
+	// 22/08/2014: put selected directory-name in eastside
+	//eastside.setTitle(foldid);
+	//if(mainform_holder.getFellowIfAny("NEXTGFORM") != null) NEXTGFORM.setParent(null);
+	//glob_selected_form = glob_selected_form_user = ""; // reset the docu-linked form things
+	//form_workarea.setVisible(false);
+	//listFormStorage(2, JN_linkcode()); // show linked forms
+
+} // end of subdirectoryOnSelect()
+
+void showEquipLinkTree()
+{
+	if(glob_sel_assettag.equals("")) return;
+	sqlstm = "select top 1 origid from folderstructure where folderid like '%" + glob_sel_assettag + "%'";
+	r = dmshand.dmsgpSqlFirstRow(sqlstm);
+	if(r == null) return;
+	pdi = r.get("origid").toString();
+	dmshand.showSubdirectoryTree(pdi, subdirectory_tree);
+}
+]]>
+</zscript>
+
+<popup id="createnew_pop">
+	<div sclass="shadowbox" style="background:#435471" width="430px">
+	<grid>
+		<rows>
+			<row>
+				<label value="Asset Tag" sclass="k9" />
+				<textbox id="c_asset_tag" sclass="k9" />
+				<label value="Purchase" sclass="k9" />
+				<datebox id="c_purchasedate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			</row>
+			<row spans="1,3">
+				<label value="Description" sclass="k9" />
+				<textbox id="c_description" sclass="k9" width="99%" />
+			</row>
+			<row>
+				<label value="Equip Group" sclass="k9" />
+				<combobox id="c_eqgroup" sclass="k9" />
+				<label value="State" sclass="k9" />
+				<listbox id="c_eqstatus" mold="select" sclass="k9" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<button id="newequip_b" label="Create new entry" sclass="k9mo" onClick="createnew_pop.close(); equipDo(self.getId())" />
+	</div>
+</popup> <!-- ENDOF createnew_pop -->
+
+<popup id="modiequip_pop">
+	<div sclass="shadowbox" style="background:#435471" width="430px">
+	<grid>
+		<rows>
+			<row>
+				<label value="Asset Tag" sclass="k9" />
+				<textbox id="m_asset_tag" sclass="k9" />
+				<label value="Purchase" sclass="k9" />
+				<datebox id="m_purchasedate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			</row>
+			<row spans="1,3">
+				<label value="Description" sclass="k9" />
+				<textbox id="m_description" sclass="k9" width="99%" />
+			</row>
+			<row>
+				<label value="Equip Group" sclass="k9" />
+				<combobox id="m_eqgroup" sclass="k9" />
+				<label value="State" sclass="k9" />
+				<listbox id="m_eqstatus" mold="select" sclass="k9" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<button id="modiequip_b" label="Change" sclass="k9mo" onClick="modiequip_pop.close(); equipDo(self.getId())" />
+	</div>
+</popup> <!-- ENDOF modiequip_pop -->
+
+<popup id="checkout_pop">
+	<div sclass="shadowbox" style="background:#C11D5B" width="600px">
+	<label value="Check-out Equipments" sclass="subhead1" />
+	<hbox>
+		<vbox>
+			<label value="Project/Location" sclass="k9b" />
+			<textbox id="co_project" />
+			<label value="Asset Tags" sclass="k9b" />
+			<textbox id="co_asset_scans" multiline="true" height="150px" />
+			<hbox>
+				<button id="confco_b" label="Confirm assets" sclass="k9mo" onClick="checkAss(self.getId())" />
+				<button label="Clear" sclass="k9mo" onClick='co_asset_scans.setValue("")' />
+			</hbox>
+		</vbox>
+
+		<vbox id="confirmcheckout" visible="false">
+			<div id="co_confirmass" />
+			<button id="commco_b" label="Commit checkout" sclass="k9mo" onClick="checkout_pop.close(); checkAss(self.getId())" />
+		</vbox>
+
+	</hbox>
+	</div>
+</popup> <!-- ENDOF checkout_pop -->
+
+<popup id="checkin_pop">
+	<div sclass="shadowbox" style="background:#8CAC2F">
+		<label value="Check-in Equipments" sclass="subhead1" />
+		<separator height="2px" />
+		<label value="Asset Tags" sclass="k9b" />
+		<hbox>
+			<vbox>
+				<textbox id="ci_asset_scans" multiline="true" height="150px" />
+				<hbox>
+					<button id="checkin_b" label="Confirm" sclass="k9mo" onClick="checkAss(self.getId())" />
+					<button label="Clear" sclass="k9mo" onClick='ci_asset_scans.setValue("")' />
+				</hbox>
+			</vbox>
+			<vbox id="confirmcheckin" visible="false">
+				<div id="ci_things_holder" width="450px" />
+				<button id="commitcheckin_b" label="Commit check-in" sclass="k9mo" onClick="checkin_pop.close(); checkAss(self.getId())" />
+			</vbox>
+		</hbox>
+	</div>
+</popup> <!-- ENDOF checkin_pop -->
+
+<popup id="equiplogs_pop">
+	<div sclass="shadowbox" style="background:#8E47CD" width="500px">
+		<div id="logsholder" />
+	</div>
+</popup> <!-- ENDOF equiplogs_pop -->
+
+<popup id="actionpopup">
+	<div sclass="shadowbox" style="background:#6084A3" width="450px">
+	<grid sclass="GridLayoutNoBorder">
+		<rows>
+			<row>
+				<label value="Action date" sclass="k9" />
+				<datebox id="f_actiondate" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			</row>
+			<row>
+				<label value="Action" sclass="k9" />
+				<textbox id="f_actiontodo" sclass="k9" width="99%" multiline="true" height="60px" />
+			</row>
+		</rows>
+	</grid>
+	<separator height="3px" />
+	<hbox>
+		<button id="saveaction_b" label="Save" sclass="k9mo" onClick="actionpopup.close(); equipDo(self.getId())" />
+		<button id="clearaction_b" label="Clear action" sclass="k9mo" onClick="actionpopup.close(); equipDo(self.getId())" />
+	</hbox>
+	</div>
+</popup> <!-- ENDOF actionpopup -->
+
+<popup id="management_pop">
+	<div sclass="shadowbox" style="background:#6084A3" >
+		<button label="New" sclass="k9mo" onClick="loadEqGroup(c_eqgroup); createnew_pop.open(self)" />
+		<button label="Modify" sclass="k9mo" onClick="showEqModi()" />
+		<button id="remequip_b" label="Remove" sclass="k9mo" style="color:#E90E0E" onClick="equipDo(self.getId())" />
+		<button id="togequp_b" label="Toggle active" sclass="k9mo" onClick="equipDo(self.getId())" />
+	</div>
+</popup> <!-- ENDOF management_pop -->
+
+<popup id="documents_pop">
+	<div sclass="shadowbox" style="background:#354064" width="450px" >
+		<vbox>
+			<button label="Load linking documents" sclass="k9mo" onClick="showEquipLinkTree()" />
+			<tree id="subdirectory_tree" zclass="z-dottree" rows="5" onSelect="subdirectoryOnSelect(self)" >
+				<treecols>
+					<treecol label="Folder" />
+					<treecol label="Description" />
+					<treecol label="Action" />
+					<treecol label="Due" />
+				</treecols>
+			</tree>
+
+			<button id="viewdoc_btn" label="View file" sclass="k9mo" onClick="viewFile()" />
+			<div id="docu_holder" />
+		</vbox>
+	</div>
+</popup> <!-- ENDOF documents_pop -->
+
+<style src="/real-world.css" />
+<style>
+.GridLayoutNoBorder tr.z-row td.z-row-inner, tr.z-row .z-cell, div.z-grid
+{
+border: none; overflow: hidden; zoom: 1;
+border-top: none; border-left: none; border-right: none; border-bottom: none;
+} 
+</style>
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true" >
+<panelchildren style="background:#5C6D45">
+
+<div sclass="shadowbox" style="background:#435471">
+<hbox>
+	<textbox id="serchtxt" sclass="k9" />
+	<button label="Search/Load" sclass="k9mo" onClick="equips_Listbox(1)" />
+	<listbox id="epgroup_dd" mold="select" sclass="k9" />
+	<button label="by group" sclass="k9mo" onClick="equips_Listbox(2)" />
+
+	<separator width="10px" />
+	<button label="Management" sclass="k9mo" onClick="management_pop.open(self)" />
+	<button label="Set/Clear action" sclass="k9mo" onClick="try { actionpopup.open(glob_sel_li); } catch (Exception e) {} " />
+	<button label="Documents" sclass="k9mo" onClick="documents_pop.open(self)" />
+	<button label="Export list" sclass="k9mo" onClick="exportEquipList()" />
+	
+	<separator width="10px" />
+	<button label="Check-out" sclass="k9mo" onClick="checkout_pop.open(epgroup_dd)" />
+	<button label="Check-in" sclass="k9mo" onClick="checkin_pop.open(epgroup_dd)" />
+	<button label="View logs" sclass="k9mo" onClick="viewEquipLogs()" />
+
+
+</hbox>
+</div>
+<separator height="3px" />
+
+<div sclass="shadowbox" style="background:#435471">
+	<div id="eqlb_holder" />
+</div>
+
+<div id="kasiexport" visible="false" />
+
+<zscript>
+<![CDATA[
+
+void exportEquipList()
+{
+	if(eqlb_holder.getFellowIfAny("equips_lb") == null) return;
+	exportExcelFromListbox(equips_lb, kasiexport, eqlbhds, "equiplist.xls", "eqlist");
+}
+
+luhand.populateListbox_ByLookup(c_eqstatus, "EQUIP_CONDITION",2);
+luhand.populateListbox_ByLookup(m_eqstatus, "EQUIP_CONDITION",2);
+
+ngfun.fillListbox_uniqField("elb_equipments","eqgroup", epgroup_dd);
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+

@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?page id="reservarorantor"?>
 <zk>
-<zscript src="../rwglobal/rwglobaldefs.zs" />
-<zscript src="../rwglobal/uploadDocu_v1.zs" />
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/uploadDocu_v1.zs" />
 <zscript src="./reservatorFuncs.zs" />
 <zscript>
 <![CDATA[
@@ -37,7 +38,7 @@ useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
 kiboo = new Generals(); sqlhand = new SqlFuncs(); lbhand = new ListboxHandler();
-guihand = new GuiFuncs(); luhand = new LookupFuncs(); rwms_sql = new RWMS_sql();
+guihand = new GuiFuncs(); luhand = new LookupFuncs();
 
 glob_prev_date = null;
 glob_sel_reservation = glob_sel_username = "";

@@ -115,7 +115,7 @@ void docuFunc_DM(String itype)
 	if(refresh) fillDocumentsList_DM(DOCUPREFIX, selected_subdirectory, docu_holder, "docus_lb");
 }
 
-// knockoff from viewfile.zul - modi for this
+// knockoff from viewfile.zul - show document inline, no need to run external window
 void viewTheDocument_DM(Div iparentdiv, String docid)
 {
 	if(iparentdiv.getFellowIfAny("viewframe_id") != null) viewframe_id.setParent(null);
@@ -168,63 +168,3 @@ void viewTheDocument_DM_mini(Div iparentdiv, String docid, String iwidth, String
 }
 
 // ENDOF Documents related funcs -- knockoff from uploadDocu_v1.zs
-
-/*
-Object[] directory_lb_headers = {
-	new listboxHeaderObj("origid",false),
-	new listboxHeaderObj("Directory",true),
-	new listboxHeaderObj("Description",true),
-	new listboxHeaderObj("Dated",true),
-	new listboxHeaderObj("User",true),
-};
-
-class directory_lb_onSelect implements org.zkoss.zk.ui.event.EventListener
-{
-	public void onEvent(Event event) throws UiException
-	{
-		selitem = event.getReference();
-		selected_directory = lbhand.getListcellItemLabel(selitem,0);
-		orec = dmshand.getDirectoryRec(selected_directory);
-		subdir_caption.setLabel(orec.get("folderid"));
-		fillDirectoryMetadata(1);
-		dmshand.showSubdirectoryTree(selected_directory, subdirectory_tree);
-		showOtherBoxes(true);
-		// hide and reset selected sub-dir var
-		document_groupbox.setVisible(false);
-		selected_file_id = "";
-		selected_subdirectory = "";
-	}
-}
-dirlbclik = new directory_lb_onSelect();
-
-void showDirectoryMain(String imain)
-{
-	Listbox newlb = lbhand.makeVWListbox(directory_holder, directory_lb_headers, "directory_lb", 5);
-
-	sqlstm = "select origid,folderid,folder_desc,datecreated,username from folderstructure " + 
-	"where folderparent=" + imain + " order by origid desc";
-
-	trecs = dmshand.dmsgpSqlGetRows(sqlstm);
-	if(trecs.size() == 0) return;
-
-	newlb.setRows(21); newlb.setMold("paging");
-	newlb.addEventListener("onSelect", dirlbclik);
-
-	String[] fl = { "origid", "folderid", "folder_desc", "datecreated", "username" };
-
-	ArrayList kabom = new ArrayList();
-	for(d : trecs)
-	{
-		popuListitems_Data(kabom,fl,d);
-		kabom.add(dpi.get("origid").toString());
-		kabom.add(lbhand.trimListitemLabel(dpi.get("folderid"),30));
-		kabom.add(lbhand.trimListitemLabel(dpi.get("folder_desc"),30));
-		kabom.add(dpi.get("datecreated").toString().substring(0,10));
-		kabom.add(dpi.get("username"));
-		//customername = checkEmptyString(lbhand.trimListitemLabel(dpi.get("customer_name"),30));
-		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
-		kabom.clear();
-	}
-}
-*/
-
