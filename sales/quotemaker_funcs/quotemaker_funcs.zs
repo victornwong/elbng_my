@@ -86,18 +86,18 @@ void showQuotationMetadata(Object irec)
 {
 	Object[] jkl = { qt_ar_code, qt_customer_name, qt_address1, qt_address2, qt_city, qt_zipcode, qt_state, qt_country,
 		qt_telephone, qt_fax, qt_contact_person1, qt_email, qt_notes, qt_exchangerate, qt_curcode, qt_terms,
-		qt_customer_sector, qt_new_sector };
+		qt_customer_sector, qt_new_sector, qt_salesperson };
 
 	String[] fl = { "ar_code", "customer_name", "address1", "address2", "city", "zipcode", "state", "country",
 		"telephone", "fax", "contact_person1", "email", "notes", "exchangerate", "curcode", "terms",
-		"customer_sector", "new_sector" };
+		"customer_sector", "new_sector", "salesperson" };
 
-	populateUI_Data(jkl,fl,irec);
+	ngfun.populateUI_Data(jkl,fl,irec);
 
 	kk = (!irec.get("ar_code").equals("")) ? true : false;
 	qt_customer_name.setDisabled(kk); // if this quote is based on client in system - disable the customer-name box
 
-	lbhand.matchListboxItemsColumn(qt_salesperson, kiboo.checkNullString(irec.get("salesperson")), 1);
+	//lbhand.matchListboxItemsColumn(qt_salesperson, kiboo.checkNullString(irec.get("salesperson")), 1);
 	lbhand.matchListboxItemsColumn(quote_winloseflag, kiboo.checkNullString(irec.get("winloseflag")), 0);
 }
 
@@ -109,7 +109,7 @@ void saveQuotation_clicker()
 	qt_telephone, qt_fax, qt_contact_person1, qt_email, qt_notes, qt_curcode, qt_exchangerate, 
 	qt_salesperson, qt_terms, qt_customer_sector, qt_new_sector };
 
-	dt = getString_fromUI(jkl);
+	dt = ngfun.getString_fromUI(jkl);
 
 	if(dt[1].equals(""))
 	{
@@ -124,8 +124,8 @@ void saveQuotation_clicker()
 	thecon = sql.getConnection();
 
 	pstmt = thecon.prepareStatement("update elb_Quotations set ar_code=?,customer_name=?,address1=?,address2=?,city=?,zipcode=?,state=?," +
-	"country=?,telephone=?,fax=?,contact_person1=?,email=?,notes=?,curcode=?,exchangerate=?,salesperson=?,terms=?, customer_sector=?, new_sector=?" + 
-	" where origid=?");
+	"country=?,telephone=?,fax=?,contact_person1=?,email=?,notes=?,curcode=?,exchangerate=?,salesperson=?,terms=?, customer_sector=?, new_sector=? " + 
+	"where origid=?");
 
 	for(i=0; i<dt.length; i++)
 	{
@@ -134,6 +134,7 @@ void saveQuotation_clicker()
 	pstmt.setInt(20,Integer.parseInt(global_loaded_quote));
 	pstmt.executeUpdate();
 	sql.close();
+
 	guihand.showMessageBox("Quotation's metadata saved..");
 	showQuotations_Listbox(0);
 	
@@ -316,7 +317,7 @@ void showQuotations_Listbox(int itype)
 	String[] fl = { "origid", "ar_code", "customer_name", "datecreated", "quote_net", "username", "qstatus", "approveby", "approvedate", "winloseflag","version" };
 	for(dpi : qtrows)
 	{
-		popuListitems_Data(kabom, fl, dpi);
+		ngfun.popuListitems_Data(kabom, fl, dpi);
 		lbhand.insertListItems(newlb, kiboo.convertArrayListToStringArray(kabom), "false", "");
 		kabom.clear();
 	}
@@ -432,7 +433,7 @@ Object[] quote_items_lb_headers = {
 }
 
 // create LB on salesman - dropdown
-void populateSalesman_dropdown(Div idiv, String theidstring)
+void populateSalesman_dropdown2(Div idiv, String theidstring)
 {
 	Object[] sm_lb_headers = {
 	new dblb_HeaderObj("SM.Name",true,"salesman_name",1),

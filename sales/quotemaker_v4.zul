@@ -54,13 +54,9 @@ myincludeid = Executions.getCurrent().getParameter("myid");
 useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
-kiboo = new Generals();
-lbhand = new ListboxHandler();
-sqlhand = new SqlFuncs();
-guihand = new GuiFuncs();
-quotehand = new QuotationFuncs();
-luhand = new LookupFuncs();
-gridhand = new GridHandler();
+kiboo = new Generals(); lbhand = new ListboxHandler(); sqlhand = new SqlFuncs();
+guihand = new GuiFuncs(); quotehand = new QuotationFuncs(); luhand = new LookupFuncs();
+gridhand = new GridHandler(); dmshand = new DMSFuncs(); NGfuncs ngfun = new NGfuncs();
 
 TestsPanel testspanel;
 
