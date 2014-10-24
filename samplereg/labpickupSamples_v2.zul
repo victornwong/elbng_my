@@ -1,0 +1,499 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?page id="labpiksamp_mod"?>
+<zk>
+<zscript src="../alsglobal/alsglobaldefs.zs" />
+<zscript src="../alsglobal/globfuncs_ng.zs" />
+<zscript src="../alsglobal/globsqlfuncs_ng.zs" />
+<zscript src="../alsglobal/repeatstuff.zs" />
+<zscript src="../alsglobal/uploadedWorksheet_v2.zs" />
+<zscript>
+<![CDATA[
+MYTITLE = "Lab Pickup Samples Tracker";
+MYVERSION = "v0.4";
+MYPANEL = "labpiksamp_pan";
+/*
+@Title Lab pickup samples tracker
+@Author Victor Wong
+@Since 15/05/2013
+
+Revisions:
+13/06/2013: added view attachement button
+24/10/2014: some optimization and UI redesign
+
+*/
+/*
+import java.util.*;
+import java.text.*;
+import java.lang.Float;
+import groovy.sql.Sql;
+import org.zkoss.zk.ui.*;
+import org.zkoss.zk.zutl.*;
+*/
+import org.victor.*;
+sechand = new SecurityFuncs();
+
+myincludeid = Executions.getCurrent().getParameter("myid");
+useraccessobj = sechand.getUserAccessObject();
+if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
+
+kiboo = new Generals(); sqlhand = new SqlFuncs(); lbhand = new ListboxHandler(); guihand = new GuiFuncs();
+luhand = new LookupFuncs(); sampreg = new SampleReg(); ngfun = new NGfuncs();
+
+RELEASE_CUSTODY = "RELC";
+
+glob_selected_pickup = "";
+glob_pickup_stat = "";
+
+Object[] samplist_headers =
+{
+	//new listboxHeaderWidthObj("##",true,"35px"),
+	new listboxHeaderWidthObj("SampleID",true,"120px"),
+	new listboxHeaderWidthObj("Customer",true,""),
+	new listboxHeaderWidthObj("Regs",true,"60px"),
+};
+glob_itemcount = 1;
+
+void populatePickup(Listitem iwhat)
+{
+	dcret = lbhand.getListcellItemLabel(iwhat,1);
+	labp = lbhand.getListcellItemLabel(iwhat,2);
+	p_origid.setValue(glob_selected_pickup);
+	p_datecreated.setValue(dcret);
+
+	p_pickupperson.setValue(labp);
+	p_somenotes.setValue(lbhand.getListcellItemLabel(iwhat,5));
+
+	samplecount_lbl.setValue("");
+
+	Listbox newlb = lbhand.makeVWListbox_Width(samples_holder, samplist_headers, "samplespickup_lb", 5);
+	//sqlstm = "select sampleid_str from elb_labpickedsamples where parent_id=" + glob_selected_pickup;
+
+	sqlstm = "select lps.sampleid_str, cust.customer_name, jf.datecreated " +
+	"from elb_labpickedsamples lps left join jobsamples js on js.sampleid_str = lps.sampleid_str " +
+	"left join jobfolders jf on js.jobfolders_id = jf.origid left join customer cust on jf.ar_code = cust.ar_code " +
+	"where lps.parent_id = " + glob_selected_pickup;
+
+	precs = sqlhand.gpSqlGetRows(sqlstm);
+	if(precs.size() == 0) return;
+	newlb.setMultiple(true); newlb.setRows(20); newlb.setMold("paging");
+	ArrayList kabom = new ArrayList();
+	for(dpi : precs)
+	{
+		kabom.add(dpi.get("sampleid_str"));
+		//rr = sampleID_det(dpi.get("sampleid_str"));
+		kabom.add(dpi.get("customer_name"));
+		kabom.add( dtf2.format(dpi.get("datecreated")) );
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+
+	samplecount_lbl.setValue("Samples count: " + samplespickup_lb.getItemCount().toString());
+}
+
+void disableButts(boolean iwhat)
+{
+	savepickup_butt.setDisabled(iwhat);
+	remsample_butt.setDisabled(iwhat);
+}
+
+class pickup_click implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		isel = event.getReference();
+		glob_selected_pickup = lbhand.getListcellItemLabel(isel,0);
+		glob_pickup_stat = lbhand.getListcellItemLabel(isel,4);
+		populatePickup(isel);
+		disableButts((glob_pickup_stat.equals(RELEASE_CUSTODY)) ? true : false);
+		workarea.setVisible(true);
+	}
+}
+pkcliker = new pickup_click();
+
+last_load_type = 0;
+
+// itype: 1=by date, 2=by sampleid, 3=by lab-person
+void loadLabPickups(int itype)
+{
+Object[] lpu_headers =
+{
+	new listboxHeaderWidthObj("Pick#",true,"40px"),
+	new listboxHeaderWidthObj("Dated",true,"130px"),
+	new listboxHeaderWidthObj("Rel.By",true,"60px"),
+	new listboxHeaderWidthObj("User",true,"60px"),
+	new listboxHeaderWidthObj("Status",true,"50px"),
+	new listboxHeaderWidthObj("Comments",true,""),
+};
+
+	last_load_type = itype;
+
+	sdate = kiboo.getDateFromDatebox(startdate);
+	edate = kiboo.getDateFromDatebox(enddate);
+	//searchtext = kiboo.replaceSingleQuotes(searhtxt_tb.getValue());
+	smid = kiboo.replaceSingleQuotes(s_sampleid.getValue());
+	lper = kiboo.replaceSingleQuotes(s_labperson.getValue());
+
+	Listbox newlb = lbhand.makeVWListbox_Width(pickups_holder, lpu_headers, "labpickups_lb", 5);
+
+	sqlstm = "select lps.origid, lps.datecreated, lps.username, lps.pickupperson, " + 
+	"lps.somenotes, lps.pstatus, lps.ptimestamp from elb_labpickupsamples lps " +
+	"left join elb_labpickedsamples lped on lped.parent_id = lps.origid " +
+	"where lps.datecreated between '" + sdate + "' and '" + edate + "' ";
+
+	bytext = "";
+
+	switch(itype)
+	{
+		case 2:
+			bytext = "and lped.sampleid_str like '%" + smid + "%' ";
+			break;
+		case 3:
+			bytext = "and (lps.pickupperson like '%" + lper + "%' or lps.username like '%" + lper + "%') ";
+			break;
+	}
+
+	sqlstm += bytext + "group by lps.origid, lps.datecreated, lps.username, lps.pickupperson, " + 
+	"lps.somenotes, lps.pstatus, lps.ptimestamp order by lps.origid";
+
+	precs = sqlhand.gpSqlGetRows(sqlstm);
+
+	if(precs.size() == 0) return;
+	newlb.addEventListener("onSelect",pkcliker);
+	newlb.setRows(20); newlb.setMold("paging");
+	ArrayList kabom = new ArrayList();
+	for(dpi : precs)
+	{
+		kabom.add(dpi.get("origid").toString());
+		kabom.add(dpi.get("datecreated").toString().substring(0,10) + " " + dpi.get("ptimestamp").toString().substring(11,19));
+		kabom.add(dpi.get("pickupperson"));
+		kabom.add(dpi.get("username"));
+		kabom.add(dpi.get("pstatus"));
+		kabom.add(dpi.get("somenotes"));
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
+	}
+}
+
+void doFunc(Component iwhat)
+{
+	itype = iwhat.getId();
+	todate = kiboo.todayISODateString();
+	refresh = false;
+	sqlstm = "";
+
+	if(itype.equals("newpickup_btn"))
+	{
+		sqlstm = "insert into elb_labpickupsamples " + 
+		"(username,pickupperson,datecreated,pickups,somenotes,pstatus,ptimestamp) values " +
+		"('" + useraccessobj.username + "','','" + todate + "','','','NEW',current_timestamp)";
+		refresh = true;
+	}
+
+	if(itype.equals("commitpck_btn"))
+	{
+		if(glob_selected_pickup.equals("")) return;
+		if(glob_pickup_stat.equals(RELEASE_CUSTODY)) return;
+		relcustody_popup.open(commitpck_btn);
+	}
+
+	if(itype.equals("remsample_butt"))
+	{
+		if(samplespickup_lb.getSelectedCount() == 0) return;
+		ssc = samplespickup_lb.getSelectedCount();
+		isels = samplespickup_lb.getSelectedItems().toArray();
+		for(i=0; i<ssc; i++)
+		{
+			samplespickup_lb.removeChild(isels[i]);
+		}
+
+		samplecount_lbl.setValue("Samples count: " + samplespickup_lb.getItemCount().toString());
+	}
+
+	if(itype.equals("savepickup_butt"))
+	{
+		if(glob_selected_pickup.equals("")) return;
+		pperson = kiboo.replaceSingleQuotes(p_pickupperson.getValue());
+		pnotes = kiboo.replaceSingleQuotes(p_somenotes.getValue());
+		sqlstm = "update elb_labpickupsamples set pickupperson='" + pperson + "', somenotes='" + pnotes + "' where origid=" + glob_selected_pickup;
+		refresh = true;
+		savePickupList(glob_selected_pickup);
+	}
+
+	if(itype.equals("docviewer_butt"))
+	{
+		if(samplespickup_lb.getSelectedItem() != null)
+		{
+			//tfnum = sampreg.extractFolderNo(samplespickup_lb.getSelectedItem().getLabel());
+			seli = samplespickup_lb.getSelectedItem().getLabel();
+			tfnum = seli.substring(0,9);
+			if(seli.length() > 15) tfnum = seli.substring(0,10); // cater for longer folder-no
+			showDocumentsList(tfnum);
+			docuviwer.open(docviewer_butt);
+		}
+	}
+
+	// Admin funcs
+	if(itype.equals("setnew_btn"))
+	{
+		sqlstm = "update elb_labpickupsamples set pstatus='NEW' where origid=" + glob_selected_pickup;
+		refresh = true;
+		disableButts(false);
+	}
+
+	if(itype.equals("delpick_btn"))
+	{
+		if (Messagebox.show("HARD delete this record..", "Are you sure?", 
+		Messagebox.YES | Messagebox.NO, Messagebox.QUESTION) !=  Messagebox.YES)
+			return;
+
+		sqlstm  = "delete from elb_labpickupsamples where origid=" + glob_selected_pickup + ";";
+		sqlstm += "delete from elb_labpickedsamples where parent_id=" + glob_selected_pickup + ";";
+		refresh = true;
+		workarea.setVisible(false);
+		glob_selected_pickup = "";
+	}
+
+	if(itype.equals("exportlist_b"))
+	{
+		exportExcelFromListbox(samplespickup_lb, kasiexport, samplist_headers, "labpickupsamples.xls","list");
+	}
+
+	if(!sqlstm.equals("")) sqlhand.gpSqlExecuter(sqlstm);
+	if(refresh) loadLabPickups(last_load_type);
+}
+
+void releaseSampleCustody()
+{
+	tmp_username = kiboo.replaceSingleQuotes(tb_username.getValue());
+	tmp_password = kiboo.replaceSingleQuotes(tb_password.getValue());
+	if(tmp_username.equals("") || tmp_password.equals("")) return;
+
+	if(!sechand.allowedUser(tmp_username,"RELCUSTODY_USERS"))
+	{
+		guihand.showMessageBox("You are not authorized to release samples custody.. sorry.");
+		return;
+	}
+
+	relcustody_popup.close();
+
+	enc_pwd = sechand.als_MD5_Encrypter(tmp_password);
+	purec = sechand.getPortalUser_Rec_username(tmp_username);
+
+	if(enc_pwd.equals(purec.get("password")))
+	{
+		sqlstm = "update elb_labpickupsamples set pstatus='" + RELEASE_CUSTODY + "', " + 
+		"pickupperson='" + tmp_username + "' where origid=" + glob_selected_pickup;
+		sqlhand.gpSqlExecuter(sqlstm);
+
+		disableButts(true);
+		loadLabPickups(last_load_type);
+	}
+	else
+	{
+		guihand.showMessageBox("INVALID CREDENTIAL..");
+	}
+}
+
+void savePickupList(String ipid)
+{
+	if(samplespickup_lb.getItemCount() == 0) return;
+	sqlstm = "delete from elb_labpickedsamples where parent_id=" + ipid;
+	sqlhand.gpSqlExecuter(sqlstm);
+	sqlstm = "";
+	for(isel : samplespickup_lb.getItems())
+	{
+		//dcret = lbhand.getListcellItemLabel(iwhat,1);
+		sqlstm += "insert into elb_labpickedsamples (parent_id,sampleid_str) values (" + ipid + ",'" + isel.getLabel() + "');";
+	}
+	sqlhand.gpSqlExecuter(sqlstm);
+}
+
+String[] sampleID_det(String isampid)
+{
+	String[] retval = new String[2];
+
+	sqlstm = "select cust.customer_name, jf.datecreated from jobsamples js " +
+	"left join jobfolders jf on js.jobfolders_id = jf.origid " +
+	"left join customer cust on jf.ar_code = cust.ar_code " +
+	"where js.sampleid_str = '" + isampid + "'";
+
+	rcs = sqlhand.gpSqlFirstRow(sqlstm);
+	if(rcs != null)
+	{
+		retval[0] = rcs.get("customer_name");
+		retval[1] = rcs.get("datecreated").toString().substring(0,10);
+	}
+	return retval;
+}
+
+// Insert sample-id into list
+void insertSampleList(Object inpbox)
+{
+	isampid = inpbox.getValue();
+	// TODO check if sample already pickup in other list -- discuss first on this one
+	ArrayList kabom = new ArrayList();
+	//kabom.add(glob_itemcount.toString() + ".");
+	kabom.add(isampid);
+	rr = sampleID_det(isampid);
+	kabom.add(rr[0]);
+	kabom.add(rr[1]);
+	lbhand.insertListItems(samplespickup_lb,kiboo.convertArrayListToStringArray(kabom),"false","");
+	inpbox.setValue(""); // clear after inserting
+	//glob_itemcount++;
+	samplecount_lbl.setValue("Samples count: " + samplespickup_lb.getItemCount().toString());
+	savePickupList(glob_selected_pickup); // autosave each time.
+}
+
+]]>
+</zscript>
+
+<popup id="docuviwer">
+	<groupbox mold="3d" width="300px">
+		<div id="doculist_holder" />
+		<separator height="3px" />
+		<button label="View document" sclass="k9" onClick="viewDocument()" />
+		<!-- <button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" sclass="k9" /> -->
+		<!-- <button id="sendemail_doc_btn" label="E-Mail" sclass="k9" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
+	</groupbox>
+</popup>
+
+<popup id="relcustody_popup">
+	<grid width="350px">
+		<rows>
+			<row spans="2" style="background:#a40000;padding:2px">
+				<label style="color:#ffffff">
+				Samples pickup - Release custody
+				</label>
+			</row>
+			<row>
+				<label value="Username" />
+				<textbox id="tb_username" />
+			</row>
+			<row>
+				<label value="Password" />
+				<textbox id="tb_password" type="password" />	
+			</row>
+			<row spans="2">
+				<hbox>
+					<button label="Release custody" onClick="releaseSampleCustody()" />
+				</hbox>
+			</row>
+		</rows>
+	</grid>
+</popup>
+
+<popup id="adminpop">
+	<div sclass="shadowbox" style="background:#D62727">
+		<button id="setnew_btn" label="Set NEW" sclass="k9" onClick="doFunc(self)" />
+		<button id="delpick_btn" label="HARD delete" sclass="k9" onClick="doFunc(self)" />
+	</div>
+</popup>
+
+<style src="/real-world.css" />
+
+<div width="1200px">
+<panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="normal" collapsible="true" closable="true">
+<panelchildren style="background:#3C506A">
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="self.value = new Date()" />
+
+	<div sclass="shadowbox" style="background:#4585AB">
+		<hbox>
+			<label value="Start date" sclass="k9b" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			<label value="End date" sclass="k9b" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			<button label="Load" sclass="k9" onClick="loadLabPickups(1)" />
+			<separator width="5px" />
+			<textbox id="searhtxt_tb" sclass="k9" visible="false" />
+
+			<textbox id="s_sampleid" sclass="k9" />
+			<button label="Search by sampleID" sclass="k9" onClick="loadLabPickups(2)" />
+
+			<textbox id="s_labperson" sclass="k9" />
+			<button label="Search by person" sclass="k9" onClick="loadLabPickups(3)" />
+
+			<separator width="10px" />
+			<button id="adminbutt" visible="false" label="ADMIN" sclass="k9mo" style="color:#C02E2E" onClick="adminpop.open(self)" />
+		</hbox>
+	</div>
+
+	<separator height="3px" />
+
+	<hbox>
+		<div sclass="shadowbox" style="background:#78C141">
+			<hbox>
+				<button id="newpickup_btn" label="New pickup" sclass="k9" onClick="doFunc(self)" />
+				<button id="commitpck_btn" label="Release custody" sclass="k9" onClick="doFunc(self)" />
+			</hbox>
+			<separator height="3px" />
+			<div id="pickups_holder" width="600px" />
+		</div>
+
+		<div id="workarea" sclass="shadowbox" style="background:#A0B83D" width="500px" visible="false">
+			<grid>
+				<rows>
+					<row>
+						<label value="Pickup #" sclass="k9" />
+						<label id="p_origid" sclass="k9" />
+						<label value="DateTime" sclass="k9" />
+						<label id="p_datecreated" sclass="k9" />
+					</row>
+					<row spans="1,3" visible="false">
+						<label value="Lab person" sclass="k9" />
+						<textbox id="p_pickupperson" width="99%" sclass="k9" />
+					</row>
+					<row spans="1,3">
+						<label value="Comments" sclass="k9" />
+						<textbox id="p_somenotes" multiline="true" height="60px" width="99%" sclass="k9" />
+					</row>
+					<row spans="1,3">
+						<label value="Pickup sample-ID" sclass="k9" />
+						<textbox id="pickup_sample" width="99%" sclass="k9" />
+					</row>
+				</rows>
+			</grid>
+			<separator height="3px" />
+
+			<hbox>
+				<button id="remsample_butt" label="Remove ID(s) from list" sclass="k9mo" onClick="doFunc(self)" />
+				<button id="savepickup_butt" label="SAVE samples pickup-list" sclass="k9mo" onClick="doFunc(self)" />
+				<button id="docviewer_butt" label="Load COC/COA/etc" sclass="k9mo" onClick="doFunc(self)" />
+				<button id="exportlist_b" label="Export list" sclass="k9mo" onClick="doFunc(self)" />
+			</hbox>
+
+			<label id="samplecount_lbl" sclass="k9mo" />
+			<label sclass="k9mo">(REMEMBER TO SAVE SAMPLES PICKUP-LIST!!!!)</label>
+
+			<separator height="2px" />
+			<div id="samples_holder" />
+
+		</div> <!-- ENDOF workarea -->
+
+	</hbox>
+
+	<div id="kasiexport" visible="false" />
+<zscript>
+<![CDATA[
+
+// onOK for pickup_sample
+class pickup_sample_onok implements org.zkoss.zk.ui.event.EventListener
+{
+	public void onEvent(Event event) throws UiException
+	{
+		insertSampleList(event.getReference());
+	}
+}
+pickup_sample.addEventListener("onOK",new pickup_sample_onok());
+
+if(useraccessobj.accesslevel >= 9)
+{
+	adminbutt.setVisible(true);
+}
+
+]]>
+</zscript>
+</panelchildren>
+</panel>
+</div>
+</zk>
+
