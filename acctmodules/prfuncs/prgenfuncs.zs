@@ -119,6 +119,11 @@ void uploadPRToMySoft(String ipr)
 		guihand.showMessageBox("ERR: Undefined supplier -- please create it to upload this PR");
 		return;
 	}
+
+	qstm = "select curcode from supplierdetail where apcode='" + apcode + "';";
+	r = sqlhand.gpSqlFirstRow(qstm);
+	curcode = "MYR";
+	if(r != null) curcode = kiboo.checkNullString( r.get("curcode") );
 	
 	datecrt = prec.get("datecreated").toString().substring(0,10);
 	appdt = prec.get("approvedate").toString().substring(0,10);
@@ -149,7 +154,7 @@ void uploadPRToMySoft(String ipr)
 	"0,0,0,0,0,0," +
 	"0,0,0,'" + prec.get("notes") + "','','',null,0, " +
 	"0,0,'X','','" + datecrt + "','" + todate + "'," +
-	"'MYR',1,1,1,0," +
+	"'" + curcode + "',1,1,1,0," +
 	"'PR','" + prec.get("approveby") + "','" + appdt + "','',''," +
 	"'" + useraccessobj.username + "','none',0)";
 
@@ -166,19 +171,18 @@ void uploadPRToMySoft(String ipr)
 		mysc = dpi.get("mysoftcode");
 		if(mysc.equals("")) mysc = "-";
 
-		sqlstm =
-	"insert into pop_detail (ORDER_NUMBER,ITEM_NUMBER,STOCK_CODE,DESCRIPTION, " +
-	"COMMENT_1,COMMENT_2,LONG_DESCRIPTION,DEPT_NUMBER, " +
-	"QTY_ORDER,QTY_ALLOCATED,QTY_DELIVERED,QTY_DESPATCH, " +
-	"UNIT_OF_SALE,UNIT_PRICE,TAX_AMOUNT,TAX_CODE,TAX_RATE, " +
-	"FULL_NET_AMOUNT,DISCOUNT_AMOUNT,DISCOUNT_RATE,NET_AMOUNT, " +
-	"NOMINAL_CODE,RequestDate) values (" +
-	"'" + prid + "'," + itmc.toString() + ",'" + mysc + "','" + dpi.get("description") + "'," +
-	"'','','','" + prec.get("dept_number") + "'," +
-	dpi.get("quantity").toString() + ",0,0,0, " +
-	"''," + dpi.get("unitprice").toString() + ",0,'Ts',0," +
-	gtotal.toString() + ",0,0,0," +
-	"'61100.710','" + datecrt + "')";
+		sqlstm = "insert into pop_detail (ORDER_NUMBER,ITEM_NUMBER,STOCK_CODE,DESCRIPTION, " +
+		"COMMENT_1,COMMENT_2,LONG_DESCRIPTION,DEPT_NUMBER, " +
+		"QTY_ORDER,QTY_ALLOCATED,QTY_DELIVERED,QTY_DESPATCH, " +
+		"UNIT_OF_SALE,UNIT_PRICE,TAX_AMOUNT,TAX_CODE,TAX_RATE, " +
+		"FULL_NET_AMOUNT,DISCOUNT_AMOUNT,DISCOUNT_RATE,NET_AMOUNT, " +
+		"NOMINAL_CODE,RequestDate) values (" +
+		"'" + prid + "'," + itmc.toString() + ",'" + mysc + "','" + dpi.get("description") + "'," +
+		"'','','','" + prec.get("dept_number") + "'," +
+		dpi.get("quantity").toString() + ",0,0,0, " +
+		"''," + dpi.get("unitprice").toString() + ",0,'Ts',0," +
+		gtotal.toString() + ",0,0,0," +
+		"'61100.710','" + datecrt + "')";
 
 		sqlhand.gpSqlExecuter(sqlstm);
 		itmc++;
