@@ -1,5 +1,20 @@
 // Folder browser misc funcs
 
+String getPerSampleShareSample(String iorigid)
+{
+	sqlstm = "select distinct share_sample from jobsamples where share_sample is not null and jobfolders_id=" + iorigid; 
+	pssm = sqlhand.gpSqlGetRows(sqlstm);
+	retval = "";
+	if(pssm.size() != 0)
+	{
+		for(di : pssm)
+		{
+			retval += di.get("share_sample") + " ";
+		}
+	}
+	return retval;
+}
+
 //--- 15/05/2011: folder cancellation funcs --
 
 selected_cancel_origid = selected_cancel_folder = selected_cancel_client = cancel_reason = "";
@@ -80,6 +95,17 @@ void showCashAccountDetails_clicker()
 	// populate 'em boxes
 	csrec = samphand.getCashSalesCustomerInfo_Rec(global_selected_folderno);
 	if(csrec == null) return;
+
+	Object[] jkl = { ca_customer_name_tb, ca_contact_person1_tb, ca_address1_tb, ca_address2_tb,
+		ca_city_tb, ca_zipcode_tb, ca_state_tb, ca_country_tb, ca_telephone_tb, ca_fax_tb,
+		ca_email_tb };
+
+	String[] fl = { "customer_name", "contact_person1", "address1", "address2",
+		"city", "zipcode", "state", "country", "telephone", "fax", "email" };
+
+	ngfun.populateUI_Data(jkl,fl,csrec);
+
+/*
 	ca_customer_name_tb.setValue(csrec.get("customer_name"));
 	ca_contact_person1_tb.setValue(csrec.get("contact_person1"));
 	ca_address1_tb.setValue(csrec.get("address1"));
@@ -91,7 +117,7 @@ void showCashAccountDetails_clicker()
 	ca_telephone_tb.setValue(csrec.get("telephone"));
 	ca_fax_tb.setValue(csrec.get("fax"));
 	ca_email_tb.setValue(csrec.get("email"));
-
+*/
 	cashdet_holder.setVisible(true);
 }
 
@@ -217,12 +243,16 @@ Object[] subcon_headers =
 	Listbox newlb = lbhand.makeVWListbox_Width(subcon_holder, subcon_headers, "subcon_lb", 8);
 	//newlb.addEventListener("onSelect", new sharesamp_onSelect());
 	ArrayList kabom = new ArrayList();
+	String[] fl = {"folderno_str", "sampleid", "samplemarking", "test_request" };
 	for(dpi : subcs)
 	{
+		ngfun.popuListitems_Data2(kabom,fl,dpi);
+		/*
 		kabom.add(dpi.get("folderno_str"));
 		kabom.add(dpi.get("sampleid"));
 		kabom.add(dpi.get("samplemarking"));
 		kabom.add(dpi.get("test_request"));
+		*/
 		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
 		kabom.clear();
 	}
@@ -246,15 +276,15 @@ Object[] lc_headers =
 	lcrecs = sqlhand.gpSqlGetRows(sqlstm);
 	if(lcrecs.size() == 0) return;
 	newlb.setRows(10);
+	ArrayList kabom = new ArrayList();
 	for(dpi : lcrecs)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("origid").toString());
 		kabom.add(dpi.get("datecreated").toString().substring(0,10));
 		kabom.add(dpi.get("username"));
 		kabom.add(dpi.get("thecomment"));
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 }
 
@@ -322,24 +352,19 @@ Object[] qt_headers =
 	showprice = false;
 	if(tusername.equals(qtuser)) showprice = true;
 	if(useraccessobj.accesslevel >= 9) showprice = true;
-
+	ArrayList kabom = new ArrayList();
 	for(dpi : qtrecs)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("mysoftcode").toString());
 		kabom.add(lncn.toString() + ".");
-
 		mysc = dpi.get("mysoftcode");
 		mysc = (mysc.equals("0")) ? "N" : "Y";
 		kabom.add(mysc);
-
 		kabom.add(dpi.get("description"));
 		kabom.add(dpi.get("description2"));
-
 		kabom.add((showprice) ? (dpi.get("curcode") + " " + nf.format(dpi.get("unitprice"))) : "---");
-
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 		lncn++;
 	}
 	quotation_workarea.setVisible(true);
@@ -364,14 +389,14 @@ Object[] spc_headers =
 
 	if(sprs.size() == 0) return;
 	Listbox newlb = lbhand.makeVWListbox_Width(sampickup_holder, spc_headers, "picksamples_lb", 10);
+	ArrayList kabom = new ArrayList();
 	for(dpi : sprs)
 	{
-		ArrayList kabom = new ArrayList();
 		kabom.add(dpi.get("sampleid_str"));
 		kabom.add((dpi.get("bottles") == null) ? "0" : dpi.get("bottles").toString());
 		kabom.add(dpi.get("pickc").toString());
-		strarray = kiboo.convertArrayListToStringArray(kabom);	
-		lbhand.insertListItems(newlb,strarray,"false","");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),"false","");
+		kabom.clear();
 	}
 
 	sqlstm = "select top 1 lps.origid,lps.username,lps.pickupperson,lps.datecreated,lps.ptimestamp " +

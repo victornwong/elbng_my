@@ -15,6 +15,15 @@ DecimalFormat nf3 = new DecimalFormat("###,##0.00");
 DecimalFormat nf = new DecimalFormat("###,##0.00");
 DecimalFormat nf0 = new DecimalFormat("#");
 
+// set only single listcell style - to color stuff and so on
+// TODO move to listboxhandler.hava
+void setListcell_Style(Listitem ilbitem, int icolumn, String istyle)
+{
+	List prevrc = ilbitem.getChildren();
+	Listcell prevrc_2 = (Listcell)prevrc.get(icolumn); // get the second column listcell
+	prevrc_2.setStyle(istyle);
+}
+
 void removeAnyChildren(Object idivholder)
 {
 	prvds = idivholder.getChildren().toArray();

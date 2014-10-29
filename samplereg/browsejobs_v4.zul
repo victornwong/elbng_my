@@ -12,6 +12,7 @@
 <zscript src="../alsglobal/samplereg_funcs.zs" />
 <zscript src="../alsglobal/searchSelectCustomer_v1.zs" />
 <zscript src="./foldbrowser/fbwmisc.zs" />
+<zscript src="./foldbrowser/listfolders.zs" />
 <zscript>
 <![CDATA[
 MYTITLE = "Folders/Jobs Browser";
@@ -58,13 +59,8 @@ myincludeid = Executions.getCurrent().getParameter("myid");
 useraccessobj = sechand.getUserAccessObject();
 if(useraccessobj == null) Executions.sendRedirect(MAINLOGIN_PAGE);
 
-kiboo = new Generals();
-lbhand = new ListboxHandler();
-gridhand = new GridHandler();
-sqlhand = new SqlFuncs();
-guihand = new GuiFuncs();
-samphand = new SampleReg();
-luhand = new LookupFuncs();
+kiboo = new Generals(); lbhand = new ListboxHandler(); gridhand = new GridHandler(); sqlhand = new SqlFuncs();
+guihand = new GuiFuncs(); samphand = new SampleReg(); luhand = new LookupFuncs(); ngfun = new NGfuncs();
 
 public class folderListObject
 {
@@ -74,11 +70,6 @@ public class folderListObject
 	public String customer_name;
 	public int overdue; // 1=wip and not overdue, 2=overdue and in wip, 3=released
 }
-
-FOLDERPICK_COLOR = "background:#AAAAAA";
-OVERDUE_ROWCOLOR = "background:#F74623";
-RELEASED_ROWCOLOR = "background:#AEF520";
-HOLD_REJECT_ROWCOLOR = "background:#cd2467";
 
 last_foldersearch_type = 0;
 global_selected_arcode = global_selected_folderno = "";
@@ -352,7 +343,7 @@ void loadFoldersList(int itype)
 	last_foldersearch_type = itype;
 
 	sdate = kiboo.getDateFromDatebox(startdate);
-    edate = kiboo.getDateFromDatebox(enddate);
+	edate = kiboo.getDateFromDatebox(enddate);
 	searchtext = kiboo.replaceSingleQuotes(customer_tb.getValue());
 	byfold = kiboo.replaceSingleQuotes(byfolder_tb.getValue());
 	bysamp = kiboo.replaceSingleQuotes(bysampleid_tb.getValue());
@@ -628,21 +619,6 @@ void loadFoldersList(int itype)
 	folderworkarea.setVisible(true);
 }
 
-String getPerSampleShareSample(String iorigid)
-{
-	sqlstm = "select distinct share_sample from jobsamples where share_sample is not null and jobfolders_id=" + iorigid; 
-	pssm = sqlhand.gpSqlGetRows(sqlstm);
-	retval = "";
-	if(pssm.size() != 0)
-	{
-		for(di : pssm)
-		{
-			retval += di.get("share_sample") + " ";
-		}
-	}
-	return retval;
-}
-
 // 05/09/2012: consolidate some funcs into this one
 // itype: 1=change share-sample flag, 2=toggle PKD flag, 3=print draft report, 4=print SRA, 5=show folder details
 // 6= terima COA, 7=clear terima-coa, 8=view results popup, 9=clear srn-generate date
@@ -752,19 +728,18 @@ Object[] samples_lb_headers = {
 	newlb.setRows(15);
 	newlb.addEventListener("onSelect", new persampleshr_onclick());
 	smpcount = 1;
-
+	ArrayList kabom = new ArrayList();
 	for(ilist : tlist)
 	{
 		bottl = (ilist.get("bottles") == null) ? "-" : ilist.get("bottles").toString();
-		ArrayList kabom = new ArrayList();
 		kabom.add(ilist.get("origid").toString());
 		kabom.add(smpcount.toString() + ".");
 		kabom.add(ilist.get("sampleid_str"));
 		kabom.add(lbhand.trimListitemLabel(ilist.get("samplemarking"),50));
 		kabom.add(kiboo.checkNullString(ilist.get("share_sample")));
 		kabom.add(bottl);
-		strarray = kiboo.convertArrayListToStringArray(kabom);
-		lbhand.insertListItems(newlb,strarray,SAMPLES_PREFIX,"");
+		lbhand.insertListItems(newlb,kiboo.convertArrayListToStringArray(kabom),SAMPLES_PREFIX,"");
+		kabom.clear();
 		smpcount++;
 	}
 	
@@ -794,74 +769,67 @@ void changePerSampleShare()
 </popup>
 
 <popup id="samplepick_popup">
-<grid>
-	<rows>
-		<row>
-			<label value="Pickup#" sclass="k9" />
-			<label id="s_pickorigid" sclass="k9" />
-			<label value="DateTime" sclass="k9" />
-			<label id="s_timestmp" sclass="k9" />
-		</row>
-		<row spans="1,3">
-			<label value="Pickup by" sclass="k9" />
-			<label id="s_username" sclass="k9" />
-		</row>
-		<row spans="1,3">
-			<label value="Released by" sclass="k9" />
-			<label id="s_pickupperson" sclass="k9" />
-		</row>
-	</rows>
-</grid>
-
-<div id="sampickup_holder" width="250px" />
+	<grid>
+		<rows>
+			<row>
+				<label value="Pickup#" sclass="k9" />
+				<label id="s_pickorigid" sclass="k9" />
+				<label value="DateTime" sclass="k9" />
+				<label id="s_timestmp" sclass="k9" />
+			</row>
+			<row spans="1,3">
+				<label value="Pickup by" sclass="k9" />
+				<label id="s_username" sclass="k9" />
+			</row>
+			<row spans="1,3">
+				<label value="Released by" sclass="k9" />
+				<label id="s_pickupperson" sclass="k9" />
+			</row>
+		</rows>
+	</grid>
+	<div id="sampickup_holder" width="250px" />
 </popup>
 
 <popup id="digquotation_popup">
-
-<div style="background:#1e90ff;
--moz-box-shadow: 4px 5px 7px #000000;
--webkit-box-shadow: 4px 5px 7px #000000;
-box-shadow: 4px 5px 7px #000000;padding:3px;margin:3px" width="520px">
-
-	<hbox>
-		<label value="QT" sclass="k9" />
-		<textbox id="digquote_tb" sclass="k9" />
-		<button label="Dig" sclass="k9" onClick="digShowQuotation()" />
-		<button label="X Close" sclass="k9" onClick="digquotation_popup.close()" />
-	</hbox>
-	<separator height="3px" />
-	<div id="quotation_workarea" visible="false">
-		<grid>
-			<rows>
-				<row>
-					<label value="Quote Ref#" sclass="k9" />
-					<label id="qt_num" sclass="k9" />
-					<label value="Dated" sclass="k9" />
-					<label id="qt_datecreated" sclass="k9" />
-				</row>
-				<row spans="1,3">
-					<label value="Customer" sclass="k9" />
-					<label id="qt_customer_name" sclass="k9" />
-				</row>
-				<row>
-					<label value="Quoter" sclass="k9" />
-					<label id="qt_username" sclass="k9" />
-					<label value="Salesperson" sclass="k9" />
-					<label id="qt_sales" sclass="k9" />
-				</row>
-			</rows>
-		</grid>
+	<div sclass="shadowbox" style="background:#1e90ff" width="520px">
+		<hbox>
+			<label value="QT" sclass="k9" />
+			<textbox id="digquote_tb" sclass="k9" />
+			<button label="Dig" sclass="k9" onClick="digShowQuotation()" />
+			<button label="X Close" sclass="k9" onClick="digquotation_popup.close()" />
+		</hbox>
 		<separator height="3px" />
-		<div id="quoteitems_holder" />
+		<div id="quotation_workarea" visible="false">
+			<grid>
+				<rows>
+					<row>
+						<label value="Quote Ref#" sclass="k9" />
+						<label id="qt_num" sclass="k9" />
+						<label value="Dated" sclass="k9" />
+						<label id="qt_datecreated" sclass="k9" />
+					</row>
+					<row spans="1,3">
+						<label value="Customer" sclass="k9" />
+						<label id="qt_customer_name" sclass="k9" />
+					</row>
+					<row>
+						<label value="Quoter" sclass="k9" />
+						<label id="qt_username" sclass="k9" />
+						<label value="Salesperson" sclass="k9" />
+						<label id="qt_sales" sclass="k9" />
+					</row>
+				</rows>
+			</grid>
+			<separator height="3px" />
+			<div id="quoteitems_holder" />
+		</div>
 	</div>
-</div>
 </popup> <!-- ENDOF digquotation_popup -->
 
 <popup id="labcomment_popup">
-<div width="560px" style="background:#1e90ff;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
-box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
+	<div width="560px" sclass="shadowbox" style="background:#1e90ff">
 		<div style="background:#4d4d4d;padding:2px">
-		<label value="Internal Lab Comments (LC)" style="color:#eeeeee" />
+			<label value="Internal Lab Comments (LC)" style="color:#eeeeee" />
 		</div>
 		<separator height="3px" />
 		<div id="lc_holder" />
@@ -888,245 +856,235 @@ box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
 </popup>
 
 <popup id="subcon_popup">
-<div width="480px" style="background:#e1721e;-moz-box-shadow: 4px 5px 5px #000000;-webkit-box-shadow: 4px 5px 5px #000000;
-box-shadow: 4px 5px 5px #000000;padding:3px;margin:3px">
-	<grid>
-		<rows>
-			<row spans="4" style="background:#4d4d4d">
-			<label style="color:#eeeeee">
-			Subcontract Request
-			</label>
-			</row>
-			<row>
-				<label value="Req#" />
-				<label id="sc_origid" />
-				<label value="Dated" />
-				<label id="sc_datecreated" />
-			</row>
-			<row>
-				<label value="Subcon Lab" />
-				<label id="sc_subcon_name" />
-				<label value="Req. by" />
-				<label id="sc_username" />
-			</row>
-		</rows>
-	</grid>
-	<separator height="3px" />
-	<div id="subcon_holder" />
-</div>
-<separator height="5px" />
-<button label="X Close" sclass="k9" onClick="subcon_popup.close()" />
+	<div width="480px" sclass="shadowbox" style="background:#e1721e;">
+		<grid>
+			<rows>
+				<row spans="4" style="background:#4d4d4d">
+				<label style="color:#eeeeee">
+				Subcontract Request
+				</label>
+				</row>
+				<row>
+					<label value="Req#" />
+					<label id="sc_origid" />
+					<label value="Dated" />
+					<label id="sc_datecreated" />
+				</row>
+				<row>
+					<label value="Subcon Lab" />
+					<label id="sc_subcon_name" />
+					<label value="Req. by" />
+					<label id="sc_username" />
+				</row>
+			</rows>
+		</grid>
+		<separator height="3px" />
+		<div id="subcon_holder" />
+	</div>
+	<separator height="5px" />
+	<button label="X Close" sclass="k9" onClick="subcon_popup.close()" />
 </popup>
 
 <!-- Job notes related popup -->
 <popup id="jobnotes_history_popup">
-<groupbox width="400px">
-	<caption label="Job Notes History" />
-	<div style="padding:3px">
-		<div id="historyjobnotes_lb_div" />
-	</div>
-</groupbox>
-<separator height="3px" />
-<hbox>
-	<button id="prev_jn_btn" label="View previous note" sclass="k9" onClick="jobnoteshistory_viewprev_clicker()" />
-	<button label="Close" onClick="jobnotes_history_popup.close()" sclass="k9" />
-</hbox>
+	<groupbox width="400px">
+		<caption label="Job Notes History" />
+		<div style="padding:3px">
+			<div id="historyjobnotes_lb_div" />
+		</div>
+	</groupbox>
+	<separator height="3px" />
+	<hbox>
+		<button id="prev_jn_btn" label="View previous note" sclass="k9" onClick="jobnoteshistory_viewprev_clicker()" />
+		<button label="Close" onClick="jobnotes_history_popup.close()" sclass="k9" />
+	</hbox>
 </popup>
 
 <popup id="viewprev_jn_popup">
-<groupbox>
-	<caption label="Previous job-notes" />
-	<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
-</groupbox>
+	<groupbox>
+		<caption label="Previous job-notes" />
+		<textbox id="prevjn_tb" multiline="true" width="400px" height="50px" style="font-size:9px;padding:3px" />
+	</groupbox>
 </popup>
 
 <!-- end of Job notes related popup -->
 
-<!-- cancel folder popup -->
-<popup id="cancelfolder_popup">
-<groupbox mold="3d" width="350px">
-	<label id="cancelfolder_lbl" />
-	<separator height="3px" />
-	<label value="Cancel reason" sclass="k9" />
-	<textbox id="cancelreason" sclass="k9" multiline="true" width="99%" height="40px" />
-	<separator height="3px" />
+<popup id="cancelfolder_popup"> <!-- cancel folder popup -->
+	<groupbox mold="3d" width="350px">
+		<label id="cancelfolder_lbl" />
+		<separator height="3px" />
+		<label value="Cancel reason" sclass="k9" />
+		<textbox id="cancelreason" sclass="k9" multiline="true" width="99%" height="40px" />
+		<separator height="3px" />
+		<hbox>
+			<button label="Confirm cancel" sclass="k9" onClick="realCancelFolder()" />
+			<button label="Close" sclass="k9" onClick="cancelfolder_popup.close()" />
+		</hbox>
+	</groupbox>
+</popup> <!-- ENDOF cancel folder popup -->
+
+<popup id="selectcustomer_popup"> <!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
+<div sclass="shadowbox" style="background:#89afd5;">
 	<hbox>
-		<button label="Confirm cancel" sclass="k9" onClick="realCancelFolder()" />
-		<button label="Close" sclass="k9" onClick="cancelfolder_popup.close()" />
-	</hbox>
-</groupbox>
-</popup>
-<!-- ENDOF cancel folder popup -->
+		<groupbox width="400px">
+			<caption label="Search" />
+			<hbox>
+				<label value="Search text" sclass="k9" />
+				<textbox id="cust_search_tb" width="150px" sclass="k9" />
+				<button label="Find" sclass="k9" onClick="searchCustomers(local_callme)" />
+			</hbox>
+			<separator height="3px" />
+			<div id="foundcustomer_holder" />
+		</groupbox>
+		<groupbox id="custinfo_gb" width="300px" >
+			<caption label="Customer info" />
+			<grid>
+				<rows>
+					<row>
+						<label value="Company" sclass="k9" />
+						<label id="cfind_company_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Address1" sclass="k9" />
+						<label id="cfind_address1_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Address2" sclass="k9" />
+						<label id="cfind_address2_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Address3" sclass="k9" />
+						<label id="cfind_address3_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Contact " sclass="k9" />
+						<label id="cfind_contact_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Email" sclass="k9" />
+						<label id="cfind_email_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Tel" sclass="k9" />
+						<label id="cfind_tel_lbl" sclass="k9" />
+					</row>
+					<row>
+						<label value="Fax" sclass="k9" />
+						<label id="cfind_fax_lbl" sclass="k9" />
+					</row>
+				</rows>
+			</grid>
+		</groupbox>
 
-<!-- select customer popup , to be used by searchSelectCustomer_v1.zs -->
-<popup id="selectcustomer_popup">
-<div style="background:#89afd5;-moz-box-shadow: 4px 5px 7px #000000;-webkit-box-shadow: 4px 5px 7px #000000;
-box-shadow: 4px 5px 7px #000000;padding:3px;margin:3px">
-<hbox>
-<groupbox width="400px">
-	<caption label="Search" />
-	<hbox>
-		<label value="Search text" sclass="k9" />
-		<textbox id="cust_search_tb" width="150px" sclass="k9" />
-		<button label="Find" sclass="k9" onClick="searchCustomers(local_callme)" />
 	</hbox>
 	<separator height="3px" />
-	<div id="foundcustomer_holder" />
-</groupbox>
-<groupbox id="custinfo_gb" width="300px" >
-	<caption label="Customer info" />
-	<grid>
-		<rows>
-		<row>
-			<label value="Company" sclass="k9" />
-			<label id="cfind_company_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Address1" sclass="k9" />
-			<label id="cfind_address1_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Address2" sclass="k9" />
-			<label id="cfind_address2_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Address3" sclass="k9" />
-			<label id="cfind_address3_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Contact " sclass="k9" />
-			<label id="cfind_contact_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Email" sclass="k9" />
-			<label id="cfind_email_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Tel" sclass="k9" />
-			<label id="cfind_tel_lbl" sclass="k9" />
-		</row>
-		<row>
-			<label value="Fax" sclass="k9" />
-			<label id="cfind_fax_lbl" sclass="k9" />
-		</row>
-		</rows>
-	</grid>
-</groupbox>
-
-</hbox>
-<separator height="3px" />
-<button label="X Close" sclass="k9" onClick="selectcustomer_popup.close()" />
+	<button label="X Close" sclass="k9" onClick="selectcustomer_popup.close()" />
 </div>
-</popup>
-<!-- ENDOF select customer popup -->
+</popup> <!-- ENDOF select customer popup -->
 
-<!-- documents popup -->
-<popup id="doculink_popup">
-<div width="400px">
-<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
-<separator height="5px" />
-<hbox>
-	<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" sclass="k9" />
-</hbox>
-</div>
-</popup>
-<!-- ENDOF documents popup -->
+<popup id="doculink_popup"> <!-- documents popup -->
+	<div width="400px">
+		<include id="linkingdoc_include" src="alsglobal/doculink.zul"/>
+		<separator height="5px" />
+		<hbox>
+			<button label="Close" onClick="showDocumentsList(selected_folderno); doculink_popup.close()" sclass="k9" />
+		</hbox>
+	</div>
+</popup> <!-- ENDOF documents popup -->
 
-<!-- view results popup -->
-<popup id="viewresults_popup">
-<div style="background:#729fcf;padding:2px">
-<button label="X Close" sclass="k9" onClick="viewresults_popup.close()" />
-<label id="foldercaption_lbl" style="font-weight:bold;color:#ffffff" />
-<label id="companyname_lbl" style="font-weight:bold;color:#ffffff" />
-</div>
-<separator height="2px" />
-<div id="foldertests_holder" width="520px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
-</popup>
-<!-- ENDOF view results popup -->
+<popup id="viewresults_popup"> <!-- view results popup -->
+	<div style="background:#729fcf;padding:2px">
+		<button label="X Close" sclass="k9" onClick="viewresults_popup.close()" />
+		<label id="foldercaption_lbl" style="font-weight:bold;color:#ffffff" />
+		<label id="companyname_lbl" style="font-weight:bold;color:#ffffff" />
+	</div>
+	<separator height="2px" />
+	<div id="foldertests_holder" width="520px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+</popup> <!-- ENDOF view results popup -->
 
 <popup id="loadfilterspop">
-<div sclass="shadowbox" style="background:#565B73" width="500px">
-<grid sclass="GridLayoutNoBorder">
-	<rows>
-		<row style="background:#565B73" spans="2,1">
-			<separator />
-			<button label="Dig by PKD" sclass="k9" onClick="loadFoldersList(5)" />
-		</row>
-		<row style="background:#565B73">
-			<label value="Sample marking" sclass="k9b" />
-			<textbox id="bysampmarking_tb" sclass="k9" width="98%" />
-			<button label="Find" sclass="k9" onClick="loadFoldersList(8)" />
-		</row>
-		<row style="background:#565B73">
-				<label value="ASMA Project" sclass="k9b" />
-				<combobox id="customer_po" sclass="k9">
-					<comboitem label="RIVER CONTRACT" />
-					<comboitem label="ROL" />
-					<comboitem label="PUTRAJAYA" />
-					<comboitem label="IND MONITORING" />
-				</combobox>
-				<button label="by ASMA" sclass="k9" onClick="loadFoldersList(10)" />
-		</row>
-		<row style="background:#565B73">
-			<label value="Track.Flag" sclass="k9b" />
-			<listbox id="track_flag" mold="select" sclass="k9" />
-			<button label="by TF" sclass="k9" onClick="loadFoldersList(11)" />
-		</row>
-		<row style="background:#565B73">
-			<label value="By job-hold stat" sclass="k9b" />
-			<listbox id="jobhold_status" mold="select" sclass="k9" />
-			<button label="Dig" sclass="k9" onClick="loadFoldersList(12)" />
-		</row>
-		<row style="background:#565B73">
-			<separator />
-			<listbox id="share_sample" mold="select" sclass="k9" />
-			<zscript>
-				luhand.populateListbox_ByLookup(share_sample,"SHARESAMPLE_DEFS",2);
-				//lbhand.populateDropdownListbox(share_sample,sharesamplechop);
-			</zscript>
-			<button label="Dig by share-samples" sclass="k9" onClick="loadFoldersList(4)" />
-		</row>
-		<row style="background:#565B73">
-			<separator />
-			<div id="salesman_holder" />
-			<button label="Dig by salesman" sclass="k9" onClick="loadFoldersList(6)" />
-		</row>
-		<row style="background:#565B73">
-			<separator />
-			<div id="customerterms_holder" />
-			<button label="Dig by credit-terms" sclass="k9" onClick="loadFoldersList(7)" />
-		</row>
-		<row style="background:#565B73">
-			<separator />
-			<div id="custcat_holder" />
-			<button label="Dig by cust-category" sclass="k9" onClick="loadFoldersList(9)" />
-		</row>
-	</rows>
-</grid>
-</div>
+	<div sclass="shadowbox" style="background:#565B73" width="500px">
+		<grid sclass="GridLayoutNoBorder">
+			<rows>
+				<row style="background:#565B73" spans="2,1">
+					<separator />
+					<button label="Dig by PKD" sclass="k9" onClick="loadFoldersList(5)" />
+				</row>
+				<row style="background:#565B73">
+					<label value="Sample marking" sclass="k9b" />
+					<textbox id="bysampmarking_tb" sclass="k9" width="98%" />
+					<button label="Find" sclass="k9" onClick="loadFoldersList(8)" />
+				</row>
+				<row style="background:#565B73">
+						<label value="ASMA Project" sclass="k9b" />
+						<combobox id="customer_po" sclass="k9">
+							<comboitem label="RIVER CONTRACT" />
+							<comboitem label="ROL" />
+							<comboitem label="PUTRAJAYA" />
+							<comboitem label="IND MONITORING" />
+						</combobox>
+						<button label="by ASMA" sclass="k9" onClick="loadFoldersList(10)" />
+				</row>
+				<row style="background:#565B73">
+					<label value="Track.Flag" sclass="k9b" />
+					<listbox id="track_flag" mold="select" sclass="k9" />
+					<button label="by TF" sclass="k9" onClick="loadFoldersList(11)" />
+				</row>
+				<row style="background:#565B73">
+					<label value="By job-hold stat" sclass="k9b" />
+					<listbox id="jobhold_status" mold="select" sclass="k9" />
+					<button label="Dig" sclass="k9" onClick="loadFoldersList(12)" />
+				</row>
+				<row style="background:#565B73">
+					<separator />
+					<listbox id="share_sample" mold="select" sclass="k9" />
+					<zscript>
+						luhand.populateListbox_ByLookup(share_sample,"SHARESAMPLE_DEFS",2);
+						//lbhand.populateDropdownListbox(share_sample,sharesamplechop);
+					</zscript>
+					<button label="Dig by share-samples" sclass="k9" onClick="loadFoldersList(4)" />
+				</row>
+				<row style="background:#565B73">
+					<separator />
+					<div id="salesman_holder" />
+					<button label="Dig by salesman" sclass="k9" onClick="loadFoldersList(6)" />
+				</row>
+				<row style="background:#565B73">
+					<separator />
+					<div id="customerterms_holder" />
+					<button label="Dig by credit-terms" sclass="k9" onClick="loadFoldersList(7)" />
+				</row>
+				<row style="background:#565B73">
+					<separator />
+					<div id="custcat_holder" />
+					<button label="Dig by cust-category" sclass="k9" onClick="loadFoldersList(9)" />
+				</row>
+			</rows>
+		</grid>
+	</div>
 </popup>
 
 <popup id="adminpop">
-<div sclass="shadowbox" style="background:#ee1100">
-	<button id="cancelfolder_btn" label="Cancel folder" sclass="k9" onClick="cancelFolder()" />
-	<button id="ass_customer_btn" label="Change customer" sclass="k9" onClick="selectcustomer_popup.open(self)" />
-	<button label="Clear sudah-terima" sclass="k9" onClick="generalFunc(7)" />
-	<button label="Clear SRN-date" sclass="k9" onClick="generalFunc(9)" />
+	<div sclass="shadowbox" style="background:#ee1100">
+		<button id="cancelfolder_btn" label="Cancel folder" sclass="k9" onClick="cancelFolder()" />
+		<button id="ass_customer_btn" label="Change customer" sclass="k9" onClick="selectcustomer_popup.open(self)" />
+		<button label="Clear sudah-terima" sclass="k9" onClick="generalFunc(7)" />
+		<button label="Clear SRN-date" sclass="k9" onClick="generalFunc(9)" />
 
-	<!-- <button label="Notify unmod cashfolder" sclass="k9" onClick="admin_NotifyCashFolders()" /> -->
-	<!-- <button id="sendsrn_button" label="sendSRN" visible="false" sclass="k9" onClick="sendSRN_email()" /> -->
-</div>
+		<!-- <button label="Notify unmod cashfolder" sclass="k9" onClick="admin_NotifyCashFolders()" /> -->
+		<!-- <button id="sendsrn_button" label="sendSRN" visible="false" sclass="k9" onClick="sendSRN_email()" /> -->
+	</div>
 </popup>
 
 <popup id="utilitiespop">
-<div sclass="shadowbox" style="background:#565B73">
-	<vbox>
-	<button label="Print SRA" sclass="k9" onClick="generalFunc(4)" />
-	<button label="Email SRA" sclass="k9" onClick="generalFunc(11)" />
-	<button label="Generate Draft-Report" sclass="k9" onClick="generalFunc(3)" />
-	<button id="exportlist_btn" label="Export list to Excel" sclass="k9" onClick="kasiExport_clicker()" />
-	</vbox>
-</div>
+	<div sclass="shadowbox" style="background:#565B73">
+		<vbox>
+		<button label="Print SRA" sclass="k9" onClick="generalFunc(4)" />
+		<button label="Email SRA" sclass="k9" onClick="generalFunc(11)" />
+		<button label="Generate Draft-Report" sclass="k9" onClick="generalFunc(3)" />
+		<button id="exportlist_btn" label="Export list to Excel" sclass="k9" onClick="kasiExport_clicker()" />
+		</vbox>
+	</div>
 </popup>
 
 <style src="/real-world.css" />
@@ -1138,187 +1096,167 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 }
 </style>
 
-<div width="${PANELWIDTH}">
+<div width="1200px">
 <panel id="${MYPANEL}" title="${MYTITLE} ${MYVERSION}" border="none" collapsible="true" closable="true">
-<panelchildren style="background:#ea7724">
-<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="kiboo.setTodayDatebox(self)" />
+<panelchildren style="background:#990D2A">
+	<datebox id="hiddendatebox" format="yyyy-MM-dd" visible="false" onCreate="kiboo.setTodayDatebox(self)" />
 
-<div sclass="shadowbox" style="background:#565B73">
-	<hbox>
-		<label value="Start" sclass="k9b" />
-		<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
-		<label value="End" sclass="k9b" />
-		<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
-		<textbox id="customer_tb" sclass="k9" />
-		<button label="Find/Load" sclass="k9mo" onClick="loadFoldersList(1)" />
-
-		<textbox id="byfolder_tb" sclass="k9" width="70px" />
-		<button label="by folder" sclass="k9mo" onClick="loadFoldersList(2)" />
-		<textbox id="bysampleid_tb" sclass="k9" width="70px" />
-		<button label="by sample-id" sclass="k9mo" onClick="loadFoldersList(3)" />
-		
-		<button label="Filters" sclass="k9mo" onClick="loadfilterspop.open(self)" />
-		<button label="Dig quotation" sclass="k9mo" onClick="digquotation_popup.open(self)" />
-		<button id="admin_b" label="ADMIN" style="color:#ff0000;font-weight:bold" visible="false" />
-	</hbox>
-	<hbox>
-		<label style="font-size:8px;color:#eeeeee">
-		Will only load LOGGED or COMMITTED folders - If you cannot find the folder here, most probably it is in DRAFT.
-		(Max. 200 folders per click)
-		</label>
-	</hbox>
-</div>
-<separator height="3px" />
-
-<div sclass="shadowbox" style="background:#565B73">
-	<hbox>
-		<label value="Reset Share-Sample" sclass="k9b" />
-		<listbox id="share_sample2" mold="select" sclass="k9" />
-		<zscript>
-		//lbhand.populateDropdownListbox(share_sample2,sharesamplechop);
-		luhand.populateListbox_ByLookup(share_sample2,"SHARESAMPLE_DEFS",2);
-		</zscript>
-		<button id="resetsharesample_butt" label="Change" sclass="k9mo" disabled="true" onClick="generalFunc(1)" />
-
-		<div id="whosetholdstatus" visible="false">
-			<label value="Hold-status" sclass="k9b" />
-			<listbox id="set_jobhold_status" mold="select" sclass="k9" />
-			<button label="Set hold" sclass="k9mo" onClick="generalFunc(12)" />
-		</div>
-
-		<button label="Set job as PKD samples" sclass="k9mo" onClick="generalFunc(2)" />
-		<button label="Set pre-paid job" sclass="k9mo" onClick="generalFunc(10)" />
-		<button id="terimacoa_btn" label="Sudah terima COA" sclass="k9mo" onClick="generalFunc(6)" visible="false" />
-		<button label="Utilities" sclass="k9mo" onClick="utilitiespop.open(self)" />
-	</hbox>
-	<hbox>
-		<button label="Folder details / CashAcct / Documents" sclass="k9" onClick="showFolderMetadata()" />
-
-	</hbox>
-
-<label style="font-size:8px;color:#eeeeee">
-( T.COA = Terima.COA date, F.Status = Folder.Status, HOLD=HOLD.JOB, SC=SampleCount, LC=LabComment, Subc=Subcon, SRA=emailSRN )
-</label>
-
-
-</div>
-
-<hbox>
-
-<vbox>
-
-<div id="folderworkbutts" visible="false">
-</div>
-<!-- ENDOF folder handling buttons -->
-
-<!-- folder metadata area -->
-<groupbox id="foldermeta_area" mold="3d" visible="false">
-<hbox>
-
-<button label="More folder details" sclass="k9" onClick="generalFunc(5)" />
-
-<groupbox mold="3d" width="300px">
-	<div id="doculist_holder" />
-	<separator height="3px" />
-	<button label="View document" sclass="k9" onClick="viewDocument()" />
-	<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" sclass="k9" />
-	<!-- <button id="sendemail_doc_btn" label="E-Mail" sclass="k9" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
-</groupbox>
-
-<div id="cashdet_holder" />
-
-<groupbox mold="3d">
-<caption label="Job Notes" />
-<div id="jobnotes_found_div" />
-<separator height="3px" />
-<grid>
-	<columns>
-		<column label="" width="100px" />
-		<column label="" />
-	</columns>
-	<rows>
-		<row>
-		<label value="Job notes" sclass="k9" />
-		<textbox id="jobnotes_tb" sclass="k9" multiline="true" width="300px" height="100px" />
-		</row>
-	</rows>
-</grid>
-
-<separator height="3px" />
-<hbox>
-<button label="Save notes" sclass="k9" onClick="saveUpdateJobNotes()" />
-<button id="noteshistory_btn" label="Notes history" sclass="k9" onClick="jobNotesHistory_clicker()" />
-</hbox>
-</groupbox>
-
-</hbox>
-</groupbox>
-<!-- ENDOF folder metadata area -->
-
-<!-- search results box and tests box -->
-<div id="folderworkarea" visible="false">
-<hbox>
-	<vbox>
+	<div sclass="shadowbox" style="background:#565B73">
 		<hbox>
-			<grid>
-				<rows>
-					<row style="background:#CCCCCC">
-						<div style="background:#FAC116">
-							<label value="Found" />
-							<label id="numofsamples_lbl" />
-						</div>
+			<label value="Start" sclass="k9b" />
+			<datebox id="startdate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			<label value="End" sclass="k9b" />
+			<datebox id="enddate" format="yyyy-MM-dd" style="font-size:9px" onCreate="kiboo.setTodayDatebox(self)" />
+			<textbox id="customer_tb" sclass="k9" />
+			<button label="Find/Load" sclass="k9mo" onClick="loadFoldersList_NG(1)" />
 
-						<div style="background:#cd2467">
-							<label value="HOLD" />
-							<label id="jobhold_count_lbl" style="color:#ffffff;font-weight:bold"/>
-						</div>
+			<textbox id="byfolder_tb" sclass="k9" width="70px" />
+			<button label="by folder" sclass="k9mo" onClick="loadFoldersList(2)" />
+			<textbox id="bysampleid_tb" sclass="k9" width="70px" />
+			<button label="by sample-id" sclass="k9mo" onClick="loadFoldersList(3)" />
+			
+			<button label="Filters" sclass="k9mo" onClick="loadfilterspop.open(self)" />
+			<button label="Dig quotation" sclass="k9mo" onClick="digquotation_popup.open(self)" />
+			<button id="admin_b" label="ADMIN" sclass="k9mo" style="color:#ff0000" visible="false" onClick="adminpop.open(self)" />
+		</hbox>
+		<hbox>
+			<label style="font-size:8px;color:#eeeeee">
+			Will only load LOGGED or COMMITTED folders - If you cannot find the folder here, most probably it is in DRAFT.
+			(Max. 200 folders per click)
+			</label>
+		</hbox>
+	</div>
+	<separator height="3px" />
 
-						<div style="background:#F74623">
-							<label value="OVERDUES" />
-							<label id="overdue_count_lbl" style="color:#ffffff;font-weight:bold"/>
-						</div>
+	<div sclass="shadowbox" style="background:#565B73">
+		<hbox>
+			<label value="Reset Share-Sample" sclass="k9b" />
+			<listbox id="share_sample2" mold="select" sclass="k9" />
+			<zscript>
+			//lbhand.populateDropdownListbox(share_sample2,sharesamplechop);
+			luhand.populateListbox_ByLookup(share_sample2,"SHARESAMPLE_DEFS",2);
+			</zscript>
+			<button id="resetsharesample_butt" label="Change" sclass="k9mo" disabled="true" onClick="generalFunc(1)" />
 
-						<div style="background:#AEF520">
-							<label value="REL" />
-							<label id="released_count_lbl" style="color:#222222;font-weight:bold"/>
-						</div>
+			<div id="whosetholdstatus" visible="false">
+				<label value="Hold-status" sclass="k9b" />
+				<listbox id="set_jobhold_status" mold="select" sclass="k9" />
+				<button label="Set hold" sclass="k9mo" onClick="generalFunc(12)" />
+			</div>
 
-						<div style="background:#FAC116">
-							<label value="WIP" />
-							<label id="wip_lbl" />
-						</div>
-						<!--
-						<label style="font-size:9px;font-weight:bold">
-							(RED = OVERDUE folders, GREEN = RELEASED folders)
-						</label>
-						-->
-					</row>
-				</rows>
-			</grid>
-	<hbox>
-		<button label="View results" style="font-weight:bold" onClick="generalFunc(8)" />
-		<button label="Lab Comments" style="font-weight:bold" onClick="showLabComments(global_selected_folderno);labcomment_popup.open(self)" />
-		<button label="Subcontract" style="font-weight:bold" onClick="viewSubcontract(self)" />
-		<button id="picksamp_butt" label="Samples pickup" style="font-weight:bold" onClick="viewSamplesPickup()" />
-		<button id="persampleshare_butt" label="Per-sample Share" style="font-weight:bold" onClick="viewPerSampleShare()" />
-	</hbox>
+			<button label="Set job as PKD samples" sclass="k9mo" onClick="generalFunc(2)" />
+			<button label="Set pre-paid job" sclass="k9mo" onClick="generalFunc(10)" />
+			<button id="terimacoa_btn" label="Sudah terima COA" sclass="k9mo" onClick="generalFunc(6)" visible="false" />
+			<button label="Utilities" sclass="k9mo" onClick="utilitiespop.open(self)" />
+		</hbox>
+		<hbox>
+			<button label="Folder details / CashAcct / Documents" sclass="k9" onClick="showFolderMetadata()" />
 		</hbox>
 
-		<separator height="3px" />
-		<div id="folders_searchdiv" width="1190px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;" />
+		<label style="font-size:8px;color:#eeeeee">
+		( T.COA = Terima.COA date, F.Status = Folder.Status, HOLD=HOLD.JOB, SC=SampleCount, LC=LabComment, Subc=Subcon, SRA=emailSRN )
+		</label>
+	</div>
+
+	<vbox>
+		<div id="folderworkbutts" visible="false">
+		</div> <!-- ENDOF folder handling buttons -->
+
+		<groupbox id="foldermeta_area" mold="3d" visible="false"> <!-- folder metadata area -->
+			<hbox>
+				<button label="More folder details" sclass="k9" onClick="generalFunc(5)" />
+
+				<groupbox mold="3d" width="300px">
+					<div id="doculist_holder" />
+					<separator height="3px" />
+					<button label="View document" sclass="k9" onClick="viewDocument()" />
+					<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" sclass="k9" />
+					<!-- <button id="sendemail_doc_btn" label="E-Mail" sclass="k9" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
+				</groupbox>
+
+				<div id="cashdet_holder" />
+
+				<groupbox mold="3d">
+					<caption label="Job Notes" />
+					<div id="jobnotes_found_div" />
+					<separator height="3px" />
+					<grid>
+						<columns>
+							<column label="" width="100px" />
+							<column label="" />
+						</columns>
+						<rows>
+							<row>
+								<label value="Job notes" sclass="k9" />
+								<textbox id="jobnotes_tb" sclass="k9" multiline="true" width="300px" height="100px" />
+							</row>
+						</rows>
+					</grid>
+					<separator height="3px" />
+					<hbox>
+						<button label="Save notes" sclass="k9" onClick="saveUpdateJobNotes()" />
+						<button id="noteshistory_btn" label="Notes history" sclass="k9" onClick="jobNotesHistory_clicker()" />
+					</hbox>
+				</groupbox>
+			</hbox>
+		</groupbox> <!-- ENDOF folder metadata area -->
+
+		<div id="folderworkarea" visible="false"> <!-- search results box and tests box -->
+		<hbox>
+			<vbox>
+				<hbox>
+					<grid>
+						<rows>
+							<row style="background:#CCCCCC">
+								<div style="background:#FAC116">
+									<label value="Found" />
+									<label id="numofsamples_lbl" />
+								</div>
+
+								<div style="background:#cd2467">
+									<label value="HOLD" />
+									<label id="jobhold_count_lbl" style="color:#ffffff;font-weight:bold"/>
+								</div>
+
+								<div style="background:#F74623">
+									<label value="OVERDUES" />
+									<label id="overdue_count_lbl" style="color:#ffffff;font-weight:bold"/>
+								</div>
+
+								<div style="background:#AEF520">
+									<label value="REL" />
+									<label id="released_count_lbl" style="color:#222222;font-weight:bold"/>
+								</div>
+
+								<div style="background:#FAC116">
+									<label value="WIP" />
+									<label id="wip_lbl" />
+								</div>
+								<!--
+								<label style="font-size:9px;font-weight:bold">
+									(RED = OVERDUE folders, GREEN = RELEASED folders)
+								</label>
+								-->
+							</row>
+						</rows>
+					</grid>
+
+					<hbox>
+						<button label="View results" sclass="k9mo" onClick="generalFunc(8)" />
+						<button label="Lab Comments" sclass="k9mo" onClick="showLabComments(global_selected_folderno);labcomment_popup.open(self)" />
+						<button label="Subcontract" sclass="k9mo" onClick="viewSubcontract(self)" />
+						<button id="picksamp_butt" label="Samples pickup" sclass="k9mo" onClick="viewSamplesPickup()" />
+						<button id="persampleshare_butt" label="Per-sample Share" sclass="k9mo" onClick="viewPerSampleShare()" />
+					</hbox>
+				</hbox>
+				<separator height="3px" />
+				<div id="folders_searchdiv" />
+			</vbox>
+		</hbox>
+		</div> <!-- ENDOF search results box and tests box -->
 	</vbox>
-	
-</hbox>
-</div>
-<!-- ENDOF search results box and tests box -->
 
-</vbox>
-
-</hbox>
-
-<separator height="5px" />
-
-<div id="kasiexport_holder" />
+	<div id="kasiexport_holder" />
 
 <zscript>
 <![CDATA[
@@ -1358,6 +1296,7 @@ if(useraccessobj.accesslevel == 9 || sechand.validSupervisor(useraccessobj.usern
 
 //	sendemail_doc_btn.setVisible(true);
 //	sendsrn_button.setVisible(true);
+// width="1190px" height="550px" style="border:1px solid gray;overflow:auto;padding:2px;"
 }
 
 
