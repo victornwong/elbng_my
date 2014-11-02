@@ -28,8 +28,6 @@ void showFolderMetadata(String ifoldernum)
 	origid = samphand.extractFolderNo(ifoldernum);
 	tr = samphand.getFolderJobRec(origid);
 	if(tr == null) return;
-	
-	//alert(ifoldernum + " :: " + origid + " :: " + therec);
 
 	global_selected_origid = tr.get("origid").toString();
 
@@ -42,9 +40,8 @@ void showFolderMetadata(String ifoldernum)
 	//global_selected_arcode = tr.get("ar_code");
 	ar_code.setValue(global_selected_arcode);
 	global_folder_status = tr.get("folderstatus"); // save selected folderstatus to glob
-
-	// 25/11/2010: clear cash-acct inputboxes
-	cashacct_gb.setVisible(false);
+	
+	cashacct_gb.setVisible(false); // 25/11/2010: clear cash-acct inputboxes
 	clearCashAccountInputs();
 
 	if(!global_selected_arcode.equals(""))
@@ -117,11 +114,11 @@ void saveFolderMetadata()
 		prepaid_tick, subcon_flag, subcontractor_tb, subcon_sendout, subcon_notes, track_flag,
 		jobhold_status };
 
-	dt = getString_fromUI(jkl);
+	dt = ngfun.getString_fromUI(jkl);
 	dt[11] = kiboo.getDateFromDatebox(due_date);
 
 	// 25/07/2012: add some codes for working-days calc and TODO holidays maybe
-	cbizday = kiboo.calcBusinessDays(date_created,Integer.parseInt(dt[10]));
+	cbizday = kiboo.calcBusinessDays(date_created,Integer.parseInt(dt[10])); // tat_dd
 	kiboo.addDaysToDate(date_created,due_date,cbizday);
 
 	// 29/3/2010: to update branch field according to username branch setting.
