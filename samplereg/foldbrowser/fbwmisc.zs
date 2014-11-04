@@ -104,20 +104,6 @@ void showCashAccountDetails_clicker()
 		"city", "zipcode", "state", "country", "telephone", "fax", "email" };
 
 	ngfun.populateUI_Data(jkl,fl,csrec);
-
-/*
-	ca_customer_name_tb.setValue(csrec.get("customer_name"));
-	ca_contact_person1_tb.setValue(csrec.get("contact_person1"));
-	ca_address1_tb.setValue(csrec.get("address1"));
-	ca_address2_tb.setValue(csrec.get("address2"));
-	ca_city_tb.setValue(csrec.get("city"));
-	ca_zipcode_tb.setValue(csrec.get("zipcode"));
-	ca_state_tb.setValue(csrec.get("state"));
-	ca_country_tb.setValue(csrec.get("country"));
-	ca_telephone_tb.setValue(csrec.get("telephone"));
-	ca_fax_tb.setValue(csrec.get("fax"));
-	ca_email_tb.setValue(csrec.get("email"));
-*/
 	cashdet_holder.setVisible(true);
 }
 
@@ -218,13 +204,13 @@ void kasiExport_clicker()
 // 14/01/2013: view subcontracts for a folder -- knockoff from frontSlab_v2.zul
 void viewSubcontract(Component iwhat)
 {
-Object[] subcon_headers =
-{
-	new listboxHeaderWidthObj("Folder",true,"80px"),
-	new listboxHeaderWidthObj("SampleID",true,"80px"),
-	new listboxHeaderWidthObj("Samp.Mark",true,"150px"),
-	new listboxHeaderWidthObj("Tests",true,"150px"),
-};
+	Object[] subcon_headers =
+	{
+		new listboxHeaderWidthObj("Folder",true,"80px"),
+		new listboxHeaderWidthObj("SampleID",true,"80px"),
+		new listboxHeaderWidthObj("Samp.Mark",true,"150px"),
+		new listboxHeaderWidthObj("Tests",true,"150px"),
+	};
 
 	if(global_selected_folderno.equals("")) return;
 
@@ -263,13 +249,13 @@ Object[] subcon_headers =
 //----- internal lab-comments funcs, to replace the klunky job-notes
 void showLabComments(String ifolder)
 {
-Object[] lc_headers =
-{
-	new listboxHeaderWidthObj("origid",false,""),
-	new listboxHeaderWidthObj("Dated",true,"60px"),
-	new listboxHeaderWidthObj("User",true,"70px"),
-	new listboxHeaderWidthObj("Comments",true,""),
-};
+	Object[] lc_headers =
+	{
+		new listboxHeaderWidthObj("origid",false,""),
+		new listboxHeaderWidthObj("Dated",true,"60px"),
+		new listboxHeaderWidthObj("User",true,"70px"),
+		new listboxHeaderWidthObj("Comments",true,""),
+	};
 	Listbox newlb = lbhand.makeVWListbox_Width(lc_holder, lc_headers, "labcomments_lb", 5);
 
 	sqlstm = "select origid,datecreated,username,thecomment from elb_labcomments where folderno_str='" + ifolder + "' order by origid";
@@ -316,15 +302,15 @@ void labcommentFunc(Component iwhat)
 //--- 13/01/2013: dig/show quotation, knockoff from registernew_samples_v4_6.zul
 void digShowQuotation()
 {
-Object[] qt_headers =
-{
-	new listboxHeaderWidthObj("mysc",false,""),
-	new listboxHeaderWidthObj("No.",true,"20px"),
-	new listboxHeaderWidthObj("TI",true,"20px"),
-	new listboxHeaderWidthObj("Test",true,"200px"),
-	new listboxHeaderWidthObj("Method",true,"200px"),
-	new listboxHeaderWidthObj("Price",true,"60px"),
-};
+	Object[] qt_headers =
+	{
+		new listboxHeaderWidthObj("mysc",false,""),
+		new listboxHeaderWidthObj("No.",true,"20px"),
+		new listboxHeaderWidthObj("TI",true,"20px"),
+		new listboxHeaderWidthObj("Test",true,"200px"),
+		new listboxHeaderWidthObj("Method",true,"200px"),
+		new listboxHeaderWidthObj("Price",true,"60px"),
+	};
 	qtnm = kiboo.replaceSingleQuotes(digquote_tb.getValue()).trim();
 	if(qtnm.equals("")) return;
 
@@ -373,12 +359,12 @@ Object[] qt_headers =
 // 23/05/2013: view samples-pickup by folder
 void viewSamplesPickup()
 {
-Object[] spc_headers =
-{
-	new listboxHeaderWidthObj("SampleID",true,""),
-	new listboxHeaderWidthObj("Receiv",true,"50px"),
-	new listboxHeaderWidthObj("Pickups",true,"50px"),
-};
+	Object[] spc_headers =
+	{
+		new listboxHeaderWidthObj("SampleID",true,""),
+		new listboxHeaderWidthObj("Receiv",true,"50px"),
+		new listboxHeaderWidthObj("Pickups",true,"50px"),
+	};
 
 	sqlstm = "select lps.sampleid_str, count(lps.sampleid_str) as pickc, js.bottles from elb_labpickedsamples lps " +
 	"left join jobsamples js on js.sampleid_str = lps.sampleid_str " +

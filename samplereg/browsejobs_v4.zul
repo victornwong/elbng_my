@@ -707,14 +707,14 @@ void generalFunc(int itype)
 // 21/06/2013: show per-sample share_sample popup
 void viewPerSampleShare()
 {
-Object[] samples_lb_headers = {
-	new listboxHeaderWidthObj("origid",false,""),
-	new listboxHeaderWidthObj("##",true,"15px"),
-	new listboxHeaderWidthObj("SampleID",true,"30px"),
-	new listboxHeaderWidthObj("Samp.Marking",true,""),
-	new listboxHeaderWidthObj("Share",true,"30px"),
-	new listboxHeaderWidthObj("Conts",true,"30px"),
-};
+	Object[] samples_lb_headers = {
+		new listboxHeaderWidthObj("origid",false,""),
+		new listboxHeaderWidthObj("##",true,"15px"),
+		new listboxHeaderWidthObj("SampleID",true,"30px"),
+		new listboxHeaderWidthObj("Samp.Marking",true,""),
+		new listboxHeaderWidthObj("Share",true,"30px"),
+		new listboxHeaderWidthObj("Conts",true,"30px"),
+	};
 
 	glob_persampleshare_selected = ""; // always this reset glob-var
 
@@ -885,8 +885,7 @@ void changePerSampleShare()
 	<button label="X Close" sclass="k9" onClick="subcon_popup.close()" />
 </popup>
 
-<!-- Job notes related popup -->
-<popup id="jobnotes_history_popup">
+<popup id="jobnotes_history_popup"> <!-- Job notes related popup -->
 	<groupbox width="400px">
 		<caption label="Job Notes History" />
 		<div style="padding:3px">
@@ -1066,13 +1065,14 @@ void changePerSampleShare()
 
 <popup id="adminpop">
 	<div sclass="shadowbox" style="background:#ee1100">
-		<button id="cancelfolder_btn" label="Cancel folder" sclass="k9" onClick="cancelFolder()" />
-		<button id="ass_customer_btn" label="Change customer" sclass="k9" onClick="selectcustomer_popup.open(self)" />
-		<button label="Clear sudah-terima" sclass="k9" onClick="generalFunc(7)" />
-		<button label="Clear SRN-date" sclass="k9" onClick="generalFunc(9)" />
-
-		<!-- <button label="Notify unmod cashfolder" sclass="k9" onClick="admin_NotifyCashFolders()" /> -->
-		<!-- <button id="sendsrn_button" label="sendSRN" visible="false" sclass="k9" onClick="sendSRN_email()" /> -->
+		<vbox>
+			<button id="cancelfolder_btn" label="Cancel folder" sclass="k9" onClick="cancelFolder()" />
+			<button id="ass_customer_btn" label="Change customer" sclass="k9" onClick="selectcustomer_popup.open(self)" />
+			<button label="Clear sudah-terima" sclass="k9" onClick="generalFunc(7)" />
+			<button label="Clear SRN-date" sclass="k9" onClick="generalFunc(9)" />
+			<!-- <button label="Notify unmod cashfolder" sclass="k9" onClick="admin_NotifyCashFolders()" /> -->
+			<!-- <button id="sendsrn_button" label="sendSRN" visible="false" sclass="k9" onClick="sendSRN_email()" /> -->
+		</vbox>
 	</div>
 </popup>
 
@@ -1084,6 +1084,14 @@ void changePerSampleShare()
 		<button label="Generate Draft-Report" sclass="k9" onClick="generalFunc(3)" />
 		<button id="exportlist_btn" label="Export list to Excel" sclass="k9" onClick="kasiExport_clicker()" />
 		</vbox>
+	</div>
+</popup>
+
+<popup id="lilhelp">
+	<div sclass="shadowbox" style="background:#565B73" width="200px">
+		<label style="font-size:8px;color:#eeeeee" multiline="true">
+		( T.COA = Terima.COA date, F.Status = Folder.Status, HOLD=HOLD.JOB, SC=SampleCount, LC=LabComment, Subc=Subcon, SRA=emailSRN )
+		</label>
 	</div>
 </popup>
 
@@ -1117,6 +1125,7 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 			
 			<button label="Filters" sclass="k9mo" onClick="loadfilterspop.open(self)" />
 			<button label="Dig quotation" sclass="k9mo" onClick="digquotation_popup.open(self)" />
+			<button label="Export EXCEL" sclass="k9mo" onClick="expfoldersexcel()" />
 			<button id="admin_b" label="ADMIN" sclass="k9mo" style="color:#ff0000" visible="false" onClick="adminpop.open(self)" />
 		</hbox>
 		<hbox>
@@ -1128,135 +1137,121 @@ border-top: none; border-left: none; border-right: none; border-bottom: none;
 	</div>
 	<separator height="3px" />
 
-	<div sclass="shadowbox" style="background:#565B73">
-		<hbox>
-			<label value="Reset Share-Sample" sclass="k9b" />
-			<listbox id="share_sample2" mold="select" sclass="k9" />
-			<zscript>
-			//lbhand.populateDropdownListbox(share_sample2,sharesamplechop);
-			luhand.populateListbox_ByLookup(share_sample2,"SHARESAMPLE_DEFS",2);
-			</zscript>
-			<button id="resetsharesample_butt" label="Change" sclass="k9mo" disabled="true" onClick="generalFunc(1)" />
-
-			<div id="whosetholdstatus" visible="false">
-				<label value="Hold-status" sclass="k9b" />
-				<listbox id="set_jobhold_status" mold="select" sclass="k9" />
-				<button label="Set hold" sclass="k9mo" onClick="generalFunc(12)" />
-			</div>
-
-			<button label="Set job as PKD samples" sclass="k9mo" onClick="generalFunc(2)" />
-			<button label="Set pre-paid job" sclass="k9mo" onClick="generalFunc(10)" />
-			<button id="terimacoa_btn" label="Sudah terima COA" sclass="k9mo" onClick="generalFunc(6)" visible="false" />
-			<button label="Utilities" sclass="k9mo" onClick="utilitiespop.open(self)" />
-		</hbox>
-		<hbox>
-			<button label="Folder details / CashAcct / Documents" sclass="k9" onClick="showFolderMetadata()" />
-		</hbox>
-
-		<label style="font-size:8px;color:#eeeeee">
-		( T.COA = Terima.COA date, F.Status = Folder.Status, HOLD=HOLD.JOB, SC=SampleCount, LC=LabComment, Subc=Subcon, SRA=emailSRN )
-		</label>
-	</div>
-
-	<vbox>
-		<div id="folderworkbutts" visible="false">
-		</div> <!-- ENDOF folder handling buttons -->
-
-		<groupbox id="foldermeta_area" mold="3d" visible="false"> <!-- folder metadata area -->
+	<div id="mainlongkang" >
+		<div sclass="shadowbox" style="background:#565B73">
 			<hbox>
-				<button label="More folder details" sclass="k9" onClick="generalFunc(5)" />
-
-				<groupbox mold="3d" width="300px">
-					<div id="doculist_holder" />
-					<separator height="3px" />
-					<button label="View document" sclass="k9" onClick="viewDocument()" />
-					<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" sclass="k9" />
-					<!-- <button id="sendemail_doc_btn" label="E-Mail" sclass="k9" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
-				</groupbox>
-
-				<div id="cashdet_holder" />
-
-				<groupbox mold="3d">
-					<caption label="Job Notes" />
-					<div id="jobnotes_found_div" />
-					<separator height="3px" />
-					<grid>
-						<columns>
-							<column label="" width="100px" />
-							<column label="" />
-						</columns>
-						<rows>
-							<row>
-								<label value="Job notes" sclass="k9" />
-								<textbox id="jobnotes_tb" sclass="k9" multiline="true" width="300px" height="100px" />
-							</row>
-						</rows>
-					</grid>
-					<separator height="3px" />
+				<vbox>
 					<hbox>
-						<button label="Save notes" sclass="k9" onClick="saveUpdateJobNotes()" />
-						<button id="noteshistory_btn" label="Notes history" sclass="k9" onClick="jobNotesHistory_clicker()" />
+						<label value="Reset Share-Sample" sclass="k9b" />
+						<listbox id="share_sample2" mold="select" sclass="k9" />
+						<button id="resetsharesample_butt" label="Change" sclass="k9mo" disabled="true" onClick="generalFunc(1)" />
+
+						<div id="whosetholdstatus" visible="false">
+							<label value="Hold-status" sclass="k9b" />
+							<listbox id="set_jobhold_status" mold="select" sclass="k9" />
+							<button label="Set hold" sclass="k9mo" onClick="generalFunc(12)" />
+						</div>
 					</hbox>
-				</groupbox>
+					<hbox>
+						<div style="background:#FAC116">
+							<label value="Found" />
+							<label id="numofsamples_lbl" />
+						</div>
+
+						<div style="background:#cd2467">
+							<label value="HOLD" />
+							<label id="jobhold_count_lbl" style="color:#ffffff;font-weight:bold"/>
+						</div>
+
+						<div style="background:#F74623">
+							<label value="OVERDUES" />
+							<label id="overdue_count_lbl" style="color:#ffffff;font-weight:bold"/>
+						</div>
+
+						<div style="background:#AEF520">
+							<label value="REL" />
+							<label id="released_count_lbl" style="color:#222222;font-weight:bold"/>
+						</div>
+
+						<div style="background:#FAC116">
+							<label value="WIP" />
+							<label id="wip_lbl" />
+						</div>
+					</hbox>
+				</vbox>
+
+				<grid sclass="GridLayoutNoBorder" width="700px">
+					<rows>
+						<row style="background:#565B73">
+							<button label="Set job as PKD samples" sclass="k9mo" width="100%" onClick="generalFunc(2)" />
+							<button label="Set pre-paid job" sclass="k9mo" width="100%" onClick="generalFunc(10)" />
+							<button id="terimacoa_btn" label="Sudah terima COA" width="100%" sclass="k9mo" onClick="generalFunc(6)" visible="false" />
+							<button label="Utilities" sclass="k9mo" width="100%" onClick="utilitiespop.open(self)" />
+							<button label="Folder/CashAcct/Documents" sclass="k9" width="100%" onClick="showFolderMetadata()" />
+							<button label="HELP" sclass="k9" onClick="lilhelp.open(self)" />
+						</row>
+						<row style="background:#565B73" >
+							<button label="View results" sclass="k9mo" width="100%" onClick="generalFunc(8)" />
+							<button label="Lab Comments" sclass="k9mo" width="100%" onClick="showLabComments(global_selected_folderno);labcomment_popup.open(self)" />
+							<button label="Subcontract" sclass="k9mo" width="100%" onClick="viewSubcontract(self)" />
+							<button id="picksamp_butt" label="Samples pickup" sclass="k9mo" width="100%" onClick="viewSamplesPickup()" />
+							<button id="persampleshare_butt" label="Per-sample Share" sclass="k9mo" width="100%" onClick="viewPerSampleShare()" />
+							<separator />
+						</row>
+					</rows>
+				</grid>
 			</hbox>
-		</groupbox> <!-- ENDOF folder metadata area -->
+		</div>
+		<vbox>
+			<div id="folderworkbutts" visible="false" />
 
-		<div id="folderworkarea" visible="false"> <!-- search results box and tests box -->
-		<hbox>
-			<vbox>
+			<div id="foldermeta_area" sclass="shadowbox" style="background:#4C99A6" visible="false"> <!-- folder metadata area -->
 				<hbox>
-					<grid>
-						<rows>
-							<row style="background:#CCCCCC">
-								<div style="background:#FAC116">
-									<label value="Found" />
-									<label id="numofsamples_lbl" />
-								</div>
+					<button label="More folder details" sclass="k9" onClick="generalFunc(5)" />
 
-								<div style="background:#cd2467">
-									<label value="HOLD" />
-									<label id="jobhold_count_lbl" style="color:#ffffff;font-weight:bold"/>
-								</div>
+					<groupbox width="400px">
+						<div id="doculist_holder" />
+						<separator height="3px" />
+						<button label="View document" sclass="k9" onClick="viewDocument()" />
+						<button id="viewdoculinks_btn" label="Upload COC/PO/Documents" onClick="doViewDoculinkPopup()" sclass="k9" />
+						<!-- <button id="sendemail_doc_btn" label="E-Mail" sclass="k9" onClick="sendDocViaEmail_clicker()" visible="false" /> -->
+					</groupbox>
 
-								<div style="background:#F74623">
-									<label value="OVERDUES" />
-									<label id="overdue_count_lbl" style="color:#ffffff;font-weight:bold"/>
-								</div>
+					<div id="cashdet_holder" />
 
-								<div style="background:#AEF520">
-									<label value="REL" />
-									<label id="released_count_lbl" style="color:#222222;font-weight:bold"/>
-								</div>
-
-								<div style="background:#FAC116">
-									<label value="WIP" />
-									<label id="wip_lbl" />
-								</div>
-								<!--
-								<label style="font-size:9px;font-weight:bold">
-									(RED = OVERDUE folders, GREEN = RELEASED folders)
-								</label>
-								-->
-							</row>
-						</rows>
-					</grid>
-
-					<hbox>
-						<button label="View results" sclass="k9mo" onClick="generalFunc(8)" />
-						<button label="Lab Comments" sclass="k9mo" onClick="showLabComments(global_selected_folderno);labcomment_popup.open(self)" />
-						<button label="Subcontract" sclass="k9mo" onClick="viewSubcontract(self)" />
-						<button id="picksamp_butt" label="Samples pickup" sclass="k9mo" onClick="viewSamplesPickup()" />
-						<button id="persampleshare_butt" label="Per-sample Share" sclass="k9mo" onClick="viewPerSampleShare()" />
-					</hbox>
+					<groupbox>
+						<caption label="Job Notes" />
+						<div id="jobnotes_found_div" />
+						<separator height="3px" />
+						<grid>
+							<columns>
+								<column label="" width="100px" />
+								<column label="" />
+							</columns>
+							<rows>
+								<row>
+									<label value="Job notes" sclass="k9" />
+									<textbox id="jobnotes_tb" sclass="k9" multiline="true" width="300px" height="100px" />
+								</row>
+							</rows>
+						</grid>
+						<separator height="3px" />
+						<hbox>
+							<button label="Save notes" sclass="k9" onClick="saveUpdateJobNotes()" />
+							<button id="noteshistory_btn" label="Notes history" sclass="k9" onClick="jobNotesHistory_clicker()" />
+						</hbox>
+					</groupbox>
 				</hbox>
-				<separator height="3px" />
-				<div id="folders_searchdiv" />
-			</vbox>
-		</hbox>
-		</div> <!-- ENDOF search results box and tests box -->
-	</vbox>
 
-	<div id="kasiexport_holder" />
+			</div> <!-- ENDOF folder metadata area -->
+			<separator height="3px" />
+
+			<div id="folderworkarea" visible="false"> <!-- search results box and tests box -->
+				<div id="folders_searchdiv" />
+			</div> <!-- ENDOF search results box and tests box -->
+		</vbox>
+	</div>
+	<div id="kasiexport_holder" visible="false" />
 
 <zscript>
 <![CDATA[
@@ -1271,6 +1266,8 @@ luhand.populateListbox_ByLookup(jobhold_status,"REGSAMP_HOLD_SAMPLES",2);
 luhand.populateListbox_ByLookup(set_jobhold_status,"REGSAMP_HOLD_SAMPLES",2);
 
 luhand.populateListbox_ByLookup(persampshare,"PER_SAMPLE_SHARE",2);
+//lbhand.populateDropdownListbox(share_sample2,sharesamplechop);
+luhand.populateListbox_ByLookup(share_sample2,"SHARESAMPLE_DEFS",2);
 
 track_flag.setSelectedIndex(0);
 jobhold_status.setSelectedIndex(0);

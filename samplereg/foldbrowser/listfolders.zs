@@ -7,6 +7,12 @@ OVERDUE_ROWCOLOR = "background:#F74623;";
 RELEASED_ROWCOLOR = "background:#AEF520;";
 HOLD_REJECT_ROWCOLOR = "background:#cd2467;";
 
+void expfoldersexcel()
+{
+	if(folders_searchdiv.getFellowIfAny("folders_lb") != null)
+		exportExcelFromListbox(folders_lb, kasiexport_holder, newfolderhds, "folderslist.xls","folders");
+}
+
 Object[] newfolderhds = {
 	new listboxHeaderWidthObj("origid",false,""),
 	new listboxHeaderWidthObj("Folder",true,"70px"),
@@ -29,11 +35,14 @@ Object[] newfolderhds = {
 	new listboxHeaderWidthObj("Pkup",true,""),
 	new listboxHeaderWidthObj("Brh",true,""),
 	new listboxHeaderWidthObj("PKD",true,""), // 20
+	new listboxHeaderWidthObj("arcode",false,""),
 };
 
+FOLDERNO_POS = 1;
 RELDATE_POS = 13;
 COADATE_POS = 14;
 PERSHARE_POS = 17;
+ARCODE_POS = 21;
 
 class lbcliker implements org.zkoss.zk.ui.event.EventListener
 {
@@ -41,6 +50,15 @@ class lbcliker implements org.zkoss.zk.ui.event.EventListener
 	{
 		selitm = event.getReference();
 		s = lbhand.getListcellItemLabel(selitm,0);
+
+		global_selected_origid = lbhand.getListcellItemLabel(selitm,0);
+		global_selected_arcode = lbhand.getListcellItemLabel(selitm,ARCODE_POS);
+		selected_folderno = global_selected_folderno = lbhand.getListcellItemLabel(selitm,FOLDERNO_POS);
+		global_selected_customername = lbhand.getListcellItemLabel(selitm,5);
+
+		foldermeta_area_toggler = false;
+		foldermeta_loaded = false;
+		foldermeta_area.setVisible(false);
 	}
 }
 cliker = new lbcliker();
@@ -150,12 +168,12 @@ void loadFoldersList_NG(int itype)
 	if(r.size() == 0) { return; }
 
 	newlb.setMold("paging"); newlb.setRows(21);
-	//newlb.addEventListener("onSelect", cliker);
+	newlb.addEventListener("onSelect", cliker);
 	ArrayList kabom = new ArrayList();
 
 	String[] fl = { "origid", "folderno_str", "priority", "datecreated", "duedate", "customer_name", "jobhold_status",
 	"samplecount", "lccount", "subcon", "srngenerate_date", "folderstatus", "labfolderstatus", "releaseddate", "coadate",
-	"terimacoa_date", "share_sample", "share_sample", "pickcount", "branch", "pkd_samples" };
+	"terimacoa_date", "share_sample", "share_sample", "pickcount", "branch", "pkd_samples", "ar_code" };
 
 	overduecount = releasedcount = jobholdcount = 0;
 	todate = new Date();
